@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PentestAI v9 — Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles/admin.css">
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <span class="brand">PentestAI</span><span class="ver">v9</span>
+    <span class="badge">Admin</span>
+    <div class="spacer"></div>
+    <button class="btn" onclick="window.location.href='/'">← Back to Chat</button>
+    <button class="btn" onclick="window.open('/docs','_blank')">API Docs</button>
+    <button class="btn" onclick="doLogout()">Logout</button>
+  </div>
+  <div class="body">
+    <div class="nav">
+      <div class="nav-item active" onclick="showSection('dashboard',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Dashboard</div>
+      <div class="nav-item" onclick="showSection('users',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
+      <div class="nav-item" onclick="showSection('sessions',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> Sessions</div>
+      <div class="nav-item" onclick="showSection('logs',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Logs</div>
+      <div class="nav-item" onclick="showSection('health',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg> Health</div>
+      <div class="nav-item" onclick="showSection('errors',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Errors</div>
+    </div>
+    <div class="content">
+      <div class="section active" id="sec-dashboard">
+        <h2>Dashboard</h2>
+        <div class="cards" id="dash-cards"></div>
+        <div class="table-wrap"><div class="table-header"><h3>Recent Activity</h3></div><div class="log-list" id="dash-activity"></div></div>
+      </div>
+      <div class="section" id="sec-users">
+        <h2>Users</h2>
+        <div class="create-user-form">
+          <input class="cu-input" id="nu-user" placeholder="Username">
+          <input class="cu-input" id="nu-pass" type="password" placeholder="Password">
+          <select class="cu-input" id="nu-role"><option value="pentester">Pentester</option><option value="admin">Admin</option></select>
+          <select class="cu-input" id="nu-skill"><option value="beginner">Beginner</option><option value="intermediate" selected>Intermediate</option><option value="expert">Expert</option></select>
+          <button class="cu-btn" onclick="createUser()">+ Create User</button>
+          <button class="cu-btn cu-btn-ghost" onclick="loadUsers()">↻ Refresh</button>
+        </div>
+        <div class="table-wrap"><div class="table-header"><h3>All Users</h3><span class="count" id="users-count">0</span></div><table><thead><tr><th>User</th><th>Role</th><th>Sessions</th><th>Status</th><th>Actions</th></tr></thead><tbody id="users-tbody"></tbody></table></div>
+      </div>
+      <div class="section" id="sec-sessions">
+        <h2>Sessions</h2>
+        <div class="table-wrap"><div class="table-header"><h3>All Sessions</h3><span class="count" id="sessions-count">0</span></div><table><thead><tr><th>Target</th><th>User</th><th>Phase</th><th>Findings</th><th>Created</th><th>Actions</th></tr></thead><tbody id="sessions-tbody"></tbody></table></div>
+      </div>
+      <div class="section" id="sec-logs">
+        <h2>Audit Logs</h2>
+        <div class="log-toolbar"><input class="log-control log-search" id="log-search" placeholder="Search logs..." oninput="filterLogs()"><input class="log-control log-sess-filter" id="log-session" placeholder="Filter by session ID…"><select class="log-control" id="log-limit" onchange="loadLogs()"><option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option></select><button class="refresh-btn" onclick="loadLogs()">Audit Logs</button><button class="activity-btn" onclick="loadActivity()">All Activity</button></div>
+        <div class="log-stats" id="log-stats"></div>
+        <div class="table-wrap"><div class="table-header"><h3>Recent Logs</h3></div><div class="log-list" id="logs-list"></div></div>
+      </div>
+      <div class="section" id="sec-health">
+        <h2>System Health</h2>
+        <div class="health-grid" id="health-grid"></div>
+        <div class="health-divider">System Resources</div>
+        <div class="resource-grid" id="resource-grid"></div>
+        <div class="health-divider">Backend Logs <span class="errors-badge" id="health-errors-badge" style="display:none"></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Log File</th><th>Size</th></tr></thead><tbody id="health-logs-body"><tr><td colspan="2" style="color:var(--t3);padding:12px 16px;font-size:12px">Loading…</td></tr></tbody></table></div>
+      </div>
+      <div class="section" id="sec-errors">
+        <h2>Backend Errors</h2>
+        <div class="table-wrap"><div class="table-header"><h3>Recent Errors</h3></div><div class="log-list" id="errors-list"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/static/scripts/admin.js"></script>
+</body>
+</html>

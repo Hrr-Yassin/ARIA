@@ -1,0 +1,14 @@
+.env
+.env.*
+.aws/
+.codex/
+.agents/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+*.pem
+*.key
+reports/
+backup_v9_*/

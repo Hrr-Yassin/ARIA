@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PentestAI v10 — Tactical Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles/index.css">
+</head>
+<body>
+
+<!-- ─────────── HEADER ─────────── -->
+<header class="app-header" id="app-header">
+  <div class="brand">
+    <div class="brand-logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <path d="M12 2 L22 7 V13 C22 17.5 17.5 21 12 22 C6.5 21 2 17.5 2 13 V7 Z"/>
+        <path d="M8 12 L11 15 L16 10"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <div class="brand-name">PentestAI</div>
+      <div class="brand-tag">v10 · Tactical Terminal</div>
+    </div>
+  </div>
+
+  <div class="session-meta">
+    <div class="session-chip" id="session-name-chip">
+      <span class="chip-label">Session</span>
+      <span class="chip-value" id="session-name">—</span>
+    </div>
+    <div class="session-chip target-chip" id="target-chip">
+      <span class="chip-label">Target</span>
+      <span class="chip-value" id="target-value">—</span>
+    </div>
+    <div class="session-chip phase-chip" id="phase-chip">
+      <span class="chip-label">Phase</span>
+      <span class="chip-value" id="phase-value">scope</span>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <button id="auto-button" class="auto-btn" data-state="off"
+            aria-label="Toggle autonomous mode">
+      <span class="auto-glow"></span>
+      <span class="auto-dot"></span>
+      <svg class="auto-bolt" viewBox="0 0 24 24" width="18" height="18"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </svg>
+      <span class="auto-label" id="auto-label">Auto mode</span>
+    </button>
+    <button id="settings-button" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<!-- ─────────── TOAST CONTAINER ─────────── -->
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+<!-- ─────────── APPROVAL BANNER ─────────── -->
+<div id="approval-banner" class="approval-banner hidden" role="alertdialog"
+     aria-labelledby="approval-title">
+  <div class="approval-inner">
+    <div class="approval-icon">🛑</div>
+    <div class="approval-body">
+      <div id="approval-title" class="approval-title">Approval needed</div>
+      <div class="approval-detail" id="approval-detail"></div>
+      <code class="approval-command" id="approval-command"></code>
+    </div>
+    <div class="approval-actions">
+      <button id="approval-reject" class="btn btn-danger-outline">Reject</button>
+      <button id="approval-modify" class="btn btn-warn-outline">Modify…</button>
+      <button id="approval-approve" class="btn btn-success">Approve &amp; run</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─────────── MAIN 3-PANEL LAYOUT ─────────── -->
+<main class="app-main">
+
+  <!-- ── LEFT SIDEBAR ── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-block">
+      <h3 class="sidebar-h">Sessions</h3>
+      <div id="session-list" class="session-list"></div>
+      <button id="new-session-btn" class="btn btn-ghost full">+ New session</button>
+    </div>
+
+    <div class="sidebar-block">
+      <h3 class="sidebar-h">Phase progress</h3>
+      <ol id="phase-stepper" class="phase-stepper"></ol>
+    </div>
+
+    <div class="sidebar-block">
+      <h3 class="sidebar-h">Tools run</h3>
+      <div id="tools-run" class="tool-pills"></div>
+    </div>
+  </aside>
+
+  <!-- ── CENTER CHAT ── -->
+  <section class="chat-panel" id="chat-panel">
+    <div id="messages" class="messages" role="log" aria-live="polite"></div>
+
+    <!-- Auto-activity stream — shown only when auto mode is on -->
+    <div id="auto-log" class="auto-log hidden" aria-label="Autonomous activity log">
+      <div class="auto-log-header">
+        <span class="auto-log-title">
+          <span class="auto-log-pulse"></span> Autonomous activity
+        </span>
+        <span class="auto-log-counter" id="auto-log-counter">step 0 / 12</span>
+      </div>
+      <div class="auto-log-lines" id="auto-log-lines"></div>
+    </div>
+
+    <!-- Thinking indicator -->
+    <div id="thinking-indicator" class="thinking-indicator hidden">
+      <div class="thinking-dots"><span></span><span></span><span></span></div>
+      <span class="thinking-text">ARIA is reasoning…</span>
+    </div>
+
+    <!-- Input bar -->
+    <div class="input-bar">
+      <div class="input-bar-inner">
+        <div class="input-target-chip" id="input-target-chip" hidden>
+          <span id="input-target-label"></span>
+          <button id="input-target-clear" class="clear-x" aria-label="Clear target">×</button>
+        </div>
+        <textarea id="user-input" class="user-input"
+          placeholder="Ask ARIA anything or set a goal…" rows="1"></textarea>
+        <div class="input-actions">
+          <select id="goal-select" class="input-select" aria-label="Attack goal">
+            <option value="">Set goal</option>
+            <option value="initial_access">Initial access</option>
+            <option value="dump_creds">Dump credentials</option>
+            <option value="pivot">Pivot</option>
+            <option value="privilege_escalation">Privilege escalation</option>
+            <option value="full_compromise">Full compromise</option>
+          </select>
+          <select id="mode-select" class="input-select" aria-label="Attack mode">
+            <option value="lab">Lab</option>
+            <option value="red_team">Red team</option>
+            <option value="bug_bounty">Bug bounty</option>
+          </select>
+          <button id="send-button" class="send-btn" aria-label="Send">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none"
+                 stroke="currentColor" stroke-width="2.4"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5"/>
+              <polyline points="5 12 12 5 19 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div id="auto-running-indicator" class="auto-running-indicator hidden">
+        <span class="pulse-dot"></span> Autonomous cycle running…
+      </div>
+    </div>
+  </section>
+
+  <!-- ── RIGHT INTEL PANEL ── -->
+  <aside class="intel-panel" id="intel-panel">
+    <div class="intel-tabs" role="tablist">
+      <button class="intel-tab active" data-tab="hosts" role="tab">Hosts</button>
+      <button class="intel-tab" data-tab="findings" role="tab">Findings</button>
+      <button class="intel-tab" data-tab="shells" role="tab">Shells</button>
+      <button class="intel-tab" data-tab="creds" role="tab">Creds</button>
+      <button class="intel-tab" data-tab="timeline" role="tab">Timeline</button>
+      <button class="intel-tab" data-tab="decisions" role="tab">Decisions</button>
+      <button class="intel-tab" data-tab="playbooks" role="tab">Playbooks</button>
+    </div>
+    <div class="intel-tab-bodies">
+      <div class="intel-body active" id="tab-hosts"></div>
+      <div class="intel-body" id="tab-findings"></div>
+      <div class="intel-body" id="tab-shells"></div>
+      <div class="intel-body" id="tab-creds"></div>
+      <div class="intel-body" id="tab-timeline"></div>
+      <div class="intel-body" id="tab-decisions"></div>
+      <div class="intel-body" id="tab-playbooks"></div>
+    </div>
+  </aside>
+</main>
+
+<!-- ─────────── SETTINGS SLIDE-IN ─────────── -->
+<aside id="settings-panel" class="settings-panel hidden" aria-hidden="true">
+  <div class="settings-header">
+    <h2>Settings</h2>
+    <button id="settings-close" class="icon-btn" aria-label="Close settings">✕</button>
+  </div>
+  <div class="settings-body">
+    <section class="settings-section">
+      <h3>LLM providers</h3>
+      <div id="llm-keys-list"></div>
+      <details class="settings-details">
+        <summary>Add new key</summary>
+        <div class="form-row">
+          <select id="new-key-provider">
+            <option value="groq">Groq</option>
+            <option value="gemini">Gemini</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+          <input id="new-key-value" type="password" placeholder="API key…">
+          <input id="new-key-label" type="text" placeholder="Label (optional)">
+          <button id="new-key-add" class="btn btn-primary">Add</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="settings-section">
+      <h3>Autonomous mode</h3>
+      <div class="form-row">
+        <label for="max-steps">Max steps per cycle</label>
+        <input id="max-steps" type="range" min="4" max="20" step="1" value="12">
+        <span id="max-steps-value">12</span>
+      </div>
+      <div class="form-row">
+        <label for="risk-threshold">Auto-execute up to:</label>
+        <select id="risk-threshold">
+          <option value="green_only">Green only (safest)</option>
+          <option value="green_orange" selected>Green + Orange (default)</option>
+        </select>
+      </div>
+      <p class="settings-note">
+        Red-risk steps (exploits, brute-force) always require your explicit
+        approval. This is a hard guardrail — see project scope document.
+      </p>
+    </section>
+
+    <section class="settings-section">
+      <h3>Skill level</h3>
+      <div class="form-row">
+        <label>
+          <input type="radio" name="skill" value="beginner"> Beginner
+        </label>
+        <label>
+          <input type="radio" name="skill" value="intermediate" checked> Intermediate
+        </label>
+        <label>
+          <input type="radio" name="skill" value="expert"> Expert
+        </label>
+      </div>
+    </section>
+  </div>
+</aside>
+
+<script src="/static/scripts/app.js" defer></script>
+</body>
+</html>
