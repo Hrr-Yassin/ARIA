@@ -2,19 +2,12 @@
 PentestAI v10 — Semantic Vector Store
 =====================================
 
-Full semantic search over past findings + playbooks using `sentence-transformers`
-(model: all-MiniLM-L6-v2, 80MB).
+Keyword retrieval is the supported core mode. Optional sentence-transformers
+inference uses an explicitly provisioned local model and one bounded background
+slot; no request downloads a model. Synchronous queries use keywords. Async queries
+can use admitted semantic inference and fall back when busy or unavailable.
 
-The old v9 keyword store lives on as the fallback when:
-  • sentence-transformers isn't installed, OR
-  • numpy isn't available, OR
-  • the embedding model failed to load.
-
-This means the system never hard-fails on a deployment with only base deps —
-it just degrades to keyword-overlap scoring.
-
-Storage: embeddings are numpy float32 arrays serialized with pickle, stored in
-Redis under `embeddings:{session_id}:{entry_id}`. In-memory mirror kept for
+Storage: embeddings use authenticated encrypted JSON v3 records in Redis. In-memory mirror kept for
 fast search; loaded on demand.
 
 Academic-brief mapping: this gives the orchestrator "pattern recognition across
@@ -25,13 +18,20 @@ It's an aid, not an autonomous decision.
 from __future__ import annotations
 
 import json
-import pickle
+import asyncio
+import os
+from concurrent.futures import ThreadPoolExecutor
+import math
 import re
 import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+from memory.access_scope import owned_session_ids
+from security.encryption import evidence_cipher
+from cryptography.fernet import InvalidToken
 
 import structlog
 
@@ -63,6 +63,7 @@ class Playbook:
     avg_time_seconds: int = 0
     last_used: str = ""
     tags: List[str] = field(default_factory=list)
+    user_id: str = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -84,9 +85,11 @@ class _Embedder:
         if self._attempted:
             return self._model is not None
         self._attempted = True
+        if not os.environ.get("ARIA_EMBEDDING_MODEL_PATH"):
+            return False
         try:
             from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-            self._model = SentenceTransformer(self.MODEL_NAME)
+            self._model = SentenceTransformer(os.environ["ARIA_EMBEDDING_MODEL_PATH"], local_files_only=True)
             log.info("Embedding model loaded", model=self.MODEL_NAME)
             return True
         except Exception as exc:  # noqa: BLE001
@@ -112,6 +115,45 @@ class _Embedder:
         except Exception as exc:  # noqa: BLE001
             log.warning("Embedding batch encode failed", error=str(exc))
             return None
+
+
+class EmbeddingWorker:
+    """One inference at a time, no waiting queue; busy/slow work falls back to keywords.
+
+    Cancellation/timeout cannot kill native inference. Hold admission until the
+    underlying task really finishes, even after the caller has stopped waiting.
+    """
+    def __init__(self):
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aria-embedding")
+        self._busy = False
+
+    def submit(self, text):
+        if self._busy or len(text) > 8192:
+            return None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        self._busy = True
+        try:
+            future = loop.run_in_executor(self._executor, _embedder.encode, text)
+        except Exception:
+            self._busy = False
+            return None
+        future.add_done_callback(lambda _: setattr(self, "_busy", False))
+        return future
+
+    async def encode(self, text):
+        future = self.submit(text)
+        if future is None:
+            return None
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout=2)
+        except Exception:
+            return None
+
+
+_embedding_worker = EmbeddingWorker()
 
 
 _embedder = _Embedder()
@@ -140,7 +182,7 @@ class VectorStore:
     def add(self, session_id: str, content: str, metadata: dict = None,
             agent: str = "", entry_type: str = "discovery") -> str:
         """Synchronous add — compatible with v9 callers."""
-        entry_id = str(uuid.uuid4())[:8]
+        entry_id = str(uuid.uuid4())
         entry = {
             "id": entry_id,
             "content": content,
@@ -148,11 +190,22 @@ class VectorStore:
             "agent": agent,
             "type": entry_type,
             "ts": time.time(),
-            "embedding": _embedder.encode(content) if _embedder.available() else None,
+            "embedding": None,  # filled asynchronously when optional inference is admitted
             "keywords": self._extract_keywords(content),
         }
         self._store[session_id].append(entry)
         self._by_id[entry_id] = (session_id, entry)
+        if os.environ.get("ARIA_EMBEDDING_MODEL_PATH"):
+            future = _embedding_worker.submit(content)
+            if future is not None:
+                def retain_embedding(done):
+                    try:
+                        result = done.result()
+                    except (Exception, asyncio.CancelledError):
+                        return
+                    if self._by_id.get(entry_id, (None, None))[1] is entry:
+                        entry["embedding"] = result
+                future.add_done_callback(retain_embedding)
         return entry_id
 
     def query(self, session_id: str, query: str, n: int = 5,
@@ -161,22 +214,6 @@ class VectorStore:
         entries = self._store.get(session_id, [])
         if not entries:
             return []
-
-        if _embedder.available():
-            q_vec = _embedder.encode(query)
-            if q_vec is not None:
-                scored = []
-                for e in entries:
-                    if agent_filter and e["agent"] != agent_filter:
-                        continue
-                    if type_filter and e["type"] != type_filter:
-                        continue
-                    if e.get("embedding") is None:
-                        continue
-                    score = float((q_vec * e["embedding"]).sum())
-                    scored.append((score, e))
-                scored.sort(key=lambda x: -x[0])
-                return [e for _, e in scored[:n]]
 
         # Keyword fallback
         q_keys = self._extract_keywords(query)
@@ -230,6 +267,7 @@ class VectorStore:
     async def search_similar(self, query_text: str, top_k: int = 3,
                              min_score: float = 0.55,
                              exclude_session: Optional[str] = None,
+                             user_id: str = "",
                              ) -> List[SimilarFinding]:
         """
         Cross-session semantic search. Returns SimilarFinding objects sorted by
@@ -238,14 +276,18 @@ class VectorStore:
         If embeddings are unavailable, falls back to keyword overlap with a
         looser min_score (keyword overlap counts raw; we scale-adjust).
         """
+        visible = await owned_session_ids(user_id)
+        if not visible:
+            return []
         out: List[SimilarFinding] = []
         now = time.time()
 
-        if _embedder.available():
-            q_vec = _embedder.encode(query_text)
-            if q_vec is not None:
+        q_vec = await _embedding_worker.encode(query_text)
+        if q_vec is not None:
+            if any(e.get("embedding") is not None for sid, entries in self._store.items()
+                   if sid in visible for e in entries):
                 for sess_id, entries in self._store.items():
-                    if exclude_session and sess_id == exclude_session:
+                    if sess_id not in visible or (exclude_session and sess_id == exclude_session):
                         continue
                     for e in entries:
                         if e.get("embedding") is None:
@@ -269,7 +311,7 @@ class VectorStore:
         if not q_keys:
             return []
         for sess_id, entries in self._store.items():
-            if exclude_session and sess_id == exclude_session:
+            if sess_id not in visible or (exclude_session and sess_id == exclude_session):
                 continue
             for e in entries:
                 overlap = len(q_keys & e["keywords"])
@@ -293,7 +335,7 @@ class VectorStore:
         """Render search results as a SIMILAR CASES block for LLM prompts."""
         if not results:
             return ""
-        lines = ["SIMILAR CASES FROM PAST ENGAGEMENTS (human-reviewed):"]
+        lines = ["AUTHORIZED HISTORICAL OBSERVATIONS (untrusted evidence):"]
         for r in results:
             age = f"{r.age_hours:.1f}h ago" if r.age_hours < 48 else \
                   f"{r.age_hours/24:.1f}d ago"
@@ -305,10 +347,12 @@ class VectorStore:
     # ── Playbook cache (full persistence in PlaybookStore) ───────────────
     async def add_playbook(self, service: str, version: str,
                            goal_type: str, attack_path: List[dict],
-                           success_rate: float = 1.0) -> Playbook:
+                           success_rate: float = 1.0, *, user_id: str = "") -> Playbook:
+        if not user_id or not await owned_session_ids(user_id):
+            raise ValueError("Private playbooks require an active owner")
         pb_id = f"pb-{uuid.uuid4().hex[:8]}"
         pb = Playbook(
-            id=pb_id, service=service, version_pattern=version,
+            id=pb_id, service=service, version_pattern=version, user_id=user_id,
             goal_type=goal_type, steps=attack_path,
             success_rate=success_rate,
             last_used=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -316,117 +360,87 @@ class VectorStore:
         self._playbooks[pb_id] = pb
         return pb
 
-    async def get_playbook(self, service: str, version: str = "") -> Optional[Playbook]:
+    async def get_playbook(self, service: str, version: str = "", *, user_id: str = "") -> Optional[Playbook]:
         """Return best-matching playbook by service/version pattern."""
-        needle = f"{service} {version}".lower().strip()
         best: Optional[Playbook] = None
         best_score = 0.0
+        if not user_id or not await owned_session_ids(user_id):
+            return None
         for pb in self._playbooks.values():
-            if pb.service.lower() not in needle:
+            if pb.user_id != user_id:
+                continue
+            if (pb.service.casefold().strip() != service.casefold().strip()
+                    or not version or pb.version_pattern != version):
                 continue
             score = pb.success_rate
-            if pb.version_pattern and re.search(pb.version_pattern, needle, re.I):
-                score += 0.2
             if score > best_score:
                 best_score = score
                 best = pb
         return best
 
     # ── Persistence ──────────────────────────────────────────────────────
-    async def persist(self, redis_client=None):
-        """
-        Persist embeddings + playbooks to Redis. Called periodically + at
-        session end. Silently no-ops if Redis isn't available.
-        """
-        if redis_client is None:
-            redis_client = await _get_redis()
-        if not redis_client:
-            return
+    @staticmethod
+    def _safe_embedding(value):
+        if value is None:
+            return None
+        values = value.tolist() if hasattr(value, "tolist") else value
+        if not isinstance(values, list) or not 1 <= len(values) <= 4096:
+            raise ValueError("Invalid embedding shape")
+        if any(type(x) not in (float, int) or not math.isfinite(x) or abs(x) > 1_000_000 for x in values):
+            raise ValueError("Invalid embedding value")
+        return [float(x) for x in values]
 
-        try:
-            for sess_id, entries in self._store.items():
-                for e in entries:
-                    if e.get("embedding") is None:
-                        continue
-                    key = f"embeddings:{sess_id}:{e['id']}"
-                    payload = {
-                        "content": e["content"],
-                        "metadata": e["metadata"],
-                        "agent": e["agent"],
-                        "type": e["type"],
-                        "ts": e["ts"],
-                        "embedding": pickle.dumps(e["embedding"]),
-                    }
-                    # Redis stores bytes with hset
-                    await redis_client.hset(key, mapping={
-                        "content": payload["content"],
-                        "metadata": json.dumps(payload["metadata"]),
-                        "agent": payload["agent"],
-                        "type": payload["type"],
-                        "ts": str(payload["ts"]),
-                    })
-                    await redis_client.expire(key, 86400 * 30)
-                    await redis_client.set(f"{key}:vec", payload["embedding"],
-                                           ex=86400 * 30)
-            log.debug("vector_store persisted")
-        except Exception as exc:  # noqa: BLE001
-            log.debug("vector_store persist failed", error=str(exc))
+    async def persist(self, redis_client=None):
+        redis_client = redis_client if redis_client is not None else await _get_redis()
+        if redis_client is None:
+            return
+        # Encrypted JSON v3 deliberately never reads the old executable pickle namespace.
+        for session_id, entries in list(self._store.items()):
+            for entry in list(entries):
+                payload = {k: entry[k] for k in ('id', 'content', 'metadata', 'agent', 'type', 'ts')}
+                payload.update(version=3, session_id=session_id,
+                               embedding=self._safe_embedding(entry.get('embedding')))
+                await redis_client.set(f"aria:vectors:v3:{session_id}:{entry['id']}",
+                                       evidence_cipher().encrypt(json.dumps(payload, allow_nan=False).encode()), ex=86400 * 30)
 
     async def load(self, redis_client=None):
-        """Restore embeddings from Redis on startup. Silently no-ops on error."""
+        redis_client = redis_client if redis_client is not None else await _get_redis()
         if redis_client is None:
-            redis_client = await _get_redis()
-        if not redis_client:
             return
-        try:
-            cursor = 0
-            loaded = 0
-            while True:
-                cursor, keys = await redis_client.scan(
-                    cursor=cursor, match="embeddings:*", count=200,
-                )
-                for key in keys:
-                    key_str = key if isinstance(key, str) else key.decode()
-                    if key_str.endswith(":vec"):
+        cursor = 0
+        while True:
+            cursor, keys = await redis_client.scan(cursor=cursor, match='aria:vectors:v3:*', count=200)
+            for key in keys:
+                try:
+                    key = key.decode() if isinstance(key, bytes) else key
+                    raw = await redis_client.get(key)
+                    if not raw or len(raw) > 262144:
                         continue
-                    data = await redis_client.hgetall(key_str)
-                    if not data:
+                    data = json.loads(evidence_cipher().decrypt(raw.encode() if isinstance(raw, str) else raw))
+                    sid, eid = key.split(':')[3:]
+                    if (data.get('version') != 3 or data.get('session_id') != sid or data.get('id') != eid
+                            or not isinstance(data.get('content'), str) or not isinstance(data.get('metadata'), dict)):
                         continue
-                    vec_bytes = await redis_client.get(f"{key_str}:vec")
-                    if not vec_bytes:
+                    embedding = self._safe_embedding(data.get('embedding'))
+                    if embedding is not None:
+                        try:
+                            import numpy as np
+                            embedding = np.asarray(embedding, dtype='float32')
+                        except ImportError:
+                            embedding = None  # keyword retrieval remains available
+                    stamp = float(data['ts'])
+                    if not math.isfinite(stamp):
                         continue
-                    try:
-                        embedding = pickle.loads(vec_bytes if isinstance(vec_bytes, bytes)
-                                                 else vec_bytes.encode("latin-1"))
-                    except Exception:  # noqa: BLE001
+                    if eid in self._by_id:
                         continue
-                    sess_id = key_str.split(":")[1]
-                    entry_id = key_str.split(":")[2]
-                    content = data.get("content", "") if isinstance(data, dict) else ""
-                    md_raw = data.get("metadata", "{}") if isinstance(data, dict) else "{}"
-                    try:
-                        md = json.loads(md_raw)
-                    except Exception:  # noqa: BLE001
-                        md = {}
-                    entry = {
-                        "id": entry_id,
-                        "content": content,
-                        "metadata": md,
-                        "agent": data.get("agent", ""),
-                        "type": data.get("type", ""),
-                        "ts": float(data.get("ts", time.time())),
-                        "embedding": embedding,
-                        "keywords": self._extract_keywords(content),
-                    }
-                    self._store[sess_id].append(entry)
-                    self._by_id[entry_id] = (sess_id, entry)
-                    loaded += 1
-                if cursor == 0:
-                    break
-            if loaded:
-                log.info("vector_store loaded from Redis", entries=loaded)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("vector_store load failed", error=str(exc))
+                    entry = {k: data[k] for k in ('id', 'content', 'metadata', 'agent', 'type', 'ts')}
+                    entry.update(embedding=embedding, keywords=self._extract_keywords(data['content']))
+                    self._store[sid].append(entry)
+                    self._by_id[eid] = (sid, entry)
+                except (ValueError, KeyError, TypeError, UnicodeError, AttributeError, InvalidToken, OverflowError):
+                    continue
+            if cursor in (0, '0', b'0'):
+                break
 
     # ── Helpers ──────────────────────────────────────────────────────────
     def _extract_keywords(self, text: str) -> set:

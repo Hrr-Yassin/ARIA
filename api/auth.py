@@ -3,6 +3,7 @@ PentestAI v8 — Authentication & Authorization
 JWT-based auth with admin/pentester roles and 3 skill levels.
 """
 import hashlib
+import asyncio
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -10,7 +11,7 @@ from typing import Optional
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,26 +20,15 @@ from memory.database_models import User, UserRole, SkillLevel, async_session
 
 security = HTTPBearer(auto_error=False)
 
-# ── Password hashing (SHA-256 + salt — no bcrypt dependency needed) ──────
-
-def hash_password(password: str, salt: str = "") -> str:
-    if not salt:
-        salt = secrets.token_hex(16)
-    hashed = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
-    return f"{salt}${hashed}"
-
-def verify_password(password: str, stored: str) -> bool:
-    if "$" not in stored:
-        return False
-    salt, hashed = stored.split("$", 1)
-    return hash_password(password, salt).split("$", 1)[1] == hashed
+from security.credentials import hash_password, verify_password, auth_revision, revoke_credentials
 
 
 # ── JWT ──────────────────────────────────────────────────────────────────
 
-def create_token(user_id: str, username: str, role: str, skill_level: str) -> str:
+def create_token(user_id: str, username: str, role: str, skill_level: str, auth_revision: int = 0) -> str:
     payload = {
         "sub": user_id,
+        "rev": auth_revision,
         "username": username,
         "role": role,
         "skill_level": skill_level,
@@ -49,7 +39,8 @@ def create_token(user_id: str, username: str, role: str, skill_level: str) -> st
 
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM],
+                          options={"require": ["exp", "iat", "sub", "rev"]})
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -59,8 +50,8 @@ def decode_token(token: str) -> dict:
 # ── Models ───────────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=50)
+    password: str = Field(min_length=1, max_length=1024)
 
 class LoginResponse(BaseModel):
     token: str
@@ -75,6 +66,7 @@ class TokenData(BaseModel):
     username: str
     role: str
     skill_level: str
+    auth_revision: int = 0
 
 
 # ── Dependencies ─────────────────────────────────────────────────────────
@@ -94,20 +86,42 @@ async def get_current_user(
     if not token:
         token = request.cookies.get("pentestai_token")
 
-    # Fallback to query param (for WebSocket)
-    if not token:
-        token = request.query_params.get("token")
-
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    payload = decode_token(token)
-    return TokenData(
-        user_id=payload["sub"],
-        username=payload["username"],
-        role=payload["role"],
-        skill_level=payload.get("skill_level", "intermediate"),
-    )
+    if not credentials and request.method not in {"GET", "HEAD"}:
+        raise HTTPException(401, "Bearer authentication required for state changes")
+    return await authenticate_socket_token(token)
+
+
+def token_identity(token: str) -> TokenData:
+    try:
+        payload = decode_token(token)
+        return TokenData(user_id=payload["sub"], username=payload["username"],
+                         role=payload["role"], skill_level=payload.get("skill_level", "intermediate"),
+                         auth_revision=payload["rev"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(401, "Invalid token") from None
+
+
+async def current_identity(user_id: str, revision: Optional[int] = None) -> TokenData:
+    try:
+        async with async_session() as db:
+            user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+            if not user or not user.is_active or (revision is not None and auth_revision(user) != revision):
+                raise HTTPException(401, "Account or credentials are unavailable")
+            return TokenData(user_id=user.id, username=user.username, role=user.role.value,
+                             skill_level=user.skill_level.value, auth_revision=auth_revision(user))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(503, "Authentication storage unavailable") from None
+
+
+async def authenticate_socket_token(token: str) -> TokenData:
+    identity = token_identity(token)
+    return await current_identity(identity.user_id, identity.auth_revision)
+
 
 async def require_admin(user: TokenData = Depends(get_current_user)) -> TokenData:
     if user.role != "admin":
@@ -115,49 +129,14 @@ async def require_admin(user: TokenData = Depends(get_current_user)) -> TokenDat
     return user
 
 
-# ── Default users seeding ────────────────────────────────────────────────
-
-DEFAULT_USERS = [
-    {
-        "username": "myth",
-        "password": "Myth04$$",
-        "role": UserRole.ADMIN,
-        "skill_level": SkillLevel.EXPERT,
-        "display_name": "Administrator",
-    },
-    {
-        "username": "hacker",
-        "password": "hacker$$",
-        "role": UserRole.PENTESTER,
-        "skill_level": SkillLevel.INTERMEDIATE,
-        "display_name": "Pentester",
-    },
-]
-
-async def seed_default_users():
-    """Create default users if they don't exist."""
-    async with async_session() as db:
-        for u in DEFAULT_USERS:
-            result = await db.execute(select(User).where(User.username == u["username"]))
-            existing = result.scalar_one_or_none()
-            if not existing:
-                user = User(
-                    username=u["username"],
-                    password_hash=hash_password(u["password"]),
-                    role=u["role"],
-                    skill_level=u["skill_level"],
-                    display_name=u["display_name"],
-                )
-                db.add(user)
-        await db.commit()
-
-
 async def authenticate_user(username: str, password: str) -> Optional[User]:
     """Verify credentials and return user."""
     async with async_session() as db:
-        result = await db.execute(select(User).where(User.username == username))
+        result = await db.execute(select(User).where(User.username == username).with_for_update())
         user = result.scalar_one_or_none()
-        if user and verify_password(password, user.password_hash) and user.is_active:
+        if user and user.is_active and await asyncio.to_thread(verify_password, password, user.password_hash):
+            if not user.password_hash.startswith("pbkdf2_sha256$"):
+                user.password_hash = await asyncio.to_thread(hash_password, password)
             user.last_login = datetime.utcnow()
             await db.commit()
             return user

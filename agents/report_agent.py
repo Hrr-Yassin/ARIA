@@ -3,6 +3,9 @@ PentestAI v8 — Agent 5: Reporting & Risk
 PTES/OWASP standard reports: HTML (inline), Markdown, LaTeX, PDF (reportlab).
 """
 import json
+import uuid
+import hashlib
+from memory.report_artifacts import register_report
 import re
 from datetime import datetime
 from typing import Optional
@@ -68,9 +71,14 @@ class ReportAgent(BaseAgent):
         from config.settings import settings
 
         # ── Gather data ──
-        session = await session_manager.get_session(session_id)
+        from api.auth import current_identity
+        from api.session_access import get_accessible_session
+        session = await get_accessible_session(session_id, await current_identity(user_id))
         findings_data = await session_manager.get_findings_summary(session_id)
-        findings = findings_data.get("findings", [])
+        findings = [dict(f) for f in findings_data.get("findings", [])]
+        for finding in findings:
+            if not finding.get("human_verified"):
+                finding["description"] = finding.get("description", "") + "\nEvidence source: " + finding.get("evidence_source", "legacy_unverified") + ". Not human-verified."
         counts   = findings_data.get("counts",   {})
         total    = findings_data.get("total",    0)
 
@@ -105,13 +113,15 @@ class ReportAgent(BaseAgent):
 
         # ── Ensure output dir exists ──
         report_dir = Path(settings.REPORT_OUTPUT_DIR)
-        report_dir.mkdir(parents=True, exist_ok=True)
+        report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        report_dir.chmod(0o700)
 
         ext = {"html": "html", "markdown": "md", "latex": "tex", "pdf": "pdf"}.get(fmt, "md")
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         safe_target = re.sub(r'[^\w]', '_', target)[:40]
-        filename = f"pentest_report_{safe_target}_{timestamp}.{ext}"
+        filename = f"pentest_report_{uuid.uuid4().hex}.{ext}"
         filepath = report_dir / filename
+        filepath.touch(mode=0o600, exist_ok=False)
 
         # ── Write file ──
         if fmt == "pdf":
@@ -119,6 +129,13 @@ class ReportAgent(BaseAgent):
                 target, scope, findings, counts, total, tools_run, str(filepath))
         else:
             filepath.write_text(content, encoding="utf-8")
+
+        try:
+            filepath.chmod(0o600)
+            await register_report(session_id, session["user_id"], filename, hashlib.sha256(filepath.read_bytes()).hexdigest())
+        except Exception:
+            filepath.unlink(missing_ok=True)
+            raise RuntimeError("Report registration failed") from None
 
         return {
             "type":           "report",

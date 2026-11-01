@@ -1,0 +1,9 @@
+[project]
+name = "aria-pentest"
+version = "10.0.0"
+requires-python = ">=3.11,<3.12"
+dynamic = ["dependencies"]
+
+[tool.pip-tools]
+generate-hashes = true
+strip-extras = true

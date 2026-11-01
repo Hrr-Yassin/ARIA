@@ -48,4 +48,4 @@ class OpenRouterClient(BaseLLMClient):
         except httpx.HTTPStatusError as e:
             return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
         except Exception as e:
-            return {"success": False, "content": "", "error": str(e), "latency_ms": int((time.monotonic()-start)*1000)}
+            return {"success": False, "content": "", "error": "provider_request_failed", "latency_ms": int((time.monotonic()-start)*1000)}

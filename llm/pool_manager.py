@@ -25,12 +25,13 @@ through to whatever the user has available — better to answer on a smaller
 model than fail.
 """
 import time
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 import structlog
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 
 from config.settings import settings
 from llm.groq_client import GroqClient
@@ -140,49 +141,42 @@ class LLMPoolManager:
 
     def __init__(self):
         self._pools: Dict[str, UserPool] = {}
-        self._fernet: Optional[Fernet] = None
-        if settings.FERNET_KEY:
-            try:
-                self._fernet = Fernet(settings.FERNET_KEY.encode())
-            except Exception:
-                log.warning("Invalid FERNET_KEY, generating new one")
-                key = Fernet.generate_key()
-                self._fernet = Fernet(key)
-                log.info("Generated FERNET_KEY", key=key.decode())
-        else:
-            key = Fernet.generate_key()
-            self._fernet = Fernet(key)
-            log.info("No FERNET_KEY set, generated temporary key", key=key.decode())
+        self._locks = {}
+        try:
+            self._fernet = MultiFernet([Fernet(settings.FERNET_KEY.encode()),
+                                        *(Fernet(k.encode()) for k in settings.FERNET_PREVIOUS_KEYS)])
+        except Exception:
+            raise ValueError("A persistent valid FERNET_KEY is required") from None
 
-    # ── Key crypto ──────────────────────────────────────────────────────
     def encrypt_key(self, api_key: str) -> str:
-        if not self._fernet:
-            return api_key
         return self._fernet.encrypt(api_key.encode()).decode()
 
     def decrypt_key(self, encrypted: str) -> str:
-        if not self._fernet:
-            return encrypted
         try:
             return self._fernet.decrypt(encrypted.encode()).decode()
-        except InvalidToken:
-            return encrypted
+        except (InvalidToken, ValueError, TypeError):
+            raise ValueError("Provider key decryption failed; check encryption configuration") from None
 
     def load_user_keys(self, user_id: str, db_keys: list):
         pool = UserPool(user_id=user_id)
         for k in db_keys:
             if not k.is_active:
                 continue
+            try:
+                self.decrypt_key(k.encrypted_key)
+                decryptable = True
+            except ValueError:
+                decryptable = False
             state = KeyState(
                 provider=k.provider,
                 key_id=k.id,
                 encrypted_key=k.encrypted_key,
-                decrypted_key=self.decrypt_key(k.encrypted_key),
+                decrypted_key="",
                 requests_used=k.requests_used or 0,
                 requests_limit=k.requests_limit or PROVIDER_DEFAULTS.get(k.provider, {}).get("limit", 30),
                 cooldown_until=k.cooldown_until.timestamp() if k.cooldown_until else 0,
-                last_error=k.last_error or "",
-                is_active=True,
+                last_error=(k.last_error or "") if decryptable else "key_unavailable",
+                is_active=decryptable,
                 label=k.label or "",
             )
             pool.keys.append(state)
@@ -252,7 +246,49 @@ class LLMPoolManager:
         return await self.query_for_task(user_id, DEFAULT_TASK, prompt, system)
 
     # ── Query (v10 task-based) ──────────────────────────────────────────
-    async def query_for_task(self, user_id: str, task_type: str,
+    async def refresh_user_keys(self, user_id):
+        from api.auth import current_identity
+        from memory.database_models import UserAPIKey, async_session
+        from sqlalchemy import select
+        await current_identity(user_id)
+        async with async_session() as db:
+            rows = (await db.execute(select(UserAPIKey).where(UserAPIKey.user_id == user_id))).scalars().all()
+            self.load_user_keys(user_id, rows)
+
+    async def _reserve_key(self, user_id, key_id):
+        from memory.database_models import UserAPIKey, async_session
+        from sqlalchemy import update
+        async with async_session() as db:
+            result = await db.execute(update(UserAPIKey).where(
+                UserAPIKey.id == key_id, UserAPIKey.user_id == user_id,
+                UserAPIKey.is_active.is_(True), UserAPIKey.requests_used < UserAPIKey.requests_limit)
+                .values(requests_used=UserAPIKey.requests_used + 1))
+            await db.commit()
+            return result.rowcount == 1
+
+    async def query_for_task(self, user_id: str, task_type: str, prompt: str, system: str = "") -> dict:
+        from security.redaction import redact, deployment_secrets
+        from memory.access_scope import owned_session_ids
+        from memory.attack_knowledge_base import attack_kb
+        async with self._locks.setdefault(user_id, asyncio.Lock()):
+            try:
+                await self.refresh_user_keys(user_id)
+                secrets = deployment_secrets()
+                for key in self._pools.get(user_id, UserPool(user_id)).keys:
+                    if not key.is_active:
+                        continue
+                    secrets.append(self.decrypt_key(key.encrypted_key))
+                for sid in await owned_session_ids(user_id):
+                    for host in attack_kb.get_all_hosts(sid):
+                        for credential in host.credentials:
+                            secrets.extend([credential.get('password', ''), credential.get('hash_value', '')])
+                prompt = '<untrusted_engagement_data>\n' + redact(prompt, secrets) + '\n</untrusted_engagement_data>'
+                system = redact(system, secrets)
+                return await self._query_for_task(user_id, task_type, prompt, system)
+            except Exception:
+                return {'success': False, 'content': '', 'error': 'provider_authorization_or_storage_unavailable'}
+
+    async def _query_for_task(self, user_id: str, task_type: str,
                              prompt: str, system: str = "") -> dict:
         """
         Route the query to the best model for this task type.
@@ -311,18 +347,21 @@ class LLMPoolManager:
                 defaults = PROVIDER_DEFAULTS.get(key_state.provider, {})
                 model = model_override.get(key_state.provider) or defaults.get("model", "")
                 client = client_cls(
-                    api_key=key_state.decrypted_key,
+                    api_key=self.decrypt_key(key_state.encrypted_key),
                     model=model,
                     temperature=settings.LLM_TEMPERATURE,
                 )
 
+                if not await self._reserve_key(user_id, key_state.key_id):
+                    key_state.is_active = False
+                    continue
                 try:
                     result = await client.query(prompt, system)
                 except Exception as e:
-                    key_state.last_error = str(e)
+                    key_state.last_error = "provider_request_failed"
                     log.warning("LLM exception",
                                 provider=key_state.provider,
-                                error=str(e)[:120])
+                                error="provider_request_failed")
                     continue
 
                 if result.get("success"):
@@ -346,7 +385,8 @@ class LLMPoolManager:
                     return result
 
                 # Failure → mark + continue
-                error = result.get("error", "unknown")
+                raw_error = str(result.get("error", "unknown"))
+                error = "rate_limited" if "429" in raw_error or "rate_limited" in raw_error else "invalid_key" if "401" in raw_error or "403" in raw_error else "provider_request_failed"
                 last_error = error
                 if "rate_limited" in error or "429" in error:
                     key_state.cooldown_until = time.time() + defaults.get("cooldown", 60)

@@ -4,7 +4,7 @@ Builds goal-driven, step-by-step attack paths.
 
 v10 additions:
   • Playbook lookup — at the start of process(), query the playbook store for
-    proven paths matching the target's services. Render as "PROVEN PLAYBOOK"
+    historical paths matching the target's services. Render as "HISTORICAL PLAYBOOK"
     suggestion block in the prompt. Human still approves every red-risk step.
   • Smart LLM routing — uses task_type="attack_planning" (tier 3, best model).
   • Semantic similar-case retrieval — cross-session pattern recognition.
@@ -59,7 +59,7 @@ You receive:
 - The attack goal (e.g. "get initial access", "dump credentials")
 - Current knowledge base state (known hosts, ports, shells, credentials)
 - Attack mode (lab / red_team / bug_bounty)
-- OPTIONALLY: a PROVEN PLAYBOOK suggestion from past engagements on similar targets
+- OPTIONALLY: a HISTORICAL PLAYBOOK suggestion from past engagements on similar targets
 - OPTIONALLY: SIMILAR CASES from semantic memory
 
 You output a prioritized, step-by-step attack path with:
@@ -75,7 +75,7 @@ RULES:
 - For bug_bounty mode: exclude destructive or out-of-scope actions
 - Always provide VALIDATE step before EXPLOIT step
 - Include confidence score for each path
-- If a PROVEN PLAYBOOK is provided, treat it as a strong default but adapt to
+- If a HISTORICAL PLAYBOOK is provided, revalidate its applicability and prerequisites against
   actual current evidence. NEVER blindly copy — justify deviations.
 - Any exploit step (RCE, remote shell, brute-force login, unsafe write) MUST be
   tagged risk_color: "red" — the supervisor loop will block these pending
@@ -134,7 +134,7 @@ class AttackPlannerAgent(BaseAgent):
             svc = parts[0] if parts else ""
             ver = parts[1] if len(parts) > 1 else ""
             if svc:
-                pb = await playbook_store.get_best_playbook(svc, ver, goal_type)
+                pb = await playbook_store.get_best_playbook(svc, ver, goal_type, user_id=user_id)
                 if pb and pb.success_rate >= 0.7:
                     matched_playbook = pb
                     playbook_block = "\n\n" + playbook_store.render_for_prompt(pb)
@@ -145,7 +145,7 @@ class AttackPlannerAgent(BaseAgent):
         try:
             similar_block = await self.get_similar_cases(
                 query=f"attack plan for {goal_type} on services: {', '.join(all_services[:5])}",
-                top_k=3, exclude_session=session_id,
+                top_k=3, exclude_session=session_id, user_id=user_id,
             )
             if similar_block:
                 similar_block = "\n\n" + similar_block

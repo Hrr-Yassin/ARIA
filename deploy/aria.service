@@ -1,0 +1,18 @@
+# User unit: place checkout at ~/aria, provision .env/database, then install manually.
+[Unit]
+Description=ARIA API (single process)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/aria
+EnvironmentFile=%h/aria/.env
+ExecStartPre=%h/aria/.venv/bin/python -c "import asyncio; from memory.database_models import init_db; asyncio.run(init_db())"
+ExecStart=%h/aria/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

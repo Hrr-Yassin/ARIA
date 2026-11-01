@@ -21,7 +21,7 @@ const state = {
   sessionId: localStorage.getItem('current_session') || '',
   target:    '',
   phase:     'scope',
-  token:     localStorage.getItem('auth_token') || '',
+  token:     localStorage.getItem('pentestai_token') || '',
   skill:     localStorage.getItem('skill') || 'intermediate',
   autoActive: false,
   ws:        null,
@@ -101,6 +101,10 @@ async function api(path, opts = {}) {
     body:   opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (resp.status === 401) {
+    state.token = "";
+    localStorage.removeItem("pentestai_token");
+    localStorage.removeItem("pentestai_user");
+    localStorage.removeItem("current_session");
     toast('danger', 'Session expired', 'Please log in again.');
     window.location.href = '/login.html';
     return null;
@@ -386,7 +390,7 @@ async function sendMessage() {
   el.thinking.classList.remove('hidden');
 
   try {
-    const resp = await api('/api/pentest/v8/input', {
+    const resp = await api('/api/v8/input', {
       method: 'POST',
       body: {
         user_input: text,
@@ -399,8 +403,8 @@ async function sendMessage() {
     });
     el.thinking.classList.add('hidden');
 
-    if (resp && resp.plan) {
-      const plan = resp.plan;
+    const plan = resp && (resp.plan || resp);
+    if (plan && Array.isArray(plan.commands)) {
       state.phase = plan.current_phase || state.phase;
       updatePhaseUI();
       const risk = (plan.commands || []).some(c => c.risk_color === 'red')  ? 'red'
@@ -425,26 +429,36 @@ async function sendMessage() {
 
 // ── Run a single command ───────────────────────────────────────────────
 async function runCommand(cmd) {
-  if (cmd.risk_color === 'red') {
-    if (!confirm(`This is a RED-risk command. Run anyway?\n\n${cmd.command}`)) return;
-  }
   addToolPill(cmd.tool);
   toast('info', 'Dispatching', cmd.tool || 'command');
   try {
-    const res = await api('/api/pentest/kali/execute', {
+    const proposal = await api('/api/execution/proposals', {
+      method: 'POST', body: {session_id: state.sessionId, command: cmd.command, tool: cmd.tool || ''},
+    });
+    if (!proposal) return;
+    if (proposal.status === 'pending') {
+      const approved = confirm(`Server policy requires approval. Run this command?\n\n${proposal.command}`);
+      await api(`/api/execution/${proposal.action_id}/decision`, {
+        method: 'POST', body: {session_id: state.sessionId, decision: approved ? 'approve' : 'reject'},
+      });
+      if (!approved) return;
+    }
+    const res = await api('/api/kali/execute', {
       method: 'POST',
       body: {
         session_id: state.sessionId,
-        command:    cmd.command,
-        tool:       cmd.tool,
+        command:    proposal.command,
+        tool:       proposal.tool,
+        action_id:  proposal.action_id,
         target:     state.target,
       },
     });
     if (res && (res.stdout || res.stderr)) {
-      await api('/api/pentest/tool-results', {
+      await api('/api/tool-results', {
         method: 'POST',
         body: {
           session_id: state.sessionId,
+          job_id: res.job_id || null,
           agent_type: cmd.agent || 'scan',
           command: cmd.command,
           stdout: res.stdout || '',
@@ -524,8 +538,7 @@ function updateAutoUI() {
 // ── WebSocket ──────────────────────────────────────────────────────────
 function connectAutoWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/api/pentest/ws/${state.sessionId}/auto`
-              + `?token=${encodeURIComponent(state.token)}`;
+  const url = `${proto}//${location.host}/api/pentest/ws/${state.sessionId}/auto`;
   let ws;
   try {
     ws = new WebSocket(url);
@@ -534,6 +547,7 @@ function connectAutoWS() {
     return;
   }
   state.ws = ws;
+  ws.onopen = () => ws.send(JSON.stringify({ token: state.token }));
 
   ws.onmessage = (e) => {
     let ev;
@@ -961,14 +975,14 @@ function renderPlaybookCard(p) {
 // ── Session list ───────────────────────────────────────────────────────
 async function loadSessions() {
   try {
-    const res = await api('/api/sessions/list');
+    const res = await api('/api/session/list');
     if (!res) return;
     el.sessionList.textContent = '';
     (res.sessions || []).forEach(s => {
       const item = document.createElement('div');
       item.className = 'session-item';
-      if (s.id === state.sessionId) item.classList.add('active');
-      item.textContent = s.name || s.target || s.id.slice(0, 8);
+      if (s.session_id === state.sessionId) item.classList.add('active');
+      item.textContent = s.name || s.target || s.session_id.slice(0, 8);
       item.onclick = () => switchSession(s);
       el.sessionList.appendChild(item);
     });
@@ -978,11 +992,11 @@ async function loadSessions() {
 }
 
 function switchSession(s) {
-  state.sessionId = s.id;
-  localStorage.setItem('current_session', s.id);
-  el.sessionName.textContent = s.name || s.id.slice(0, 8);
+  state.sessionId = s.session_id;
+  localStorage.setItem('current_session', s.session_id);
+  el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
   setTarget(s.target || '');
-  state.phase = s.current_phase || 'scope';
+  state.phase = s.phase || 'scope';
   updatePhaseUI();
   el.messages.textContent = '';
   loadSessions();
@@ -993,11 +1007,11 @@ async function createNewSession() {
   const target = prompt('Target (IP or URL):');
   if (!target) return;
   try {
-    const res = await api('/api/sessions/create', {
+    const res = await api('/api/session/new', {
       method: 'POST',
       body: { target, name: `Session ${new Date().toLocaleString()}` },
     });
-    if (res && res.id) {
+    if (res && res.session_id) {
       switchSession(res);
       toast('success', 'Session created', target);
     }
@@ -1017,19 +1031,19 @@ function closeSettings() {
 
 async function loadLLMKeys() {
   try {
-    const res = await api('/api/api-keys/list');
+    const res = await api('/api/keys/');
     if (!res) return;
     el.llmKeysList.textContent = '';
     (res.keys || []).forEach(k => {
       const row = document.createElement('div');
       row.className = 'form-row';
       const lbl = document.createElement('span');
-      lbl.textContent = `${k.provider}: ${k.label || '(no label)'} · ${k.state}`;
+      lbl.textContent = `${k.provider}: ${k.label || '(no label)'} · ${k.is_active ? 'active' : 'disabled'}`;
       row.appendChild(lbl);
       const del = document.createElement('button');
       del.className = 'btn btn-ghost';
       del.textContent = 'Delete';
-      del.onclick = () => deleteKey(k.key_id);
+      del.onclick = () => deleteKey(k.id);
       row.appendChild(del);
       el.llmKeysList.appendChild(row);
     });
@@ -1040,7 +1054,7 @@ async function loadLLMKeys() {
 async function deleteKey(keyId) {
   if (!confirm('Delete this API key?')) return;
   try {
-    await api(`/api/api-keys/${keyId}`, { method: 'DELETE' });
+    await api(`/api/keys/${keyId}`, { method: 'DELETE' });
     loadLLMKeys();
     toast('info', 'Key deleted', '');
   } catch (exc) {
@@ -1053,7 +1067,7 @@ async function addKey() {
   const label = el.newKeyLabel.value.trim();
   if (!apiKey) { toast('warn', 'Empty key', ''); return; }
   try {
-    await api('/api/api-keys/add', {
+    await api('/api/keys/', {
       method: 'POST',
       body: { provider, api_key: apiKey, label },
     });
@@ -1140,11 +1154,11 @@ async function boot() {
   await loadSessions();
   if (state.sessionId) {
     try {
-      const s = await api(`/api/sessions/${state.sessionId}`);
+      const s = await api(`/api/session/${state.sessionId}`);
       if (s) {
-        el.sessionName.textContent = s.name || s.id.slice(0, 8);
+        el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
         setTarget(s.target || '');
-        state.phase = s.current_phase || 'scope';
+        state.phase = s.phase || 'scope';
         updatePhaseUI();
       }
     } catch {}

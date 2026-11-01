@@ -38,8 +38,11 @@ async def list_keys(user: TokenData = Depends(get_current_user)):
 
     masked = []
     for k in keys:
-        decrypted = pool_manager.decrypt_key(k.encrypted_key)
-        mask = decrypted[:8] + "..." + decrypted[-4:] if len(decrypted) > 12 else "***"
+        try:
+            decrypted = pool_manager.decrypt_key(k.encrypted_key)
+            mask = decrypted[:8] + "..." + decrypted[-4:] if len(decrypted) > 12 else "***"
+        except ValueError:
+            mask = "unavailable"
         masked.append({
             "id": k.id,
             "provider": k.provider,

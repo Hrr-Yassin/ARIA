@@ -1,8 +1,9 @@
 """
 PentestAI v10 — Configuration
 """
-from typing import List, Optional
-from pydantic import Field
+from typing import List, Optional, Literal
+from pydantic import Field, field_validator
+from cryptography.fernet import Fernet
 from pydantic_settings import BaseSettings
 
 
@@ -12,18 +13,12 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # ── Security ────────────────────────────────────────────────────────
-    SECRET_KEY: str = Field(
-        default="pentestai-v10-change-this-in-production-64chars-minimum",
-        env="SECRET_KEY"
-    )
+    SECRET_KEY: str = Field(min_length=32, repr=False)
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
 
     # ── Database ────────────────────────────────────────────────────────
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://ai:ai_password@localhost:5432/pentestai",
-        env="DATABASE_URL"
-    )
+    DATABASE_URL: str = Field(repr=False)
 
     # ── Redis ───────────────────────────────────────────────────────────
     REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
@@ -37,26 +32,22 @@ class Settings(BaseSettings):
     LLM_COOLDOWN_SECONDS: int = 300
 
     # ── Kali Agent ──────────────────────────────────────────────────────
-    KALI_AGENT_URL: str = Field(
-        default="http://192.168.57.10:9000",
-        env="KALI_AGENT_URL"
-    )
-    KALI_AGENT_TOKEN: str = Field(
-        default="pentestai-kali-secret-v10",
-        env="KALI_AGENT_TOKEN"
-    )
+    KALI_AGENT_URL: str = ""
+    KALI_WORKER_PROTOCOL: Literal["jobs-v1", "legacy-execute"] = "jobs-v1"
+    KALI_AGENT_TOKEN: str = Field(min_length=32, repr=False)
 
     # ── Reports ─────────────────────────────────────────────────────────
-    REPORT_OUTPUT_DIR: str = "/opt/pentest-ai/reports"
+    REPORT_OUTPUT_DIR: str = "./reports"
 
     # ── API ─────────────────────────────────────────────────────────────
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     WEB_PORT: int = 7000
-    ALLOWED_ORIGINS: List[str] = ["*"]
+    ALLOWED_ORIGINS: List[str] = ["http://127.0.0.1:7000", "http://localhost:7000"]
 
     # ── Encryption ──────────────────────────────────────────────────────
-    FERNET_KEY: str = Field(default="", env="FERNET_KEY")
+    FERNET_KEY: str = Field(repr=False)
+    FERNET_PREVIOUS_KEYS: List[str] = Field(default_factory=list, repr=False)
 
     # ── v10: CVE enrichment ─────────────────────────────────────────────
     NVD_API_KEY: str = Field(default="", env="NVD_API_KEY")
@@ -87,11 +78,56 @@ class Settings(BaseSettings):
     # ── Logging ─────────────────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"
 
+    @field_validator("SECRET_KEY", "KALI_AGENT_TOKEN")
+    @classmethod
+    def reject_placeholder_secrets(cls, value: str) -> str:
+        lowered = value.lower()
+        if any(word in lowered for word in ("pentestai", "change-me", "change-this", "placeholder")):
+            raise ValueError("A unique deployment secret is required")
+        if len(set(value)) < 8:
+            raise ValueError("A randomly generated deployment secret is required")
+        return value
+
+    @field_validator("FERNET_KEY")
+    @classmethod
+    def valid_encryption_key(cls, value: str) -> str:
+        try:
+            Fernet(value.encode())
+        except Exception:
+            raise ValueError("A persistent valid encryption key is required") from None
+        return value
+
+    @field_validator("KALI_AGENT_URL")
+    @classmethod
+    def validate_worker_url(cls, value):
+        from urllib.parse import urlsplit
+        if not value:
+            return value
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError()
+        except ValueError:
+            raise ValueError("Worker URL must be HTTP(S), without embedded credentials, query or fragment") from None
+        return value
+
+    @field_validator("FERNET_PREVIOUS_KEYS")
+    @classmethod
+    def valid_previous_keys(cls, values):
+        try:
+            for value in values:
+                Fernet(value.encode())
+        except Exception:
+            raise ValueError("Invalid previous encryption key") from None
+        return values
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "case_sensitive": True,
         "extra": "ignore",
+        "hide_input_in_errors": True,
     }
 
 

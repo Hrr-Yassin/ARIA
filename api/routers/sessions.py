@@ -41,6 +41,12 @@ async def get_session(session_id: str, user: TokenData = Depends(get_current_use
 @router.delete("/{session_id}")
 async def delete_session(session_id: str, user: TokenData = Depends(get_current_user)):
     await get_accessible_session(session_id, user)
+    from memory.worker_jobs import worker_jobs
+    from agents.autonomous_engine import autonomous_engine
+    result = await worker_jobs.cancel_session(user.user_id, session_id)
+    if result['pending']:
+        raise HTTPException(409, "Worker cancellation is not confirmed; engagement was not archived")
+    await autonomous_engine.detach_session(session_id)
     await session_manager.delete_session(session_id)
     return {"status": "deleted", "session_id": session_id}
 

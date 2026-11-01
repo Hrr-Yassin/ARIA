@@ -1,18 +1,22 @@
 """
-PentestAI v8 — Main Application
+PentestAI v10 — Main Application
 FastAPI backend serving API + Web UI on Ubuntu.
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from security.redaction import configure_logging
+configure_logging()
+
 import structlog
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.auth import (
-    LoginRequest, LoginResponse, authenticate_user, create_token, seed_default_users,
+    LoginRequest, LoginResponse, authenticate_user, create_token, get_current_user, TokenData,
+    auth_revision, revoke_credentials,
 )
 from api.routers import pentest as pentest_router
 from api.routers import sessions as sessions_router
@@ -29,7 +33,7 @@ log = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("PentestAI v9 starting...")
+    log.info("ARIA starting", version=settings.APP_VERSION)
 
     # Initialize database
     await init_db()
@@ -37,25 +41,40 @@ async def lifespan(app: FastAPI):
     # Initialize Redis
     await session_manager.initialize()
     await knowledge_cache.initialize_redis(session_manager._redis)
+    from memory.vector_store import vector_store
+    if session_manager._redis:
+        try:
+            await vector_store.load(session_manager._redis)
+        except Exception:
+            log.warning("vector_cache_restore_failed")
 
-    # Seed default users
-    await seed_default_users()
+    from memory.worker_jobs import worker_jobs
+    await worker_jobs.recover()
 
     # Ensure report directory
     Path(settings.REPORT_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
-    log.info("PentestAI v8 ready",
+    log.info("ARIA ready",
              api_port=settings.API_PORT,
              web_port=settings.WEB_PORT)
     yield
 
+    from agents.autonomous_engine import autonomous_engine
+    await autonomous_engine.shutdown()
+    await worker_jobs.recover()
+    await worker_jobs.drain_cleanup()
+    if session_manager._redis:
+        try:
+            await vector_store.persist(session_manager._redis)
+        except Exception:
+            log.warning("vector_cache_flush_failed")
     await session_manager.close()
-    log.info("PentestAI v8 shutdown")
+    log.info("ARIA shutdown")
 
 
 app = FastAPI(
-    title="PentestAI v9",
-    version="9.0.0",
+    title=settings.APP_NAME,
+    version=settings.APP_VERSION,
     lifespan=lifespan,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url=None,
@@ -69,6 +88,19 @@ app.add_middleware(
     allow_credentials=True,
 )
 
+@app.middleware("http")
+async def request_correlation(request: Request, call_next):
+    import uuid
+    from structlog.contextvars import bound_contextvars
+    # Generate locally: arbitrary caller headers never become log fields.
+    request_id = uuid.uuid4().hex
+    with bound_contextvars(request_id=request_id):
+        response = await call_next(request)
+        log.info("http_request", method=request.method, status=response.status_code)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 # ── Routers ──────────────────────────────────────────────────────────────
 
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])
@@ -81,11 +113,15 @@ app.include_router(admin_router.router, prefix="/api/admin", tags=["admin"])
 # ── Auth Endpoints ───────────────────────────────────────────────────────
 
 @app.post("/api/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, request: Request, response: Response):
+    from security.login_throttle import login_throttle
+    await login_throttle.reserve(body.username, request.client.host if request.client else "unknown", session_manager._redis)
     user = await authenticate_user(body.username, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_token(user.id, user.username, user.role.value, user.skill_level.value)
+    token = create_token(user.id, user.username, user.role.value, user.skill_level.value, auth_revision=auth_revision(user))
+    response.set_cookie("pentestai_token", token, httponly=True, samesite="strict",
+                        secure=request.url.scheme == "https", max_age=settings.JWT_EXPIRE_MINUTES * 60)
     return LoginResponse(
         token=token,
         user_id=user.id,
@@ -96,9 +132,42 @@ async def login(body: LoginRequest):
     )
 
 
+@app.post("/api/logout")
+async def logout(response: Response, user: TokenData = Depends(get_current_user)):
+    from memory.database_models import User, async_session
+    from sqlalchemy import select
+    async with async_session() as db:
+        row = (await db.execute(select(User).where(User.id == user.user_id).with_for_update())).scalar_one_or_none()
+        if not row:
+            raise HTTPException(401, "Account unavailable")
+        revoke_credentials(row)
+        await db.commit()
+    from agents.autonomous_engine import autonomous_engine
+    from memory.worker_jobs import worker_jobs
+    await autonomous_engine.revoke_principal(user.user_id)
+    cancellation = await worker_jobs.revoke_principal(user.user_id)
+    response.delete_cookie("pentestai_token", httponly=True, samesite="strict")
+    return {"status": "revoked", "cancellation": cancellation}
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": settings.APP_VERSION}
+
+
+@app.get("/api/ready")
+async def readiness():
+    import asyncio
+    from sqlalchemy import text
+    from memory.database_models import engine
+    try:
+        async with asyncio.timeout(3):
+            await init_db()
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+    except Exception:
+        return JSONResponse({"status": "unavailable", "database": False}, status_code=503)
+    return {"status": "ready", "database": True, "version": settings.APP_VERSION}
 
 
 # ── Web UI Serving ───────────────────────────────────────────────────────
@@ -142,34 +211,24 @@ async def serve_chat(session_id: str):
     raise HTTPException(404, "Not found")
 
 
-_MIME = {
-    ".js":    "application/javascript",
-    ".mjs":   "application/javascript",
-    ".css":   "text/css",
-    ".html":  "text/html",
-    ".json":  "application/json",
-    ".png":   "image/png",
-    ".jpg":   "image/jpeg",
-    ".jpeg":  "image/jpeg",
-    ".svg":   "image/svg+xml",
-    ".ico":   "image/x-icon",
-    ".woff":  "font/woff",
-    ".woff2": "font/woff2",
-    ".ttf":   "font/ttf",
-    ".map":   "application/json",
-}
+# Only explicit UI routes and the confined StaticFiles mount serve files.
+@app.get("/login.html", response_class=HTMLResponse)
+async def login_alias():
+    return await serve_login()
+
+
+@app.get("/admin.html", response_class=HTMLResponse)
+async def admin_alias():
+    return await serve_admin()
+
+
+@app.get("/index.html", response_class=HTMLResponse)
+async def index_alias():
+    return await serve_ui()
+
 
 @app.get("/{path:path}")
 async def catch_all(path: str):
-    from fastapi.responses import FileResponse
-    f = WEB_DIR / path
-    if f.exists() and f.is_file():
-        media_type = _MIME.get(Path(path).suffix.lower())
-        return FileResponse(str(f), media_type=media_type)
-    # SPA fallback for client-side routing
-    f = WEB_DIR / "index.html"
-    if f.exists():
-        return HTMLResponse(f.read_text(encoding="utf-8"))
     raise HTTPException(404, "Not found")
 
 

@@ -1,5 +1,7 @@
 # ARIA / pentest-ai — Technical and Security Review
 
+**Historical baseline:** P0/P1 remediation is now tracked in [docs/security-review.md](docs/security-review.md). Findings below describe the reviewed baseline; consult that status document before treating a finding as currently open. P2 implementation and validation are tracked separately in [docs/p2-status.md](docs/p2-status.md).
+
 Review date: 2026-11-01. Baseline: `e03d0d9afa564c62034aa037f3ef7cc4da940e6a` (`main`, initial project upload). Scope: the tracked backend, frontend, configuration, persistence, provider adapters, and installation scripts. This is a source-based engineering review with targeted local verification, not a completed penetration test or a guarantee that every defect has been discovered.
 
 ## Executive assessment

@@ -11,7 +11,6 @@ async function doLogin(){
     if(!r.ok||data.error){err.textContent=data.detail||data.error||'Login failed';err.style.display='block';btn.disabled=false;btn.textContent='Sign In';return;}
     localStorage.setItem('pentestai_token',data.token||data.access_token);
     localStorage.setItem('pentestai_user',JSON.stringify({user_id:data.user_id,username:data.username||user,role:data.role||'pentester',skill_level:data.skill_level||'intermediate'}));
-    document.cookie='pentestai_token='+(data.token||data.access_token)+'; path=/; SameSite=Strict';
     window.location.href='/';
   }catch(e){err.textContent='Connection error';err.style.display='block';btn.disabled=false;btn.textContent='Sign In';}
 }

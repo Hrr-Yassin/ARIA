@@ -12,3 +12,5 @@ __pycache__/
 *.key
 reports/
 backup_v9_*/
+
+.local-lab/

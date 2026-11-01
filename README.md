@@ -4,7 +4,7 @@ ARIA (`pentest-ai`) is an academic proof of concept for a penetration tester wor
 
 The research question is whether specialized agents, structured tool evidence, and explicit human decisions improve an authorized assessment's quality, efficiency, and traceability.
 
-**Current status:** prototype under integration. The repository contains substantial implementation, but the current frontend/backend contracts and several security controls are incomplete. It is not ready for an exposed or production deployment. See [technical_revow.md](technical_revow.md) for the evidence, limitations, and remediation backlog. Features described as proposed below are evaluation targets, not verified guarantees of this release.
+**Current status:** prototype under integration. P0 and prioritized P1 fixes have offline regression coverage, including private retrieval/report access, revocation, credential handling and durable worker cancellation state; broader integration and recovery work remains. It is not ready for an exposed or production deployment. See [docs/security-review.md](docs/security-review.md) for current remediation status and [technical_revow.md](technical_revow.md) for the baseline review. Features described as proposed below are evaluation targets, not verified guarantees of this release.
 
 ## Current architecture
 
@@ -20,8 +20,9 @@ flowchart TD
     Specialists <--> Memory[Knowledge cache / attack KB / vector retrieval / playbooks]
     API --> Auto[Autonomous engine and approval queue]
     Auto --> Coordinator
-    API -->|Manual command paths| Kali[External Kali execution service]
-    Auto -->|Autonomous command path| Kali
+    API --> Gate[Shared execution authorization and durable approvals]
+    Auto --> Gate
+    Gate --> Kali[External Kali execution service]
     Kali --> Results[Tool output]
     Results --> Parsers[Deterministic output parsers]
     Parsers --> Memory
@@ -31,7 +32,7 @@ flowchart TD
     Memory --> CVE[CVE enrichment: NVD / static fallback data]
 ```
 
-The diagram shows the implemented components and intended connections. Some connections are incomplete or inconsistent: execution paths do not share one policy gate; vector persistence is not wired into application startup/shutdown; automatic playbook saving and the standalone ReAct loop are not connected to the main workflow.
+The diagram shows the implemented components and intended connections. Execution paths share a policy gate. Encrypted vector cache restores/flushes when Redis is available; full investigation-state recovery is not implemented; automatic playbook saving and the standalone ReAct loop are not connected to the main workflow.
 
 ### Component responsibilities
 
@@ -45,9 +46,9 @@ The diagram shows the implemented components and intended connections. Some conn
 | `config/` | Environment settings, tool metadata and CVE enrichment | `settings.py`, `tools_registry.py`, `cve_enricher.py` |
 | `web/` | Login, tactical workspace and administrator interface | `index.html`, `login.html`, `admin.html`, `static/` |
 
-PostgreSQL stores users, provider keys, sessions, findings, chats, audit records, decision logs, and playbooks. Redis caches sessions and supports optional embedding storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
+PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
 
-The Kali execution service is an external dependency: its server implementation, tool installation, authentication contract, and sandbox are **not included** in this repository.
+The Kali execution service is an external dependency: its server implementation, tool installation and sandbox are **not included**. The API-side job protocol is defined in [docs/worker-contract.md](docs/worker-contract.md).
 
 ## Proposed architecture to evaluate
 
@@ -101,17 +102,18 @@ No benchmark results or security certification are claimed by this repository. E
 
 ## Local development
 
-Use an isolated lab. A Python 3.11 virtual environment is a practical starting point for the existing pins; a full supported-version matrix has not been established. PostgreSQL is required. Redis is optional according to the code, but both cache-present and cache-absent behavior need testing.
+Use an isolated lab. **CPython 3.11 is the supported interpreter series**; setup and runtime reject other minor versions, including the host’s Python 3.14. The core hash-locked dependencies install and pass offline regressions on Linux x86_64 with Python 3.11. PostgreSQL is required; Redis is optional. PostgreSQL 16.6 and Redis 7.4.1 are configured in CI; live-service integration tests now pass on Fedora (see [P2 status](docs/p2-status.md)).
 
 ```bash
 git clone git@github.com:Hrr-Yassin/ARIA.git
 cd ARIA
 python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.txt
+python -m pip check
 ```
 
-`sentence-transformers` and NumPy are listed in `requirements.txt`. The implementation has a keyword fallback when embedding dependencies/model loading are unavailable, but the requirements file still installs those packages. Loading semantic embeddings can download a model and consume additional disk and memory.
+The supported dependency lock uses keyword retrieval and excludes heavy optional embedding packages. Experimental semantic retrieval requires separately provisioned `sentence-transformers`, NumPy and a local model directory selected by `ARIA_EMBEDDING_MODEL_PATH`. The loader uses `local_files_only=True`; request handling never downloads a model. That optional dependency/model combination has no supported lock or real-model benchmark yet. A single background inference slot admits no waiting queue; busy, oversized or timed-out requests fall back to keywords. See [P2 status](docs/p2-status.md) for bounds and limitations.
 
 Provision a local PostgreSQL database and a dedicated database role. Create an untracked `.env` containing the following values, replacing all placeholders:
 
@@ -121,6 +123,7 @@ FERNET_KEY=<persistent-valid-fernet-key>
 DATABASE_URL=postgresql+asyncpg://<user>:<password>@127.0.0.1:5432/pentestai
 REDIS_URL=redis://127.0.0.1:6379/0
 KALI_AGENT_URL=http://<isolated-worker-address>:9000
+KALI_WORKER_PROTOCOL=jobs-v1
 KALI_AGENT_TOKEN=<worker-authentication-secret>
 REPORT_OUTPUT_DIR=./reports
 ALLOWED_ORIGINS=["http://127.0.0.1:7000"]
@@ -132,27 +135,31 @@ DECISION_LOG_ENABLED=true
 DEBUG=false
 ```
 
-Generate the signing secret with `python -c 'import secrets; print(secrets.token_hex(32))'` and the encryption key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Keep the same encryption key across restarts and protect it separately from database backups. An optional `NVD_API_KEY` configures CVE enrichment.
+Generate the signing secret with `python -c 'import secrets; print(secrets.token_hex(32))'` and the encryption key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Keep the encryption key persistent and protect it separately from database backups. Controlled rotation uses `FERNET_PREVIOUS_KEYS` and `python -m api.rotate_provider_keys`; retain previous keys until cached evidence is rewritten or expires. An optional `NVD_API_KEY` configures CVE enrichment.
 
 ```bash
+python -m alembic upgrade head
+python -m api.bootstrap_admin
 python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
 ```
 
-Visit `http://127.0.0.1:7000/login`. Startup creates missing tables and seeds hardcoded demonstration accounts; replace that behavior before using real engagement data. The existing UI has login/session/API mismatches documented in the technical review, so a running server does not currently establish an operational end-to-end workflow.
+Visit `http://127.0.0.1:7000/login`. Startup verifies the schema revision and does not create tables or seed accounts. Apply migrations before starting; bootstrap an administrator interactively without default credentials. For an existing unversioned database, back up and restore to staging first, then follow [migration adoption](docs/p2-status.md). Do not run the initial upgrade over populated legacy tables.
 
-`/api/health` is a liveness response, not a database, worker, or model readiness check. Table creation uses SQLAlchemy `create_all`, not versioned schema migration. Keep one API worker until process-local state is replaced with durable shared state.
+`/api/health` is liveness. `/api/ready` checks database connectivity and schema revision with a three-second deadline; it does not certify worker/provider readiness. Redis is optional. Keep one API worker: planning state and subscribers remain local. Durable worker recovery reconciles/cancels jobs without resubmitting commands or resuming investigation loops.
 
-`setup.sh` remains as a legacy Ubuntu installation script for reference. It installs system packages globally and runs the service as root. Prefer the isolated development procedure above; redesign the script before using it for deployment.
+`bash setup.sh` creates a checkout-local `.venv`, validates Python 3.11, installs the hash lock and checks dependency consistency. It refuses root, never invokes an OS package manager or changes services, and leaves infrastructure provisioning to the operator. [deploy/aria.service](deploy/aria.service) is an optional user-systemd unit for a checkout at `~/aria`; review its paths and environment before installing it with `systemctl --user`. It binds to loopback and uses one process. The installed Fedora user service passes local startup/readiness/login checks; TLS/reverse-proxy deployment remains unverified. See [Fedora manual lab](docs/fedora-lab.md).
 
 ## Backend route map
 
-These paths follow `api/main.py` router registration. Several current frontend calls use different paths; this is an open integration defect.
+These paths follow `api/main.py` router registration. The frontend uses these registered paths; unknown API routes return JSON 404.
 
 | Purpose | Backend route |
 | --- | --- |
-| Login / liveness | `POST /api/login`, `GET /api/health` |
+| Login / liveness / database readiness | `POST /api/login`, `GET /api/health`, `GET /api/ready` |
 | Create / list sessions | `POST /api/session/new`, `GET /api/session/list` |
 | User input / tool output | `POST /api/v8/input`, `POST /api/tool-results` |
+| Job diagnostics | `GET /api/jobs/{session_id}/{job_id}`, `GET /api/running/{session_id}` |
+| Command proposals / decisions | `POST /api/execution/proposals`, `POST /api/execution/{action_id}/decision` |
 | Manual execution / chat socket | `POST /api/kali/execute`, `WS /api/ws/chat` |
 | Autonomous lifecycle | `/api/pentest/{session_id}/autonomous/{start,stop,status,approvals,approve}` (method depends on action) |
 | Autonomous events | `WS /api/pentest/ws/{session_id}/auto` |
@@ -163,4 +170,19 @@ These paths follow `api/main.py` router registration. Several current frontend c
 
 The obsolete `apply_v10_overlay.sh` and `README_V10.md` were removed during review. They described patching a separate v9 tree, referenced an absent router-additions file, and did not describe this integrated checkout. Git history preserves them. Runtime modules and package initializers were retained; partially wired functionality should be repaired or deliberately retired, not deleted based on filename alone.
 
-Read [technical_revow.md](technical_revow.md) before planning fixes or claiming evaluation readiness. This documentation and cleanup do not themselves remediate the runtime findings.
+Read [technical_revow.md](technical_revow.md) before planning fixes or claiming evaluation readiness. Current P0 fixes and offline test commands are recorded in [docs/security-review.md](docs/security-review.md); Remaining P1/P2 limitations and worker compatibility requirements are listed there. Old unregistered reports require verified operator import with `python -m api.import_report`; filenames alone never authorize downloads.
+
+## Offline regression checks
+
+```bash
+python -m unittest discover -s tests -t . -q
+node tests/frontend_contracts.cjs
+```
+
+The offline Python tests block outbound sockets/DNS and mock workers/providers/storage. They cover
+two-user isolation, report authorization, credential rotation/revocation, forged
+results, concurrent dispatch/cancellation and restart recovery. No real security
+scans are run. Existing JWTs must be renewed after the credential-revision upgrade.
+
+
+CI runs the locked Python installation, offline/Node regressions and separate disposable PostgreSQL/Redis integration tests. See [docs/p2-status.md](docs/p2-status.md) for commands, migration safety, dependency lock maintenance, executed results and remaining risks. Integration tests must not target an operational database.

@@ -3,11 +3,12 @@ PentestAI v8 — Admin Router
 Admin panel endpoints: audit logs, user management, system monitoring.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from sqlalchemy import func, select, update
 
 from api.auth import require_admin, get_current_user, TokenData, hash_password
+from security.credentials import revoke_credentials
 from memory.database_models import (
     AuditLog,
     ChatLog,
@@ -29,16 +30,17 @@ router = APIRouter()
 
 class CreateUserRequest(BaseModel):
     username: str
-    password: str
+    password: str = Field(min_length=14, max_length=1024)
     role: str = "pentester"
     skill_level: str = "intermediate"
     display_name: Optional[str] = ""
 
 class UpdateUserRequest(BaseModel):
+    role: Optional[UserRole] = None
     skill_level: Optional[str] = None
     is_active: Optional[bool] = None
     display_name: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = Field(default=None, min_length=14, max_length=1024)
 
 
 @router.get("/users")
@@ -145,34 +147,48 @@ async def create_user(body: CreateUserRequest, user: TokenData = Depends(require
 async def update_user(user_id: str, body: UpdateUserRequest,
                       admin: TokenData = Depends(require_admin)):
     async with async_session() as db:
-        result = await db.execute(select(User).where(User.id == user_id))
+        result = await db.execute(select(User).where(User.id == user_id).with_for_update())
         u = result.scalar_one_or_none()
         if not u:
             raise HTTPException(404, "User not found")
+        if body.role is not None:
+            revoke_credentials(u)
+            u.role = body.role
         if body.skill_level:
             u.skill_level = SkillLevel(body.skill_level)
         if body.is_active is not None:
+            revoke_credentials(u)
             u.is_active = body.is_active
         if body.display_name is not None:
             u.display_name = body.display_name
         if body.password:
+            revoke_credentials(u)
             u.password_hash = hash_password(body.password)
         await db.commit()
+    if body.password or body.is_active is not None or body.role is not None:
+        from agents.autonomous_engine import autonomous_engine
+        from memory.worker_jobs import worker_jobs
+        await autonomous_engine.revoke_principal(user_id)
+        cancellation = await worker_jobs.revoke_principal(user_id)
+        return {"status": "updated", "cancellation": cancellation}
     return {"status": "updated"}
 
 
 @router.delete("/users/{user_id}")
 async def delete_user(user_id: str, admin: TokenData = Depends(require_admin)):
     async with async_session() as db:
-        result = await db.execute(select(User).where(User.id == user_id))
+        result = await db.execute(select(User).where(User.id == user_id).with_for_update())
         u = result.scalar_one_or_none()
         if not u:
             raise HTTPException(404, "User not found")
-        if u.username in ("myth", "hacker"):
-            raise HTTPException(400, "Cannot delete default users")
+        revoke_credentials(u)
         u.is_active = False
         await db.commit()
-    return {"status": "deactivated"}
+    from agents.autonomous_engine import autonomous_engine
+    from memory.worker_jobs import worker_jobs
+    await autonomous_engine.revoke_principal(user_id)
+    cancellation = await worker_jobs.revoke_principal(user_id)
+    return {"status": "deactivated", "cancellation": cancellation}
 
 
 # ── Audit Logs ───────────────────────────────────────────────────────────

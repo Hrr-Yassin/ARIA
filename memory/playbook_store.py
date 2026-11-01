@@ -14,6 +14,7 @@ human pentester always validates before any exploit step is taken.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -21,7 +22,8 @@ from datetime import datetime
 from typing import List, Optional
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
+from memory.access_scope import owned_session_ids
 
 log = structlog.get_logger("playbook_store")
 
@@ -72,6 +74,8 @@ class PlaybookStore:
         """
         from memory.database_models import async_session, Playbook  # noqa: PLC0415
 
+        if session_id not in await owned_session_ids(user_id):
+            raise PermissionError("Engagement access denied")
         pb_id = str(uuid.uuid4())
         version_pattern = self._make_version_pattern(version)
         tags_list = tags or self._auto_tags(service, steps)
@@ -118,26 +122,22 @@ class PlaybookStore:
         return model
 
     async def get_best_playbook(self, service: str, version: str = "",
-                                 goal_type: str = "") -> Optional[PlaybookModel]:
+                                 goal_type: str = "", *, user_id: str = "") -> Optional[PlaybookModel]:
         """Return the highest-success-rate playbook matching this target."""
-        await self._load_cache()
+        items = await self._load_cache(user_id)
         candidates = []
-        needle = f"{service} {version}".lower().strip()
 
-        for pb in self._cache.values():
+        for pb in items.values():
             if goal_type and pb.goal_type != goal_type:
                 continue
-            if pb.service.lower() not in needle:
+            if pb.service.casefold().strip() != service.casefold().strip():
                 continue
             score = pb.success_rate
-            # Version pattern bonus
-            if pb.version_pattern:
-                try:
-                    import re as _re
-                    if _re.search(pb.version_pattern, needle, _re.I):
-                        score += 0.2
-                except Exception:  # noqa: BLE001
-                    pass
+            # Only exact patterns produced by this store are admissible. Legacy
+            # wildcard/unknown-version rows cannot establish applicability.
+            if not version or pb.version_pattern != self._make_version_pattern(version):
+                continue
+            score += 0.2
             # Need reasonable reliability
             if pb.success_count == 0:
                 continue
@@ -156,28 +156,28 @@ class PlaybookStore:
         return best
 
     async def get_similar_playbooks(self, services_list: List[str],
-                                     limit: int = 5) -> List[PlaybookModel]:
+                                     limit: int = 5, *, user_id: str = "") -> List[PlaybookModel]:
         """Return playbooks that match ANY of the provided services."""
-        await self._load_cache()
+        items = await self._load_cache(user_id)
         needles = [s.lower() for s in services_list if s]
         matches = []
-        for pb in self._cache.values():
+        for pb in items.values():
             if any(pb.service.lower() in n or n in pb.service.lower() for n in needles):
                 matches.append(pb)
         matches.sort(key=lambda p: -p.success_rate)
         return matches[:limit]
 
-    async def increment_success(self, playbook_id: str):
-        await self._increment(playbook_id, success=True)
+    async def increment_success(self, playbook_id: str, *, user_id: str = ""):
+        await self._increment(playbook_id, success=True, user_id=user_id)
 
-    async def increment_failure(self, playbook_id: str):
-        await self._increment(playbook_id, success=False)
+    async def increment_failure(self, playbook_id: str, *, user_id: str = ""):
+        await self._increment(playbook_id, success=False, user_id=user_id)
 
     async def list_all(self, user_id: Optional[str] = None,
                         limit: int = 50) -> List[PlaybookModel]:
         """Return all playbooks (for the Intel-panel Playbooks tab)."""
-        await self._load_cache()
-        items = list(self._cache.values())
+        items = await self._load_cache(user_id)
+        items = list(items.values())
         items.sort(key=lambda p: p.last_used, reverse=True)
         return items[:limit]
 
@@ -190,7 +190,7 @@ class PlaybookStore:
         if not pb:
             return ""
         lines = [
-            "PROVEN PLAYBOOK FOR THIS TARGET (suggestion only — human must approve):",
+            "HISTORICAL PLAYBOOK (untrusted suggestion; revalidate all prerequisites):",
             f"  Service: {pb.service}  |  Goal: {pb.goal_type}  |  "
             f"Success rate: {pb.success_rate:.0%}  "
             f"(wins: {pb.success_count}, losses: {pb.failure_count})",
@@ -206,76 +206,54 @@ class PlaybookStore:
     #  Private
     # ────────────────────────────────────────────────────────────────────
 
-    async def _load_cache(self, force: bool = False):
-        if self._cache_loaded and not force:
-            return
+    async def _load_cache(self, user_id: str = "", force: bool = False):
+        # Fresh private snapshots: neither concurrent users nor revocation share a cache.
+        visible = await owned_session_ids(user_id)
+        if not visible:
+            return {}
+        from memory.database_models import async_session, Playbook
         try:
-            from memory.database_models import async_session, Playbook  # noqa: PLC0415
             async with async_session() as db:
-                stmt = select(Playbook).limit(1000)
-                rows = (await db.execute(stmt)).scalars().all()
-                for row in rows:
-                    phases = row.phases if isinstance(row.phases, dict) else {}
-                    self._cache[row.id] = PlaybookModel(
-                        id=row.id,
-                        service=phases.get("service", row.target_profile or ""),
-                        version_pattern=phases.get("version_pattern", ""),
-                        goal_type=phases.get("goal_type", ""),
-                        steps=phases.get("steps", []),
-                        success_rate=float(phases.get("success_rate", 0.0)),
-                        avg_time_seconds=int(phases.get("avg_time_seconds", 0)),
-                        last_used=row.created_at.isoformat() if row.created_at else "",
-                        tags=phases.get("tags", []),
-                        success_count=int(phases.get("success_count", 0)),
-                        failure_count=int(phases.get("failure_count", 0)),
-                    )
-                self._cache_loaded = True
-                log.info("Playbook cache loaded", count=len(self._cache))
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Playbook cache load failed (ok if DB empty)", error=str(exc))
-            self._cache_loaded = True
+                rows = (await db.execute(select(Playbook).where(
+                    Playbook.user_id == user_id,
+                    or_(Playbook.session_id.is_(None), Playbook.session_id.in_(visible)))
+                    .limit(1000))).scalars().all()
+                return {row.id: self._model(row) for row in rows}
+        except Exception:
+            raise RuntimeError("Playbook storage unavailable") from None
 
-    async def _increment(self, playbook_id: str, success: bool):
-        pb = self._cache.get(playbook_id)
-        if not pb:
-            return
-        if success:
-            pb.success_count += 1
-        else:
-            pb.failure_count += 1
-        total = pb.success_count + pb.failure_count
-        pb.success_rate = pb.success_count / total if total else 0.0
-        pb.last_used = datetime.utcnow().isoformat()
-        # Persist
-        try:
-            from memory.database_models import async_session, Playbook  # noqa: PLC0415
-            async with async_session() as db:
-                stmt = select(Playbook).where(Playbook.id == playbook_id)
-                row = (await db.execute(stmt)).scalar_one_or_none()
-                if row is not None:
-                    phases = dict(row.phases) if isinstance(row.phases, dict) else {}
-                    phases.update({
-                        "success_count": pb.success_count,
-                        "failure_count": pb.failure_count,
-                        "success_rate": pb.success_rate,
-                    })
-                    row.phases = phases
-                    await db.commit()
-        except Exception as exc:  # noqa: BLE001
-            log.debug("Playbook increment persist failed", error=str(exc))
+    @staticmethod
+    def _model(row):
+        p = row.phases if isinstance(row.phases, dict) else {}
+        return PlaybookModel(id=row.id, service=p.get('service', row.target_profile or ''),
+            version_pattern=p.get('version_pattern', ''), goal_type=p.get('goal_type', ''),
+            steps=p.get('steps', []), success_rate=float(p.get('success_rate', 0)),
+            avg_time_seconds=int(p.get('avg_time_seconds', 0)),
+            last_used=row.created_at.isoformat() if row.created_at else '', tags=p.get('tags', []),
+            success_count=int(p.get('success_count', 0)), failure_count=int(p.get('failure_count', 0)))
+
+    async def _increment(self, playbook_id: str, success: bool, user_id: str = ""):
+        visible = await owned_session_ids(user_id)
+        if not visible:
+            raise PermissionError("Private playbook access denied")
+        from memory.database_models import async_session, Playbook
+        async with async_session() as db:
+            row = (await db.execute(select(Playbook).where(
+                Playbook.id == playbook_id, Playbook.user_id == user_id,
+                or_(Playbook.session_id.is_(None), Playbook.session_id.in_(visible))).with_for_update())).scalar_one_or_none()
+            if row is None:
+                raise PermissionError("Private playbook access denied")
+            phases = dict(row.phases or {})
+            field = 'success_count' if success else 'failure_count'
+            phases[field] = int(phases.get(field, 0)) + 1
+            total = int(phases.get('success_count', 0)) + int(phases.get('failure_count', 0))
+            phases['success_rate'] = int(phases.get('success_count', 0)) / total
+            row.phases = phases
+            await db.commit()
 
     @staticmethod
     def _make_version_pattern(version: str) -> str:
-        """Turn '2.3.4' into regex '2\\.3\\.[0-9]+' to match minor-version drift."""
-        if not version:
-            return ""
-        parts = version.strip().split(".")
-        if len(parts) < 2:
-            return re.escape(version)
-        # Keep major.minor, wildcard patch
-        import re
-        base = re.escape(".".join(parts[:2]))
-        return f"{base}(\\.\\d+)?"
+        return '^' + re.escape(version.strip()) + '$' if version else ''
 
     @staticmethod
     def _auto_tags(service: str, steps: list) -> List[str]:

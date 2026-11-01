@@ -6,7 +6,7 @@ Manages human-in-the-loop validation and risk scoring.
 v10 additions:
   • Deterministic parser integration in analyze_output() — parsers run BEFORE
     the LLM and inject their findings into the prompt as "PRE-PARSED FACTS"
-  • react_loop() — Reason → Act → Observe cycle returning a full trace
+  • react_loop() — experimental standalone helper; not called by the main workflow
   • query_llm_smart() with task_type routing (small model for analysis,
     best model for exploit reasoning)
   • Vector-store cross-session similar cases injected into prompts
@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 import structlog
 
 from agents.base_agent import BaseAgent
+from memory.execution_authorization import execution_authorization
 from config.tools_registry import (
     REAL_MSF_MODULES, CVE_ACCURACY, NOT_DIRECTLY_EXPLOITABLE,
     TOOL_AGENT_MAP, validate_msf_module, validate_msf_command,
@@ -127,7 +128,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             similar_block = await self.get_similar_cases(
                 query=user_input or f"pentest on {target}",
-                top_k=3, exclude_session=session_id,
+                top_k=3, exclude_session=session_id, user_id=user_id,
             )
             if similar_block:
                 similar_block = f"\n\n{similar_block}"
@@ -276,7 +277,7 @@ JSON response:
         try:
             similar_block = await self.get_similar_cases(
                 query=f"{tool_name} output on {target}",
-                top_k=2, exclude_session=session_id,
+                top_k=2, exclude_session=session_id, user_id=user_id,
             )
             if similar_block:
                 similar_block = f"\n\n{similar_block}"
@@ -488,36 +489,29 @@ Respond as JSON:
                 "reasoning",
             )
 
-            risk = (action.get("risk_color") or "orange").lower()
-
-            # Red-risk → return for human approval
-            if risk == "red":
-                trace.append({
-                    "thought": thought,
-                    "action": action,
-                    "observation": "",
-                    "risk_color": risk,
-                })
-                return {"react_trace": trace, "terminal": False,
-                        "reason": "awaiting_approval",
-                        "pending_action": action}
-
             if is_terminal:
-                trace.append({
-                    "thought": thought, "action": action,
-                    "observation": "", "risk_color": risk,
-                })
+                trace.append({"thought": thought, "action": action, "observation": ""})
                 return {"react_trace": trace, "terminal": True,
                         "reason": stop_reason, "pending_action": None}
 
-            # Execute
-            if executor is not None:
-                try:
-                    out = await executor(action)
-                except Exception as exc:  # noqa: BLE001
-                    out = f"executor error: {exc}"
-            else:
-                out = "[no executor provided — skipping actual exec]"
+            proposal = await execution_authorization.propose(
+                user_id, session_id, action.get("command", ""), action.get("tool", ""),
+                require_approval=action.get("risk_color") == "red",
+            )
+            action = {**action, "command": proposal.command, "tool": proposal.tool,
+                      "risk_color": proposal.risk, "action_id": proposal.id}
+            risk = proposal.risk
+            if proposal.status == "pending":
+                trace.append({"thought": thought, "action": action, "observation": "", "risk_color": risk})
+                return {"react_trace": trace, "terminal": False,
+                        "reason": "awaiting_approval", "pending_action": action}
+
+            # Custom/internal executors are also subject to the same gate.
+            result = await execution_authorization.execute(
+                user_id, session_id, action.get("command", ""), tool=action.get("tool", ""),
+                action_id=action.get("action_id", ""), executor=executor,
+            )
+            out = result.get("stdout", "")
 
             # Parse + fold into observation
             tool = action.get("tool", "")

@@ -298,8 +298,12 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Startup verifies schema; operators apply migrations before starting the API.
+    from sqlalchemy import text
+    async with engine.connect() as conn:
+        revision = await conn.scalar(text("SELECT version_num FROM alembic_version"))
+        if revision != "0001":
+            raise RuntimeError("Database revision unsupported; run python -m alembic upgrade head")
 
 
 async def get_db():

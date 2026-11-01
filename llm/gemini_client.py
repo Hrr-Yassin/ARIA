@@ -16,7 +16,7 @@ class GeminiClient(BaseLLMClient):
         if not self.api_key:
             return {"success": False, "content": "", "error": "no_key"}
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         parts = []
         if system:
             parts.append({"text": system + "\n\n"})
@@ -25,7 +25,7 @@ class GeminiClient(BaseLLMClient):
         start = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
-                r = await client.post(url, json={
+                r = await client.post(url, headers={"x-goog-api-key": self.api_key}, json={
                     "contents": [{"parts": parts}],
                     "generationConfig": {"temperature": self.temperature, "maxOutputTokens": 4096},
                 })
@@ -46,4 +46,4 @@ class GeminiClient(BaseLLMClient):
         except httpx.HTTPStatusError as e:
             return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
         except Exception as e:
-            return {"success": False, "content": "", "error": str(e), "latency_ms": int((time.monotonic()-start)*1000)}
+            return {"success": False, "content": "", "error": "provider_request_failed", "latency_ms": int((time.monotonic()-start)*1000)}

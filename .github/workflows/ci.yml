@@ -1,0 +1,55 @@
+name: checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  python311:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16.6
+        env:
+          POSTGRES_USER: aria
+          POSTGRES_PASSWORD: disposable-ci-password
+          POSTGRES_DB: aria_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U aria -d aria_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7.4.1
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Isolated locked installation
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements.txt
+          .venv/bin/python -m pip check
+      - name: Offline regression and syntax checks
+        run: |
+          .venv/bin/python -m unittest discover -s tests -t . -q
+          node tests/frontend_contracts.cjs
+          for file in web/static/scripts/*.js; do node --check "$file"; done
+          bash -n setup.sh
+          git diff --check
+      - name: Real PostgreSQL and Redis integration
+        env:
+          ARIA_INTEGRATION: '1'
+          DATABASE_URL: postgresql+asyncpg://aria:disposable-ci-password@127.0.0.1:5432/aria_test
+          REDIS_URL: redis://127.0.0.1:6379/15
+          REPORT_OUTPUT_DIR: /tmp/aria-ci-reports
+        run: |
+          export SECRET_KEY="$(.venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
+          export KALI_AGENT_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
+          export FERNET_KEY="$(.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          .venv/bin/python -m unittest discover -s integration -v

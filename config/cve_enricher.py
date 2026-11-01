@@ -15,8 +15,7 @@ justifie les choix".
 
 Data sources (tried in order, cached 24h in Redis):
   1. NVD REST API v2        — official & authoritative
-  2. CIRCL CVE Search API   — fallback if NVD rate-limited
-  3. Static fallback table  — last resort for the CVEs we always want to know
+  2. Static fallback table  — last resort for the CVEs we always want to know
 
 HUMAN-IN-THE-LOOP NOTE: enrichment only *identifies and annotates* CVEs. It
 never auto-triggers an exploit. The AttackPlannerAgent still surfaces matching
@@ -353,7 +352,7 @@ class CVEEnricher:
     async def _nvd_search(self, service: str, version: str) -> List[CVEMatch]:
         """
         NVD v2 search. We use keywordSearch (more forgiving than cpeName which
-        requires exact CPE formatting) and filter locally by version.
+        requires exact CPE formatting). Matches are candidates, not applicability proof.
         """
         # Keyword search is more robust for loosely formatted banners
         keyword = f"{service} {version}".strip()
@@ -585,12 +584,12 @@ async def auto_enrich_port(session_id: str, host_ip: str, port: int,
     for m in matches[:5]:
         attack_kb.add_vulnerability(
             session_id, host_ip,
-            title=f"[cve-enrich] {m.cve_id}: {service} {version}",
+            title=f"[candidate-cve] {m.cve_id}: {service} {version}",
             severity=m.severity,
             cve_ids=[m.cve_id],
             cvss=m.cvss3,
-            description=m.description,
-            exploitable=(m.msf_module is not None and m.cvss3 >= 7.0),
+            description="Unverified applicability. " + m.description,
+            exploitable=False,  # A module mapping and score do not establish applicability.
             port=port,
         )
     if matches:

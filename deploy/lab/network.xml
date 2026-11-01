@@ -1,0 +1,13 @@
+<network>
+  <name>aria-lab</name>
+  <bridge name='virbr-aria' stp='on' delay='0'/>
+  <domain name='aria-lab'/>
+  <dns enable='no'/>
+  <ip address='192.168.77.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='192.168.77.100' end='192.168.77.150'/>
+      <host mac='52:54:00:1c:ee:4b' name='kali' ip='192.168.77.10'/>
+      <host mac='52:54:00:77:00:20' name='aria-target' ip='192.168.77.20'/>
+    </dhcp>
+  </ip>
+</network>

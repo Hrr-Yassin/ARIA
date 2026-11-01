@@ -66,15 +66,17 @@ class SessionManager:
             await self._redis.setex(
                 f"session:{session_id}",
                 settings.REDIS_SESSION_TTL,
-                json.dumps({"target": target, "user_id": user_id, "name": name,
+                json.dumps({"session_id": session_id, "target": target, "user_id": user_id, "name": name,
+                            "scope": scope or {"targets": [target], "exclusions": []},
+                            "status": "active", "context_type": context_type,
                             "phase": "scope", "tools_run": [], "open_ports": []}),
             )
 
         return {"session_id": session_id, "name": name, "target": target}
 
-    async def get_session(self, session_id: str) -> Optional[dict]:
-        # Try Redis first
-        if self._redis:
+    async def get_session(self, session_id: str, *, authoritative: bool = False) -> Optional[dict]:
+        # Authorization callers bypass cached owner/scope data.
+        if self._redis and not authoritative:
             cached = await self._redis.get(f"session:{session_id}")
             if cached:
                 return json.loads(cached)
@@ -193,6 +195,8 @@ class SessionManager:
                 business_impact=finding.get("business_impact", ""),
                 agent_type=finding.get("agent_type", ""),
                 confidence=finding.get("confidence", 0.5),
+                metadata_=finding.get("metadata", {}),
+                human_verified=False,
             )
             db.add(f)
             await db.commit()
@@ -216,6 +220,8 @@ class SessionManager:
                 "vulnerability_type": f.vulnerability_type,
                 "agent_type": f.agent_type,
                 "confidence": f.confidence,
+                "human_verified": bool(f.human_verified),
+                "evidence_source": (f.metadata_ or {}).get("evidence_source", "legacy_unverified"),
                 "created_at": f.created_at.isoformat() if f.created_at else "",
             } for f in findings]
 

@@ -81,6 +81,14 @@ class BaseAgent(ABC):
         """
         return await pool_manager.query_for_task(user_id, task_type, prompt, system)
 
+    async def call_llm(self, session_id: str, user_id: str, prompt: str,
+                       skill_level: str = "intermediate") -> dict:
+        from api.auth import current_identity
+        from api.session_access import get_accessible_session
+        await get_accessible_session(session_id, await current_identity(user_id))
+        result = await self.query_llm_smart(user_id, prompt, self.get_system_prompt(skill_level))
+        return (self.parse_json(result.get('content', '')) or {}) if result.get('success') else {}
+
     # ── JSON parsing helper ─────────────────────────────────────────────
 
     def parse_json(self, content: str) -> Optional[dict]:
@@ -90,11 +98,13 @@ class BaseAgent(ABC):
         m = re.search(r"\{.*\}", content, re.DOTALL)
         if m:
             try:
-                return json.loads(m.group())
+                parsed = json.loads(m.group())
+                return parsed if isinstance(parsed, dict) else None
             except json.JSONDecodeError:
                 pass
         try:
-            return json.loads(content)
+            parsed = json.loads(content)
+            return parsed if isinstance(parsed, dict) else None
         except json.JSONDecodeError:
             return None
 
@@ -105,11 +115,11 @@ class BaseAgent(ABC):
         return vector_store.build_context(session_id, query)
 
     async def get_similar_cases(self, query: str, top_k: int = 3,
-                                 exclude_session: str = "") -> str:
+                                 exclude_session: str = "", *, user_id: str = "") -> str:
         """v10: cross-session semantic context for LLM prompts."""
         try:
             results = await vector_store.search_similar(
-                query, top_k=top_k, exclude_session=exclude_session or None,
+                query, top_k=top_k, exclude_session=exclude_session or None, user_id=user_id,
             )
             return vector_store.similar_cases_block(results)
         except Exception as exc:  # noqa: BLE001

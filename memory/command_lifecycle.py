@@ -13,6 +13,8 @@ import httpx
 
 from config.settings import settings
 from memory.command_registry import command_registry
+from memory.execution_authorization import execution_authorization
+from memory.worker_jobs import worker_jobs
 
 log = structlog.get_logger("lifecycle")
 
@@ -50,26 +52,12 @@ class CommandLifecycleManager:
     async def execute(self, session_id: str, command: str,
                       target: str = "", agent: str = "",
                       phase: str = "", timeout: int = COMMAND_TIMEOUT,
-                      force: bool = False) -> dict:
+                      force: bool = False, user_id: str = "", action_id: str = "") -> dict:
         """
         Execute a command on the Kali Agent with full lifecycle control.
         Returns {stdout, stderr, exit_code, execution_time_ms, status, cached}
         """
         self._ensure(session_id)
-
-        # Solution 1 — duplicate check
-        if not force and command_registry.is_duplicate(session_id, command):
-            prev = command_registry.get_previous_result(session_id, command)
-            log.info("Duplicate command blocked", session=session_id, cmd=command[:60])
-            return {
-                "stdout": prev.stdout,
-                "stderr": "",
-                "exit_code": 0,
-                "execution_time_ms": prev.execution_time_ms,
-                "status": prev.status,
-                "cached": True,
-                "cached_at": prev.executed_at,
-            }
 
         # Concurrent limit
         if len(self._running[session_id]) >= MAX_CONCURRENT:
@@ -86,14 +74,10 @@ class CommandLifecycleManager:
         )
 
         async def _call():
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    f"{settings.KALI_AGENT_URL}/execute",
-                    json={"command": command, "target": target},
-                    headers={"X-Token": settings.KALI_AGENT_TOKEN},
-                )
-                resp.raise_for_status()
-                return resp.json()
+            return await execution_authorization.execute(
+                user_id, session_id, command, action_id=action_id,
+                timeout=min(timeout, settings.AUTONOMOUS_STEP_TIMEOUT_SECONDS),
+            )
 
         task = asyncio.create_task(_call())
         rt = RunningTask(task_id=task_id, session_id=session_id,
@@ -130,10 +114,12 @@ class CommandLifecycleManager:
 
         except asyncio.CancelledError:
             elapsed = int((time.time() - t0) * 1000)
-            command_registry.mark_killed(session_id, command)
-            return {"stdout": "", "stderr": "Command killed by user",
+            cancellation = await worker_jobs.cancel_session(user_id, session_id)
+            if cancellation["cancelled"] and not cancellation["pending"]:
+                command_registry.mark_killed(session_id, command)
+            return {"stdout": "", "stderr": "Request interrupted; inspect durable worker status",
                     "exit_code": -1, "execution_time_ms": elapsed,
-                    "status": "killed", "cached": False}
+                    "status": "cancellation_pending" if cancellation["pending"] else "cancelled" if cancellation["cancelled"] else "interrupted", "cached": False}
 
         except Exception as e:
             elapsed = int((time.time() - t0) * 1000)
@@ -152,26 +138,20 @@ class CommandLifecycleManager:
 
     # ── Kill ─────────────────────────────────────────────────────────────
 
-    def kill_all(self, session_id: str) -> int:
-        """Kill all running commands for a session. Returns count killed."""
-        self._ensure(session_id)
-        killed = 0
-        for rt in list(self._running[session_id].values()):
-            if rt.task and not rt.task.done():
-                rt.task.cancel()
-                killed += 1
-        self._running[session_id].clear()
-        log.info("Session commands killed", session=session_id, count=killed)
-        return killed
+    async def kill_all(self, session_id: str, user_id: str = "") -> dict:
+        result = await worker_jobs.cancel_session(user_id, session_id)
+        if not result['pending']:
+            tasks = [rt.task for rt in self._running.get(session_id, {}).values() if rt.task and not rt.task.done()]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return result
 
-    def kill_one(self, session_id: str, task_id: str) -> bool:
-        self._ensure(session_id)
-        rt = self._running[session_id].get(task_id)
-        if rt and rt.task and not rt.task.done():
-            rt.task.cancel()
-            self._running[session_id].pop(task_id, None)
-            return True
-        return False
+    async def kill_one(self, session_id: str, task_id: str, user_id: str = "") -> dict:
+        # Cancellation scope is the engagement, not an untrusted local task ID.
+        if task_id not in self._running.get(session_id, {}):
+            return {"cancelled": 0, "pending": 0, "jobs": []}
+        return await self.kill_all(session_id, user_id=user_id)
 
     def get_running(self, session_id: str) -> list:
         self._ensure(session_id)

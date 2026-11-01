@@ -23,18 +23,20 @@ TOOL_RISK = {
 
 def classify_risk(tool: str, command: str = "") -> str:
     """Classify command risk level."""
-    tool_lower = tool.lower()
-    base_risk = TOOL_RISK.get(tool_lower, "orange")
-
-    # Override based on command content
-    cmd_lower = command.lower()
-    if any(w in cmd_lower for w in ["exploit", "run", "payload", "reverse", "shell"]):
+    import shlex
+    try:
+        argv = shlex.split(command)
+    except ValueError:
         return "red"
-    if any(w in cmd_lower for w in ["--batch", "--force", "brute", "fuzz"]):
-        return "red" if base_risk != "green" else "orange"
-    if any(w in cmd_lower for w in ["-I", "--head", "-s", "passive"]):
-        return "green"
-
+    if not argv or argv[0] != tool:
+        return "red"
+    base_risk = TOOL_RISK.get(tool.lower(), "red")
+    if base_risk == "red":
+        return "red"
+    if tool == "curl":
+        if any(flag in argv for flag in ("-X", "--request", "-d", "--data", "--data-raw")):
+            return "red"
+        return "green" if any(flag in argv for flag in ("-I", "-sI", "-Is", "--head")) else "orange"
     return base_risk
 
 
