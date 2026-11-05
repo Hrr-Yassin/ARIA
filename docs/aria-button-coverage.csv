@@ -37,3 +37,14 @@ index.html,program-review,passed,integration.browser_program_policy; synthetic F
 index.html,program-activate,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
 index.html,program-fit-save,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
 index.html,program-reject,passed,integration.browser_program_policy; synthetic Firefox rejection workflow
+index.html,team-refresh,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-create,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-catalog,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-save-knowledge,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-save-coverage,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-save-budget,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-tasks: Delegate analysis,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-tasks: Mark reviewed and complete,passed,integration.browser_team_tasks; synthetic Firefox; .local-lab/phase2-browser/result.json
+index.html,team-tasks: Cancel task,untested,Server transitions have offline regressions; this individual browser action was not exercised.
+index.html,team-tasks: Request more work,untested,Server transitions have offline regressions; this individual browser action was not exercised.
+index.html,team-tasks: Queue after review,untested,Server transitions have offline regressions; this individual browser action was not exercised.

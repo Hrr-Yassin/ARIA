@@ -210,6 +210,59 @@
       <p class="settings-note">Tools mentioned by agents are proposals. Arbitrary shell commands, Nmap scripts, raw/UDP scans, post-access execution and Burp Scanner are unavailable in this release.</p>
       <p class="settings-note">Live specialist expertise has not been established.</p>
     </section>
+    <section class="settings-section" id="team-panel">
+      <h3>Team tasks and evidence</h3>
+      <p class="settings-note">Delegate analysis of saved evidence. Review every result. Tasks never run tools automatically.</p>
+      <button id="team-refresh" class="btn btn-ghost">Load saved team work</button>
+      <p id="team-status" role="status" aria-live="polite"></p>
+      <details><summary>Create a task</summary>
+        <label>Specialist<select id="team-role"><option>web_intel</option><option>recon</option><option>scan</option><option>vuln</option><option>correlation</option><option>report</option></select></label>
+        <label>Security question / objective<textarea id="team-objective" rows="2"></textarea></label>
+        <label>Expected output<input id="team-expected" value="Evidence-linked observations and remaining uncertainty"></label>
+        <label>Completion criteria (one per line)<textarea id="team-criteria" rows="2">Every conclusion cites evidence or states uncertainty</textarea></label>
+        <label>Dependency task IDs (comma separated)<input id="team-dependencies"></label>
+        <label>Catalog evidence IDs (comma separated)<input id="team-evidence-inputs"></label>
+        <button id="team-create" class="btn btn-ghost">Save queued task</button>
+      </details>
+      <div id="team-tasks"></div>
+      <details><summary>Evidence catalog</summary>
+        <label>Source<select id="team-source-kind"><option value="worker">Worker receipt</option><option value="chat">Saved tool output or capture</option></select></label>
+        <label>Saved source ID<input id="team-source-id"></label>
+        <button id="team-catalog" class="btn btn-ghost">Catalog evidence</button>
+        <div id="team-evidence"></div>
+      </details>
+      <details><summary>Observations and hypotheses</summary>
+        <label>Kind<select id="team-knowledge-kind"><option>observation</option><option>hypothesis</option></select></label>
+        <label>Statement<textarea id="team-knowledge-text" rows="2"></textarea></label>
+        <label>Evidence IDs<input id="team-knowledge-refs"></label>
+        <label>Uncertainty / missing evidence<textarea id="team-uncertainty" rows="2"></textarea></label>
+        <label>Disposition<select id="team-disposition"><option>open</option><option>rejected</option><option>inconclusive</option></select></label>
+        <label>Contradicting observation IDs<input id="team-contradicts"></label>
+        <button id="team-save-knowledge" class="btn btn-ghost">Save statement</button>
+        <div id="team-knowledge"></div>
+      </details>
+      <details><summary>Coverage and gaps</summary>
+        <label>Coverage key<input id="team-coverage-key"></label>
+        <label>Security question<textarea id="team-question" rows="2"></textarea></label>
+        <label>Application feature<input id="team-feature"></label>
+        <label>Status<select id="team-coverage-state"><option>untested</option><option>tested</option><option>unresolved</option><option>blocked</option></select></label>
+        <label>Gap reason<textarea id="team-gap" rows="2"></textarea></label>
+        <label>Evidence IDs<input id="team-coverage-refs"></label>
+        <button id="team-save-coverage" class="btn btn-ghost">Save coverage</button>
+        <div id="team-coverage"></div>
+      </details>
+      <details><summary>Shared model budget</summary>
+        <p class="settings-note">Calls require an owner-entered tariff for the exact provider and model. Use a conservative rate that covers both input and output tokens. Missing provider cost remains unknown. Counters never reset when limits change.</p>
+        <label>Maximum provider calls<input id="team-model-calls" type="number" min="0" max="10000"></label>
+        <label>Maximum reserved tokens<input id="team-model-tokens" type="number" min="0" max="100000000"></label>
+        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001"></label>
+        <label>Provider<select id="team-model-provider"><option>groq</option><option>gemini</option><option>openrouter</option></select></label>
+        <label>Exact configured model name<input id="team-model-name"></label>
+        <label>Conservative combined rate (USD per million tokens)<input id="team-model-rate" type="number" min="0" step="0.000001"></label>
+        <button id="team-save-budget" class="btn btn-ghost">Save model budget</button>
+        <pre id="team-model-usage"></pre>
+      </details>
+    </section>
     <section class="settings-section" id="program-policy-panel">
       <h3>Program discovery and policy</h3>
       <p class="settings-note">Imports are research drafts. Only the engagement owner can activate reviewed HTTP observations. Unknown permission blocks testing.</p>
@@ -308,6 +361,7 @@
 </aside>
 
 <script src="/static/scripts/programs.js" defer></script>
+<script src="/static/scripts/team.js" defer></script>
 <script src="/static/scripts/app.js" defer></script>
 </body>
 </html>

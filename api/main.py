@@ -25,6 +25,7 @@ from api.routers import sessions as sessions_router
 from api.routers import reports as reports_router
 from api.routers import api_keys as api_keys_router
 from api.routers import admin as admin_router
+from api.routers import team as team_router
 from api.routers import programs as programs_router
 from api.routers import burp as burp_router
 from config.settings import settings
@@ -68,6 +69,8 @@ async def lifespan(app: FastAPI):
     await worker_jobs.recover()
     from memory.autonomous_runs import run_store
     await run_store.recover()
+    from memory.team_tasks import team_store
+    await team_store.recover()
     from memory.web_actions import web_actions
     await web_actions.recover()
 
@@ -124,6 +127,7 @@ async def request_correlation(request: Request, call_next):
 
 # ── Routers ──────────────────────────────────────────────────────────────
 
+app.include_router(team_router.router, prefix="/api/team", tags=["team-tasks"])
 app.include_router(programs_router.router, prefix="/api/programs", tags=["program-policies"])
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])

@@ -85,4 +85,13 @@ route,methods,status,evidence_or_limitation
 /api/burp/{session_id}/proxy-history,GET,untested,Current registration; functional coverage not attributed.
 /api/burp/{session_id}/import-selected,POST,untested,Current registration; functional coverage not attributed.
 /api/capabilities,GET,passed,Offline capabilities regression and synthetic Firefox states; informational only.
-/api/profile,GET,untested,Current registration; functional coverage not attributed.
+/api/profile,GET PATCH,untested,Current registration; functional coverage not attributed.
+/api/team/{session_id},GET,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/events,GET,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/tasks,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/tasks/{task_id}/transition,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/tasks/{task_id}/run,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/evidence,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/knowledge,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/coverage,POST,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.
+/api/team/{session_id}/model-budget,GET PUT,passed,Offline identity/state/isolation regressions; disposable SQL/worker team acceptance; synthetic Firefox. Provider responses mocked; no live model quality claim.

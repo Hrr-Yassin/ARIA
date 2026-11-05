@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; later phases remain proposed backlog.
+Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phases 3–8 remain proposed backlog.
 
 ## Objective
 
@@ -70,15 +70,20 @@ escapes, ambiguous permission, and stale approvals. Program discovery never auth
 
 Dependencies: Phases 0–1.
 
-- [ ] TEAM-01: Define task records: owner role, objective, dependencies, evidence inputs, budget, expected output, and completion criteria.
-- [ ] TEAM-02: Add task states: queued, running, awaiting_review, blocked, completed, cancelled, failed.
-- [ ] TEAM-03: Persist task transitions before publishing UI events; make duplicate delivery idempotent.
-- [ ] TEAM-04: Extend the coordinator to delegate and collect typed specialist results using existing result contracts.
-- [ ] TEAM-05: Add a coverage ledger tracking security questions, tested features, unresolved questions, and reasons for gaps.
-- [ ] TEAM-06: Add an evidence catalog with engagement ownership, job/capture references, timestamps, hashes, and redacted summaries.
-- [ ] TEAM-07: Link observations and hypotheses to evidence; preserve contradictory and rejected observations.
-- [ ] TEAM-08: Treat target pages, captures, retrieved text, and tool output as untrusted data; test prompt-injection attempts against action permissions.
-- [ ] TEAM-09: Add global model accounting for actual provider calls, retries, tokens, and cost, with enforced engagement limits.
+Implemented by Codex in the working tree based on `32f157c`. See
+[team implementation and acceptance](phase2-team-status.md) for boundaries,
+configuration requirements, tests, and retained evidence. Tasks delegate analysis;
+existing shared execution authorization still controls all tool traffic.
+
+- [x] TEAM-01: Define task records: owner role, objective, dependencies, evidence inputs, budget, expected output, and completion criteria.
+- [x] TEAM-02: Add task states: queued, running, awaiting_review, blocked, completed, cancelled, failed.
+- [x] TEAM-03: Persist task transitions before publishing UI events; make duplicate delivery idempotent.
+- [x] TEAM-04: Extend the coordinator to delegate and collect typed specialist results using existing result contracts.
+- [x] TEAM-05: Add a coverage ledger tracking security questions, tested features, unresolved questions, and reasons for gaps.
+- [x] TEAM-06: Add an evidence catalog with engagement ownership, job/capture references, timestamps, hashes, and redacted summaries.
+- [x] TEAM-07: Link observations and hypotheses to evidence; preserve contradictory and rejected observations.
+- [x] TEAM-08: Treat target pages, captures, retrieved text, and tool output as untrusted data; test prompt-injection attempts against action permissions.
+- [x] TEAM-09: Add global model accounting for actual provider calls, retries, tokens, and cost, with enforced engagement limits.
 
 Gate: a multi-task lab investigation survives restart without duplicate execution;
 every specialist conclusion has attributable evidence or explicit uncertainty.

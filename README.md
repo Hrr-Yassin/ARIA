@@ -12,6 +12,11 @@ The task backlog is [the product roadmap](docs/aria-product-roadmap.md).
 Phase 1 adds owner-reviewed program policies, a private ranked shortlist, and
 budgeted HTTP observations in Settings. See [policy setup and acceptance](docs/phase1-policy-status.md)
 for supported scopes, activation, worker requirements, and validation.
+Phase 2 adds durable specialist tasks, evidence/coverage ledgers, human result
+review, and shared engagement model budgets in Settings. See [team setup and
+acceptance](docs/phase2-team-status.md). Live provider calls now require an
+owner-configured conservative tariff for the exact provider/model; missing budgets
+fail closed. No owner deployment was updated by this implementation.
 
 ## Current architecture
 

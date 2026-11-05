@@ -20,7 +20,7 @@ class ModelTests(OfflineCase):
         factory = MagicMock(return_value=client)
         with patch('llm.pool_manager.settings.GEMINI_MODEL', 'configured-test-model'), \
              patch.object(manager, '_reserve_key', AsyncMock(return_value=True)), \
-             patch.dict('llm.pool_manager.PROVIDER_CLIENTS', {'gemini': factory}):
+             patch('llm.engagement_budget.model_accounting.reserve', AsyncMock(return_value={'id':'test-attempt'})), patch('llm.engagement_budget.model_accounting.settle', AsyncMock()), patch.dict('llm.pool_manager.PROVIDER_CLIENTS', {'gemini': factory}):
             result = await manager._query_for_task('alice', 'chat_reply', 'test')
         self.assertTrue(result['success'])
         self.assertEqual(result['model'], 'configured-test-model')

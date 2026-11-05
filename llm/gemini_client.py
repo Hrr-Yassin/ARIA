@@ -3,7 +3,7 @@ PentestAI v8 — Gemini Client
 """
 import time
 import httpx
-from llm.base_llm import BaseLLMClient
+from llm.base_llm import BaseLLMClient, usage_metrics
 from config.settings import settings
 
 
@@ -37,16 +37,16 @@ class GeminiClient(BaseLLMClient):
                 r.raise_for_status()
 
                 data = r.json()
+                metrics = usage_metrics(data.get("usageMetadata") or {}, "totalTokenCount")
                 candidates = data.get("candidates", [])
                 if not candidates:
-                    return {"success": False, "content": "", "error": "no_candidates", "latency_ms": latency}
+                    return {"success": False, "content": "", "error": "no_candidates", **metrics, "latency_ms": latency}
 
                 parts = candidates[0].get("content", {}).get("parts", [])
                 content = "".join(part.get("text", "") for part in parts if not part.get("thought"))
                 if not content.strip():
-                    return {"success": False, "content": "", "error": "empty_response", "latency_ms": latency}
-                tokens = data.get("usageMetadata", {}).get("totalTokenCount", 0)
-                return {"success": True, "content": content, "tokens_used": tokens, "latency_ms": latency}
+                    return {"success": False, "content": "", "error": "empty_response", **metrics, "latency_ms": latency}
+                return {"success": True, "content": content, **metrics, "latency_ms": latency}
         except httpx.HTTPStatusError as e:
             return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
         except Exception as e:

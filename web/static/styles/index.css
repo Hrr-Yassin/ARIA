@@ -1020,3 +1020,9 @@ input:focus, textarea:focus, select:focus {
 #program-policy-panel .program-source { white-space:pre-wrap; overflow-wrap:anywhere; max-height:260px; overflow:auto; font-size:12px; }
 #program-policy-panel article { margin:10px 0; padding:10px; border:1px solid #475569; border-radius:5px; }
 #program-policy-panel .form-row { flex-wrap:wrap; }
+
+/* Saved team analysis in Settings. */
+#team-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; font-size: .8rem; }
+#team-panel label { display: block; margin: .5rem 0; }
+#team-panel textarea, #team-panel input, #team-panel select { width: 100%; box-sizing: border-box; }
+.team-card { padding: .75rem; margin: .5rem 0; border: 1px solid var(--bg-border-strong); border-radius: .4rem; }

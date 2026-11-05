@@ -1277,6 +1277,7 @@ function switchSession(s) {
   toolsRun.clear();
   el.approvalBanner.classList.add('hidden');
   state.sessionId = s.session_id;
+  if (window.AriaTeam && window.AriaTeam.reset) window.AriaTeam.reset();
   localStorage.setItem('current_session', s.session_id);
   el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
   setTarget(s.target || '');
@@ -1508,6 +1509,7 @@ async function boot() {
   state.booting = true;
   el.autoBtn.disabled = true;
   bindEvents();
+  if (window.AriaTeam) window.AriaTeam.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   if (window.AriaPrograms) window.AriaPrograms.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   updatePhaseUI();
   await loadSessions();
