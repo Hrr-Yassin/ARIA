@@ -39,6 +39,8 @@ class SQLJobStore:
                 metadata = dict(session.metadata_ or {})
                 used = int(metadata.get('program_requests_used', 0))
                 now = time.time()
+                if metadata.get('program_overloaded'):
+                    raise HTTPException(429, 'Engagement stopped after overload; use a new engagement after review')
                 if used >= rules.max_requests:
                     raise HTTPException(429, 'Engagement request budget exhausted')
                 if len(active) >= rules.concurrency:

@@ -68,3 +68,21 @@ route,methods,status,evidence_or_limitation
 /admin.html,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
 /index.html,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
 /{path:path},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/programs/{session_id}/history,GET,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/{session_id}/import-text,POST,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/{session_id}/{snapshot_id}/review,POST,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/catalog,GET,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/{session_id}/import-page,POST,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/{session_id}/{snapshot_id}/activate,POST,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/programs/{session_id}/{snapshot_id}/fit,POST,passed,Offline missing-identity checks; Phase 1 policy fixtures and disposable SQL/worker acceptance; synthetic Firefox UI. No live public program test.
+/api/burp/{session_id}/{evidence_id}/replay-proposals,POST,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays/{action_id}/decision,POST,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays/{action_id}/execute,POST,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays/{action_id},GET,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays/{action_id}/cancel,POST,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays,GET,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/replays/cancel-all,POST,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/proxy-history,GET,untested,Current registration; functional coverage not attributed.
+/api/burp/{session_id}/import-selected,POST,untested,Current registration; functional coverage not attributed.
+/api/capabilities,GET,passed,Offline capabilities regression and synthetic Firefox states; informational only.
+/api/profile,GET,untested,Current registration; functional coverage not attributed.

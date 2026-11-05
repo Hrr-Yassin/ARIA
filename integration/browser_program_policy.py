@@ -15,6 +15,7 @@ BASE='http://127.0.0.1:17002'
 async def main():
     snapshot=json.loads(subprocess.check_output([str(ROOT/'.venv/bin/python'),'-c',
         'import tests, json; from tests.program_fixtures import policy_fixture; print(json.dumps(policy_fixture()[0]))'],cwd=ROOT))
+    snapshot['source_text']='🔬 Policy review\n'+snapshot['source_text']
     snapshot['source_text']+='\n<img src=x onerror=alert(1)>\n'
     history=[]
     requests=[]

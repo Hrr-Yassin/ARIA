@@ -131,7 +131,7 @@ accounts and secrets. It never uses owner databases or live model providers.
 
 | Command | Result |
 | --- | --- |
-| `DEBUG=false .venv/bin/python -B -m unittest discover -s tests -t . -q` | 156 tests passed, including policy fixtures and retained regressions |
+| `DEBUG=false .venv/bin/python -B -m unittest discover -s tests -t . -q` | 157 tests passed, including policy fixtures and retained regressions |
 | `node tests/frontend_contracts.cjs` | Passed |
 | `node --check web/static/scripts/programs.js` and `node --check web/static/scripts/app.js` | Passed |
 | `ARIA_PHASE1=1 WORKER_TEST_RUNTIME=podman WORKER_TEST_IMAGE=sha256:bb5f48b3d9a9ca41d4375ff50627db0ed0caeeee2d50f8f355c39a2925839e33 DEBUG=false .venv/bin/python -B -m integration.phase1_policy` | Real SQL, explicit activation, isolated curl receipt, source suspension, stale approval, concurrent admission, durable budget, catalog unknowns, and other-owner denial |
@@ -154,3 +154,49 @@ passed. The Phase 0 source manifest, synthetic backup, and report hashes matched
 the retained acceptance record. Historical Phase 0 evidence remains in
 [phase0-baseline.md](phase0-baseline.md). Phase 1 service acceptance uses a fresh lab;
 it does not modify or replace those retained artifacts.
+
+
+## Evaluation follow-up
+
+The Phase 0/1 evaluation gaps are repaired in the current working tree. API
+admission checks the persistent overload flag even after the 24-hour backoff
+expires. The worker persists a stop before cancellation cleanup, including missing
+containers, deadlines, failed startup, owner cancellation and restart recovery.
+Owner cancellation also requires a new engagement after review because no trusted
+HTTP status is available. Existing manually scoped engagements retain their behavior.
+
+Browser review offsets now use Unicode code points consistently with Python.
+Synthetic Firefox acceptance includes an emoji before the reviewed source rules.
+The current route coverage register includes the program endpoints and other
+previously omitted registrations; the Phase 0 inventory remains historical.
+
+Follow-up validation: 157 offline Python tests passed in 6.915 seconds; frontend
+contracts and JavaScript syntax passed; Firefox's seven synthetic workflow checks
+passed with no page errors. New offline scenarios cover expired backoff and worker
+deadline, missing-container, recovery, owner-stop and failed-cleanup paths.
+
+The disposable Phase 1 SQL/Podman runner also passed all ten checks, including
+`expired_backoff_durable_stop` and `missing_container_worker_stop`. The latter
+removes a real admitted job container, records the missing-status stop, and verifies
+that a recreated controller denies another job. The former loads the persisted SQL
+stop through a fresh store after the backoff timestamp has expired.
+
+Commands used for this follow-up (Python/Firefox/service commands outside the
+previously documented sandbox limitation):
+
+```bash
+DEBUG=false .venv/bin/python -B -m unittest discover -s tests -t . -q
+node tests/frontend_contracts.cjs
+node --check web/static/scripts/programs.js
+node --check web/static/scripts/app.js
+DEBUG=false .local-lab/browser-venv/bin/python -B -m integration.browser_program_policy
+ARIA_PHASE1=1 WORKER_TEST_RUNTIME=podman WORKER_TEST_IMAGE=sha256:bb5f48b3d9a9ca41d4375ff50627db0ed0caeeee2d50f8f355c39a2925839e33 DEBUG=false .venv/bin/python -B -m integration.phase1_policy
+git diff --check
+```
+
+Updated results remain in ignored `.local-lab/phase1/` and
+`.local-lab/phase1-browser/`. The service manifest hash is
+`e1e7392ae8a78c8ff36d8a5d05aedcf722fa54f28e15da39b8d6db6c34f6417a`
+for base revision `ed45186` plus these working-tree changes. The runner cleaned up
+its disposable containers/network. No dependency or schema migration is required;
+no owner deployment was updated or restarted.

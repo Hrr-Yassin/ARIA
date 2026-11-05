@@ -103,8 +103,9 @@ function init({api, getContext}) {
     return categories.map(category=>{
       const quote=$('program-quote-'+category).value, interpretation=$('program-interpretation-'+category).value;
       if(!quote || !interpretation) throw new Error('Provide an exact source excerpt and interpretation for every permission category.');
-      const start=source.source_text.indexOf(quote);
-      if(start<0) throw new Error('A source excerpt does not match the imported text.');
+      const utf16Start=source.source_text.indexOf(quote);
+      if(utf16Start<0) throw new Error('A source excerpt does not match the imported text.');
+      const start=Array.from(source.source_text.slice(0,utf16Start)).length;
       return {category,quote,start,interpretation};
     });
   }

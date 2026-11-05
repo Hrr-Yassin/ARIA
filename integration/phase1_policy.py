@@ -113,6 +113,41 @@ async def acceptance(lab):
             await call('GET',base+'/history',expected=404)
             assert (await call('GET','/api/programs/catalog'))['programs']==[]
             checks['owner_isolation']='passed'
+            # Expired backoff must not clear the durable API stop, even with a
+            # fresh store instance and an otherwise exhausted request budget.
+            import time
+            from fastapi import HTTPException
+            from memory.worker_jobs import SQLJobStore
+            async with async_session() as db:
+                saved=(await db.execute(select(PentestSession).where(PentestSession.id==sid))).scalar_one()
+                saved.metadata_={**saved.metadata_, 'program_overloaded':True,
+                                 'program_backoff_until':time.time()-86400}
+                scope=saved.scope
+                await db.commit()
+            try:
+                await SQLJobStore().create({'job_id':str(uuid.uuid4()),'session_id':sid,
+                                           'user_id':owner,'scope':scope})
+                raise AssertionError('Expired backoff cleared the durable stop')
+            except HTTPException as error:
+                assert error.status_code==429 and 'stopped after overload' in error.detail
+            checks['expired_backoff_durable_stop']='passed'
+            # Independently persist the worker stop after a real container goes
+            # missing; a recreated controller must deny another job.
+            job={'job_id':str(uuid.uuid4()),'session_id':str(uuid.uuid4()),
+                 'command':command,'scope':scope,'timeout':20}
+            await service.submit(job)
+            stored=await store.get(job['job_id'])
+            assert await service.runtime.stop(stored)
+            await service.status(job['job_id'])
+            assert (await store.get(job['job_id']))['overloaded']
+            restored=WorkerService(store,service.runtime,service.ceiling,service.allowed_ports)
+            await restored.recover()
+            try:
+                await restored.submit({**job,'job_id':str(uuid.uuid4())})
+                raise AssertionError('Recreated worker cleared the durable stop')
+            except HTTPException as error:
+                assert error.status_code==429 and 'stopped after overload' in error.detail
+            checks['missing_container_worker_stop']='passed'
             return {'status':'passed','checks':checks,'owner_data_accessed':False,
                     'schema_revision':'0003','worker_image':lab.image,'live_models':False}
     finally:

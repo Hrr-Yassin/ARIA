@@ -73,6 +73,10 @@ class WorkerService:
 
     async def _cancel(self, job: dict, reason: str = 'Job terminated') -> dict:
         job['state'] = 'cancel_requested'
+        if job.get('scope', {}).get('program_policy'):
+            # Cancellation has no trustworthy HTTP status, including recovery and
+            # owner Stop. Persist the engagement stop before runtime cleanup.
+            job['overloaded'] = True
         job.setdefault('cancel_reason', reason)
         await self.store.save(job)  # Intent survives daemon/worker failure.
         try:

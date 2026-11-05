@@ -112,7 +112,9 @@ class PolicyAcceptance(OfflineCase):
         job={'job_id':'job','session_id':'engagement','user_id':'owner','scope':scope}
         for metadata,active,allowed in [({},[],True),({'program_requests_used':10},[],False),
                 ({'program_next_request_at':time.time()+100},[],False),
-                ({'program_backoff_until':time.time()+100},[],False),({},[SimpleNamespace(metadata_={'state':'running'})],False)]:
+                ({'program_backoff_until':time.time()+100},[],False),
+                ({'program_overloaded':True,'program_backoff_until':time.time()-86400},[],False),
+                ({},[SimpleNamespace(metadata_={'state':'running'})],False)]:
             session=SimpleNamespace(scope=copy.deepcopy(scope),metadata_=dict(metadata))
             db=SimpleNamespace(execute=AsyncMock(side_effect=[result(session),result(active)]),add=lambda row:None,commit=AsyncMock())
             cm=AsyncMock();cm.__aenter__.return_value=db
@@ -153,6 +155,39 @@ class PolicyAcceptance(OfflineCase):
         with self.assertRaises(HTTPException) as error:await restored.submit({**job,'job_id':'three'})
         self.assertEqual(error.exception.status_code,429)
         self.assertEqual(runtime.creates,1)
+
+    async def test_missing_status_stops_worker_across_recovery_and_cleanup_failure(self):
+        for failure in ('deadline', 'missing_container', 'restart', 'owner_stop', 'cleanup_failure'):
+            with self.subTest(failure=failure):
+                _, _, scope = policy_fixture(host='192.0.2.1', port=8080, scheme='http')
+                store, runtime = MemoryStore(), FakeRuntime()
+                async def history(sid):
+                    return [copy.deepcopy(row) for row in store.rows.values() if row['session_id'] == sid]
+                store.for_session = history
+                service = WorkerService(store, runtime, ['192.0.2.0/24'], [8080])
+                job = {'job_id': 'one', 'session_id': 'engagement',
+                       'command': 'curl http://192.0.2.1:8080/api', 'scope': scope, 'timeout': 20}
+                await service.submit(job)
+                store.rows['one']['admitted_at'] = time.time() - 100000
+                if failure in {'deadline', 'cleanup_failure'}:
+                    store.rows['one']['deadline'] = time.time() - 1
+                    runtime.unavailable = failure == 'cleanup_failure'
+                    await service.status('one')
+                elif failure == 'missing_container':
+                    runtime.jobs.clear()
+                    await service.status('one')
+                elif failure == 'restart':
+                    await service.recover()
+                else:
+                    await service.cancel('one', 'engagement')
+                self.assertTrue(store.rows['one']['overloaded'])
+                runtime.unavailable = False
+                restored = WorkerService(store, runtime, ['192.0.2.0/24'], [8080])
+                await restored.recover()
+                with self.assertRaises(HTTPException) as error:
+                    await restored.submit({**job, 'job_id': 'two'})
+                self.assertEqual(error.exception.status_code, 429)
+                self.assertEqual(runtime.creates, 1)
 
     async def test_ranking_keeps_unknowns_and_program_types_visible(self):
         snapshot,_,_=policy_fixture()
