@@ -1,8 +1,10 @@
 # ARIA worker job contract
 
-The worker server is external to this repository. `memory/worker_jobs.py` implements
-the API-side client, persistent job records, admission fencing and recovery. All
-verification uses mocked workers; no real process termination was tested.
+The `worker/` service implements the server separately from the ARIA process.
+`memory/worker_jobs.py` implements the API-side client, persistent job records,
+admission fencing and recovery. See [worker-setup.md](worker-setup.md) for its
+restricted curl/Nmap profile and [worker-validation.md](worker-validation.md) for
+executed checks and limitations.
 
 ## Default: `KALI_WORKER_PROTOCOL=jobs-v1`
 
@@ -13,8 +15,8 @@ in URLs or JSON bodies. Redirects are not followed. Responses are read with a
 
 | Method / path | Request | Required response |
 | --- | --- | --- |
-| `GET /capabilities` | Bearer authentication | `protocol: "aria-jobs-v1"`, `idempotency: true`, `cancellation: true` |
-| `POST /jobs` | `job_id`, `session_id`, canonical `command`, bounded `timeout` | Snapshot with the same IDs |
+| `GET /capabilities` | Bearer authentication | `protocol: "aria-jobs-v1"`, `idempotency: true`, `cancellation: true`, `network_scope: true` |
+| `POST /jobs` | `job_id`, `session_id`, canonical `command`, bounded `timeout`, authoritative `scope` | Snapshot with the same IDs |
 | `GET /jobs/{job_id}` | Bearer authentication | Snapshot with the same IDs |
 | `POST /jobs/{job_id}/cancel` | `session_id` and Bearer authentication | Snapshot; confirmed cancellation requires `state: "cancelled"` and `terminated: true` |
 
@@ -22,7 +24,8 @@ Snapshot states accepted from the worker are `queued`, `running`,
 `cancel_requested`, `cancelled`, `succeeded`, and `failed`. Successful/failed
 snapshots require an integer `exit_code` consistent with the state. Optional
 `stdout` and `stderr` are bounded. A mismatched job/session ID, malformed response,
-missing capability, redirect or HTTP failure does not authorize a retry.
+missing capability (including worker network scope), redirect or HTTP failure
+does not authorize a retry.
 
 The worker must persist idempotency keys across its own restarts, reject different
 commands under an existing job ID, enforce timeouts, and terminate the full
@@ -56,8 +59,10 @@ that the external implementation satisfies it.
   and request job cleanup; an unavailable worker remains visible as pending.
 
 PostgreSQL locking/concurrency semantics have unit coverage with mocked storage,
-not a live PostgreSQL stress test. Worker-side process isolation, DNS confinement,
-idempotency and termination still require independent integration validation.
+not a live PostgreSQL stress test. Worker isolation, DNS pinning, idempotency and
+termination have a separate
+opt-in container integration suite; its current results are recorded in
+[worker-validation.md](worker-validation.md).
 
 ## Explicit compatibility mode
 
@@ -70,3 +75,8 @@ Legacy workers have no acknowledged cancellation contract. If the request times
 out or disconnects, ARIA cannot assert termination; the engagement remains blocked
 until the outcome is independently resolved. Use jobs-v1 for cancellation/recovery
 evaluation. Never report a cancelled HTTP request as a killed remote process.
+
+Jobs-v1 workers predating `network_scope: true` must be upgraded; the client fails
+closed instead of silently accepting a worker without that capability. The built-in
+worker requires UUID job/session IDs, a 16 KiB request maximum and a timeout of
+1..300 seconds. Legacy compatibility does not provide these new isolation guarantees.

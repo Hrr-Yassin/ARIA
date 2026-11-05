@@ -1,0 +1,9 @@
+*
+!worker/
+!worker/__init__.py
+!worker/policy.py
+!worker/container_entry.py
+!worker/Dockerfile
+!orchestrator/
+!orchestrator/__init__.py
+!orchestrator/execution_policy.py

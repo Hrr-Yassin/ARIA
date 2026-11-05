@@ -1,0 +1,32 @@
+page,button,status,evidence_or_limitation
+index.html,auto-button,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,settings-button,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,approval-reject,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,approval-modify,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,approval-approve,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,new-session-btn,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,input-target-clear,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,send-button,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,hosts,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,findings,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,shells,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,creds,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,timeline,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,decisions,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,playbooks,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,burp,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,settings-close,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,new-key-add,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+login.html,login-btn,passed,Real Firefox owner login
+admin.html,← Back to Chat,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,API Docs,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,Logout,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,+ Create User,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,↻ Refresh,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,Audit Logs,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+admin.html,All Activity,untested,Individual browser interruption/fault coverage not attributed; frontend VM covers some handlers
+index.html,dynamic session items,passed,Actual owner history: eight fresh/warmed checks
+index.html,history retry,passed,Real Firefox synthetic API
+index.html,load older messages,untested,Real SQL/API pagination only
+index.html,Stage in Repeater,untested,Runtime Burp desktop unavailable
+index.html,Review availability check,untested,Actual browser button not exercised

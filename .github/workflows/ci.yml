@@ -53,3 +53,24 @@ jobs:
           export KALI_AGENT_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_hex(32))')"
           export FERNET_KEY="$(.venv/bin/python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
           .venv/bin/python -m unittest discover -s integration -v
+
+  worker-containers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Locked core dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements.txt
+      - name: Build and test disposable worker lab
+        env:
+          ARIA_WORKER_INTEGRATION: '1'
+          WORKER_TEST_RUNTIME: docker
+        run: |
+          docker build -f worker/Dockerfile -t aria-worker:test .
+          export WORKER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' aria-worker:test)"
+          .venv/bin/python -m unittest integration.test_worker -v

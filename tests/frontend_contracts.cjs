@@ -46,6 +46,7 @@ vm.createContext(context);
  vm.runInContext(source,context);
  const h=context.testHooks;
  assert.equal(h.state.token,'test-token');
+ h.state.booting=false;
  await h.loadSessions();await h.createNewSession();await h.loadLLMKeys();
  assert.equal(h.state.sessionId,'s1');
  for(const path of ['/api/session/list','/api/session/new','/api/keys/'])assert(requests.some(r=>r.path===path),path);

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # ── LLM defaults (users manage their own keys) ──────────────────────
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
-    GEMINI_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     OPENROUTER_MODEL: str = "anthropic/claude-sonnet-4-5"
     LLM_TEMPERATURE: float = 0.1
     LLM_COOLDOWN_SECONDS: int = 300
@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     KALI_AGENT_URL: str = ""
     KALI_WORKER_PROTOCOL: Literal["jobs-v1", "legacy-execute"] = "jobs-v1"
     KALI_AGENT_TOKEN: str = Field(min_length=32, repr=False)
+
+    BURP_COMMUNITY_ENABLED: bool = False
+    BURP_CONNECTOR_USER_ID: str = ""
+    BURP_CONNECTOR_URL: str = "http://127.0.0.1:17777"
+    BURP_CONNECTOR_TOKEN: str = Field(default="", repr=False)
 
     # ── Reports ─────────────────────────────────────────────────────────
     REPORT_OUTPUT_DIR: str = "./reports"

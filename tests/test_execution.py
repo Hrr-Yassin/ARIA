@@ -154,7 +154,7 @@ class ExecutionTests(OfflineCase):
     async def test_rest_execution_cannot_bypass_approval(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
         body = {'session_id': 'engagement', 'command': 'hydra -l test -p test 192.0.2.1 ssh', 'tool': 'hydra', 'risk_color': 'green'}
-        with patch('api.routers.pentest.execution_authorization', self.service):
+        with patch('api.routers.pentest.execution_authorization', self.service), patch('api.routers.pentest.session_manager.add_chat_log', AsyncMock()):
             self.assertEqual((await self.client.post('/api/kali/execute', json=body)).status_code, 403)
             proposal = (await self.client.post('/api/execution/proposals', json=body)).json()
             self.assertEqual(proposal['risk_color'], 'red')

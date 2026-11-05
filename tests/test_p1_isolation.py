@@ -117,6 +117,7 @@ class IsolationTests(OfflineCase):
              patch('api.auth.current_identity',AsyncMock(return_value=OWNER)), \
              patch('api.session_access.get_accessible_session',AsyncMock(return_value=SESSION)), \
              patch('memory.session_manager.session_manager.get_findings_summary',AsyncMock(return_value={'findings':[],'counts':{},'total':0})), \
+             patch('memory.session_manager.session_manager.get_chat_logs',AsyncMock(return_value=[])), \
              patch('agents.report_agent.register_report',AsyncMock()) as register:
             first,second=await asyncio.gather(*(ReportAgent().generate_report('engagement','owner','markdown') for _ in range(2)))
             self.assertNotEqual(first['filename'],second['filename'])

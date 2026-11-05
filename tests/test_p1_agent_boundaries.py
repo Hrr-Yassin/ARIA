@@ -12,6 +12,7 @@ class AgentBoundaryTests(OfflineCase):
         result={'success':True,'content':'{"commands": [], "auth_type": "none"}'}
         with patch('api.auth.current_identity',AsyncMock(return_value=OWNER)), \
              patch('api.session_access.get_accessible_session',AsyncMock(return_value=SESSION)), \
+             patch('memory.session_manager.session_manager.get_chat_logs',AsyncMock(return_value=[])), \
              patch.object(web_intel_agent,'query_llm_smart',AsyncMock(return_value=result)) as provider:
             self.assertEqual((await web_intel_agent.process('engagement','owner',{'target':'192.0.2.1'}))['auth_type'],'none')
             provider.assert_awaited_once()

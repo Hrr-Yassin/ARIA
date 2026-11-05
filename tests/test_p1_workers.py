@@ -109,7 +109,7 @@ class WorkerTests(OfflineCase):
         seen=[]
         async def handler(request):
             seen.append(request)
-            if request.url.path=='/capabilities':return httpx.Response(200,json={'protocol':'aria-jobs-v1','idempotency':True,'cancellation':True})
+            if request.url.path=='/capabilities':return httpx.Response(200,json={'protocol':'aria-jobs-v1','idempotency':True,'cancellation':True,'network_scope':True})
             return httpx.Response(200,json={'job_id':'j','session_id':'a','state':'running'})
         client=WorkerClient(httpx.MockTransport(handler))
         await client.capabilities();await client.submit(job,'inert mock command',10)
@@ -135,6 +135,7 @@ class WorkerTests(OfflineCase):
             finally:state.active=False
         context={'owner_id':'alice','scope':{'targets':['192.0.2.1']},'auth_revision':0}
         with patch('agents.autonomous_engine.execution_authorization._context',AsyncMock(return_value=context)), \
+             patch('agents.autonomous_engine.worker_jobs.client.capabilities',AsyncMock(return_value={'tools':['curl','nmap']})), \
              patch.object(engine,'_write_decision_log',AsyncMock()),patch.object(engine,'_run_loop',side_effect=run), \
              patch('agents.autonomous_engine.worker_jobs.cancel_session',AsyncMock(return_value={'cancelled':0,'pending':0,'jobs':[]})):
             results=await asyncio.gather(engine.start('a','alice'),engine.start('a','alice'))

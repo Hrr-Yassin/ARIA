@@ -170,6 +170,8 @@ async def update_user(user_id: str, body: UpdateUserRequest,
         from memory.worker_jobs import worker_jobs
         await autonomous_engine.revoke_principal(user_id)
         cancellation = await worker_jobs.revoke_principal(user_id)
+        from memory.web_actions import web_actions
+        cancellation["web_replays"] = await web_actions.revoke_principal(user_id)
         return {"status": "updated", "cancellation": cancellation}
     return {"status": "updated"}
 
@@ -188,6 +190,8 @@ async def delete_user(user_id: str, admin: TokenData = Depends(require_admin)):
     from memory.worker_jobs import worker_jobs
     await autonomous_engine.revoke_principal(user_id)
     cancellation = await worker_jobs.revoke_principal(user_id)
+    from memory.web_actions import web_actions
+    cancellation["web_replays"] = await web_actions.revoke_principal(user_id)
     return {"status": "deactivated", "cancellation": cancellation}
 
 

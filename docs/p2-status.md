@@ -1,5 +1,9 @@
 # P2 implementation and verification
 
+Worker follow-up: an initial curl/Nmap container worker is now included. See
+[worker setup](worker-setup.md) and [executed validation](worker-validation.md).
+Worker-absence statements below describe the earlier remediation checkpoint.
+
 This status supersedes the P2 baseline in [technical_revow.md](../technical_revow.md)
 and the historical installation/migration notes in [security-review.md](security-review.md).
 Existing P0/P1 changes were retained. No real worker execution, model call or
@@ -72,6 +76,7 @@ staging database and point the environment at that restore. Then run:
 
 ```bash
 .venv/bin/python -m api.adopt_schema
+.venv/bin/python -m alembic upgrade head
 .venv/bin/python -m alembic check
 ```
 

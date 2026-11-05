@@ -115,12 +115,14 @@ class WorkerClient:
 
     async def capabilities(self):
         caps = await self.request('GET', '/capabilities')
-        if not isinstance(caps, dict) or caps.get('protocol') != 'aria-jobs-v1' or caps.get('idempotency') is not True or caps.get('cancellation') is not True:
+        if not isinstance(caps, dict) or caps.get('protocol') != 'aria-jobs-v1' or caps.get('idempotency') is not True or caps.get('cancellation') is not True or caps.get('network_scope') is not True:
             raise ValueError('Worker lacks required job capabilities')
+        return caps
 
     async def submit(self, job, command, timeout):
         return self.snapshot(await self.request('POST', '/jobs', {'job_id': job['job_id'],
-            'session_id': job['session_id'], 'command': command, 'timeout': timeout}, timeout=timeout+5), job)
+            'session_id': job['session_id'], 'command': command, 'timeout': timeout,
+            'scope': job.get('scope', {})}, timeout=timeout+5), job)
 
     async def status(self, job):
         return self.snapshot(await self.request('GET', '/jobs/' + job['job_id']), job)
@@ -237,13 +239,13 @@ class WorkerJobs:
 
     async def execute(self, job_id, user_id, session_id, command, timeout, authorization_check=None):
         if authorization_check is not None:
-            await authorization_check()
+            context = await authorization_check()
         else:
-            await self._authorize(user_id, session_id)
+            context = await self._authorize(user_id, session_id)
         job = {'job_id': job_id, 'user_id': user_id, 'session_id': session_id, 'state': 'prepared',
                'created_at': time.time(), 'deadline': time.time() + timeout,
                'endpoint': settings.KALI_AGENT_URL, 'protocol': settings.KALI_WORKER_PROTOCOL,
-               'cancel_requested': False, 'revision': 0}
+               'cancel_requested': False, 'revision': 0, 'scope': (context or {}).get('scope', {})}
         await self.store.create(job)  # failure denies dispatch
         try:
             if settings.KALI_WORKER_PROTOCOL != 'legacy-execute':
@@ -281,6 +283,13 @@ class WorkerJobs:
         except asyncio.CancelledError:
             await asyncio.shield(self.cancel_job(await self.store.get(job_id)))
             raise
+        except httpx.HTTPStatusError as exc:
+            current = await self.store.get(job_id)
+            if current and current['state'] not in TERMINAL:
+                await self.cancel_job(current)
+            if exc.response.status_code == 403:
+                raise HTTPException(403, 'Worker rejected this command: check supported flags and engagement IP/port scope') from None
+            raise HTTPException(502, 'Worker returned HTTP ' + str(exc.response.status_code)) from None
         except HTTPException:
             current = await self.store.get(job_id)
             if current and current["state"] not in TERMINAL:

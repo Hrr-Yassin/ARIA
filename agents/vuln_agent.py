@@ -101,6 +101,7 @@ JSON:
 
                 # Store assessment in shared memory
                 for va in parsed.get("vulnerability_assessment", []):
+                    va.update({"exploitable":False, "verification_status":"candidate"})
                     self.store_discovery(
                         session_id,
                         f"Vuln: {va.get('vulnerability', '')} on {va.get('service', '')} "

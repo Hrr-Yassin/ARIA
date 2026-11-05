@@ -75,7 +75,7 @@ class P2Tests(OfflineCase):
         from alembic.config import Config
         from migrations.schema_v1 import Base as Frozen
         from memory.database_models import Base
-        self.assertEqual(set(Frozen.metadata.tables), set(Base.metadata.tables))
+        self.assertEqual(set(Frozen.metadata.tables), set(Base.metadata.tables) - {"autonomous_runs", "web_actions"})
         for name in Frozen.metadata.tables:
             self.assertEqual(list(Frozen.metadata.tables[name].columns.keys()),
                              list(Base.metadata.tables[name].columns.keys()))
@@ -86,7 +86,7 @@ class P2Tests(OfflineCase):
         for name in Base.metadata.tables:
             self.assertIn('CREATE TABLE ' + name, sql)
         output = StringIO()
-        command.downgrade(Config('alembic.ini', output_buffer=output), '0001:base', sql=True)
+        command.downgrade(Config('alembic.ini', output_buffer=output), '0003:base', sql=True)
         for name in Base.metadata.tables:
             self.assertIn('DROP TABLE ' + name, output.getvalue())
 

@@ -27,12 +27,23 @@ journalctl --user -u aria -n 50 --no-pager
 systemctl --user stop aria
 ```
 
-It is enabled for your user session; user-service operation before login depends
-on Fedora's user-manager/lingering configuration, which was not changed. Starting
-ARIA starts its named database/cache containers. Stopping ARIA leaves those
-containers running. To stop them after stopping the application:
+ARIA is enabled for your user session; user-service operation before login depends
+on Fedora's user-manager/lingering configuration. The worker was started for this
+manual session and is not enabled at boot. Database/cache startup is now separate
+from the application service so restarting the app does not kill their rootless
+network helpers. From a terminal, start dependencies before both services:
 
 ```bash
+podman start aria-postgres aria-redis
+systemctl --user start aria-worker aria
+```
+
+The ARIA service has a checkout override pointing at `/home/hryassin/PFA/pentest-ai-v10`.
+Both service units preserve container helpers when their main API process stops.
+To stop the lab, stop the app and worker before stopping their containers:
+
+```bash
+systemctl --user stop aria aria-worker
 podman stop aria-postgres aria-redis
 ```
 
@@ -135,12 +146,22 @@ while running this isolated exercise.
    Refresh that session in the UI. The private response is saved in
    `.local-lab/last-analysis.json`; manual evidence remains labelled unverified.
 
-The separate Kali execution-worker server is **absent from this repository**.
-`KALI_AGENT_URL` is deliberately empty. The UI's Run button and autonomous
-execution therefore do not constitute a working worker integration. Run tools
-manually as above; automatic execution requires a worker implementing
-[worker-contract.md](worker-contract.md), plus deployment and isolation validation.
-AI analysis also remains unverified until you supply a provider key and run it.
+The new container worker is now running **on Fedora**, separately from the Kali
+VM, at `http://127.0.0.1:7001`. ARIA is connected through `KALI_AGENT_URL` and jobs-v1.
+Its private environment is `.local-lab/worker.env`; the worker uses its own
+PostgreSQL `aria_worker` database and restricted role. Its network ceiling permits
+only `192.168.77.20/32` on TCP ports **21, 22, 80, 139 and 445**. Supported commands
+are curl and Nmap TCP scans; raw scans, NSE scripts and other Kali tools are not
+part of this worker profile. See [worker setup](worker-setup.md).
+
+A session named **Metasploitable manual test** was created with that exact scope.
+A real `curl -I --max-time 10 http://192.168.77.20` proposal was authorized and
+executed through ARIA, its SQL job ledger, the authenticated worker and a restricted
+container; it returned exit code 0. No model or exploitation was invoked by this
+check. AI planning/analysis still requires your own configured provider key.
+
+Private `.env` settings before activation were preserved in
+`.local-lab/aria-env-before-worker`. Do not copy either environment file into Git.
 
 ## Checks and recovery
 

@@ -34,6 +34,7 @@ class Proposal:
     approver_id: str = ''
     revision: int = 0
     decision: str = ""
+    turn_id: str = ""
 
 
 def digest(value):
@@ -129,12 +130,12 @@ class ExecutionAuthorization:
         except Exception:
             raise HTTPException(503, 'Authorization storage unavailable') from None
 
-    async def propose(self, user_id, session_id, command, tool='', require_approval=False):
+    async def propose(self, user_id, session_id, command, tool='', require_approval=False, turn_id=''):
         context = await self._context(user_id, session_id)
         validated = self._validate(command, context, tool)
         proposal = Proposal(str(uuid.uuid4()), session_id, user_id, validated.command,
                             validated.tool, validated.risk, digest(context), time.time() + 600,
-                            'pending' if validated.risk == 'red' or require_approval else 'authorized')
+                            'pending' if validated.risk == 'red' or require_approval else 'authorized', turn_id=turn_id)
         await self._stored(self.store.add, proposal)
         return proposal
 
@@ -188,10 +189,12 @@ class ExecutionAuthorization:
         # Claim commits before contacting the worker; a timeout cannot replay it.
         if executor is not None:
             output = await executor({'tool': validated.tool, 'command': validated.command, 'risk_color': validated.risk})
-            return {'stdout': str(output), 'stderr': '', 'exit_code': 0}
+            return {'stdout': str(output), 'stderr': '', 'exit_code': 0, 'turn_id': proposal.turn_id}
         if self.worker == self._worker:
-            return await self._worker(validated.command, session_id, timeout, job_id=proposal.id, user_id=user_id)
-        return await self.worker(validated.command, session_id, timeout)
+            result = await self._worker(validated.command, session_id, timeout, job_id=proposal.id, user_id=user_id)
+        else:
+            result = await self.worker(validated.command, session_id, timeout)
+        return {**result, "turn_id": proposal.turn_id}
 
     async def _worker(self, command, session_id, timeout, *, job_id=None, user_id=None):
         if not job_id or not user_id:
@@ -201,6 +204,7 @@ class ExecutionAuthorization:
             validated = self._validate(command, context)
             if proposal.status != 'consumed' or proposal.command != validated.command:
                 raise HTTPException(403, 'Dispatch authorization changed')
+            return context
         return await worker_jobs.execute(job_id, user_id, session_id, command, timeout, authorization_check=check)
 
 

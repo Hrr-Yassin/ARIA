@@ -4,12 +4,13 @@ PentestAI v8 — Gemini Client
 import time
 import httpx
 from llm.base_llm import BaseLLMClient
+from config.settings import settings
 
 
 class GeminiClient(BaseLLMClient):
 
-    def __init__(self, api_key: str = "", model: str = "gemini-2.0-flash", temperature: float = 0.1):
-        super().__init__(api_key, model, temperature)
+    def __init__(self, api_key: str = "", model: str = "", temperature: float = 0.1):
+        super().__init__(api_key, model or settings.GEMINI_MODEL, temperature)
         self.provider_name = "Gemini"
 
     async def query(self, prompt: str, system: str = "") -> dict:
@@ -40,7 +41,10 @@ class GeminiClient(BaseLLMClient):
                 if not candidates:
                     return {"success": False, "content": "", "error": "no_candidates", "latency_ms": latency}
 
-                content = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                parts = candidates[0].get("content", {}).get("parts", [])
+                content = "".join(part.get("text", "") for part in parts if not part.get("thought"))
+                if not content.strip():
+                    return {"success": False, "content": "", "error": "empty_response", "latency_ms": latency}
                 tokens = data.get("usageMetadata", {}).get("totalTokenCount", 0)
                 return {"success": True, "content": content, "tokens_used": tokens, "latency_ms": latency}
         except httpx.HTTPStatusError as e:

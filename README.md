@@ -1,6 +1,6 @@
 # ARIA — Human–AI Collaborative Penetration Testing
 
-ARIA (`pentest-ai`) is an academic proof of concept for a penetration tester working with specialized AI agents. It combines a browser interface, a FastAPI backend, shared investigation memory, external language models, and a separate Kali execution service.
+ARIA (`pentest-ai`) is an academic proof of concept for a penetration tester working with specialized AI agents. It combines a browser interface, a FastAPI backend, shared investigation memory, external language models, and a separate isolated execution service.
 
 The research question is whether specialized agents, structured tool evidence, and explicit human decisions improve an authorized assessment's quality, efficiency, and traceability.
 
@@ -22,7 +22,7 @@ flowchart TD
     Auto --> Coordinator
     API --> Gate[Shared execution authorization and durable approvals]
     Auto --> Gate
-    Gate --> Kali[External Kali execution service]
+    Gate --> Kali[Isolated execution worker]
     Kali --> Results[Tool output]
     Results --> Parsers[Deterministic output parsers]
     Parsers --> Memory
@@ -48,7 +48,7 @@ The diagram shows the implemented components and intended connections. Execution
 
 PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
 
-The Kali execution service is an external dependency: its server implementation, tool installation and sandbox are **not included**. The API-side job protocol is defined in [docs/worker-contract.md](docs/worker-contract.md).
+An initial isolated execution service is included in `worker/`, running separately from the API. It supports curl and Nmap TCP scans with a PostgreSQL job ledger and per-job network policy. See [worker setup](docs/worker-setup.md), [worker contract](docs/worker-contract.md) and [executed validation](docs/worker-validation.md). Other Kali tools require additional reviewed worker profiles.
 
 ## Proposed architecture to evaluate
 
@@ -186,3 +186,13 @@ scans are run. Existing JWTs must be renewed after the credential-revision upgra
 
 
 CI runs the locked Python installation, offline/Node regressions and separate disposable PostgreSQL/Redis integration tests. See [docs/p2-status.md](docs/p2-status.md) for commands, migration safety, dependency lock maintenance, executed results and remaining risks. Integration tests must not target an operational database.
+
+The scoped HTTP scan, output/history restoration and bounded autonomous HTTP check
+have a real Firefox test; see [browser validation](docs/browser-validation.md).
+
+
+Reliability, specialist-result contracts and the gated Burp Community connector are
+tracked in [the upgrade validation register](docs/aria-upgrade-validation.md).
+The new backend requires migration `0002`; the owner's deployment was not migrated.
+Burp remains disabled pending runtime/release checks. See
+[Community connector setup and limitations](burp-community/README.md).

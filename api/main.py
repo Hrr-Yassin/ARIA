@@ -4,6 +4,8 @@ FastAPI backend serving API + Web UI on Ubuntu.
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
+from pydantic import BaseModel
 
 from security.redaction import configure_logging
 configure_logging()
@@ -23,11 +25,24 @@ from api.routers import sessions as sessions_router
 from api.routers import reports as reports_router
 from api.routers import api_keys as api_keys_router
 from api.routers import admin as admin_router
+from api.routers import burp as burp_router
 from config.settings import settings
 from memory.database_models import init_db
 from memory.session_manager import session_manager
 from memory.knowledge_cache import knowledge_cache
 
+def _source_build_id():
+    import hashlib
+    root = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    for directory in ('api','agents','memory','orchestrator','config','security','llm','migrations'):
+        for source in sorted((root/directory).rglob('*.py')):
+            digest.update(str(source.relative_to(root)).encode())
+            digest.update(source.read_bytes())
+    return digest.hexdigest()[:16]
+
+
+SERVER_BUILD = _source_build_id()
 log = structlog.get_logger(__name__)
 
 
@@ -50,6 +65,10 @@ async def lifespan(app: FastAPI):
 
     from memory.worker_jobs import worker_jobs
     await worker_jobs.recover()
+    from memory.autonomous_runs import run_store
+    await run_store.recover()
+    from memory.web_actions import web_actions
+    await web_actions.recover()
 
     # Ensure report directory
     Path(settings.REPORT_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
@@ -98,11 +117,13 @@ async def request_correlation(request: Request, call_next):
         response = await call_next(request)
         log.info("http_request", method=request.method, status=response.status_code)
     response.headers["X-Request-ID"] = request_id
+    response.headers["X-ARIA-Build"] = SERVER_BUILD
     return response
 
 
 # ── Routers ──────────────────────────────────────────────────────────────
 
+app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])
 app.include_router(sessions_router.router, prefix="/api/session", tags=["sessions"])
 app.include_router(reports_router.router, prefix="/api/report", tags=["reports"])
@@ -146,6 +167,8 @@ async def logout(response: Response, user: TokenData = Depends(get_current_user)
     from memory.worker_jobs import worker_jobs
     await autonomous_engine.revoke_principal(user.user_id)
     cancellation = await worker_jobs.revoke_principal(user.user_id)
+    from memory.web_actions import web_actions
+    cancellation["web_replays"] = await web_actions.revoke_principal(user.user_id)
     response.delete_cookie("pentestai_token", httponly=True, samesite="strict")
     return {"status": "revoked", "cancellation": cancellation}
 
@@ -170,9 +193,41 @@ async def readiness():
     return {"status": "ready", "database": True, "version": settings.APP_VERSION}
 
 
+class ProfileUpdate(BaseModel):
+    skill_level: Literal['beginner','intermediate','expert']
+
+
+@app.get('/api/profile')
+async def read_profile(user: TokenData=Depends(get_current_user)):
+    return {'username':user.username,'skill_level':user.skill_level}
+
+
+@app.patch('/api/profile')
+async def update_profile(body: ProfileUpdate,user: TokenData=Depends(get_current_user)):
+    from memory.database_models import User, SkillLevel, async_session
+    from sqlalchemy import update
+    async with async_session() as db:
+        await db.execute(update(User).where(User.id==user.user_id).values(skill_level=SkillLevel(body.skill_level)))
+        await db.commit()
+    return {'skill_level':body.skill_level}
+
+
 # ── Web UI Serving ───────────────────────────────────────────────────────
 
 WEB_DIR = Path(__file__).parent.parent / "web"
+
+def render_page(path: Path) -> HTMLResponse:
+    """Version local assets by their contents; always revalidate the HTML shell."""
+    import hashlib
+    import re
+    source = path.read_text(encoding="utf-8")
+    def version(match):
+        asset = WEB_DIR / match.group(1).lstrip("/")
+        digest = hashlib.sha256(asset.read_bytes()).hexdigest()[:16]
+        return match.group(1) + "?v=" + digest
+    source = re.sub(r"(/static/[A-Za-z0-9_./-]+)(?=[\"'])", version, source)
+    return HTMLResponse(source, headers={"Cache-Control": "no-cache"})
+
 
 # Serve /static/* with correct MIME types (JS, CSS, etc.)
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
@@ -182,7 +237,7 @@ app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="stati
 async def serve_login():
     f = WEB_DIR / "login.html"
     if f.exists():
-        return HTMLResponse(f.read_text(encoding="utf-8"))
+        return render_page(f)
     return HTMLResponse("<h1>Login page not found</h1>", status_code=404)
 
 
@@ -190,7 +245,7 @@ async def serve_login():
 async def serve_admin():
     f = WEB_DIR / "admin.html"
     if f.exists():
-        return HTMLResponse(f.read_text(encoding="utf-8"))
+        return render_page(f)
     return HTMLResponse("<h1>Admin page not found</h1>", status_code=404)
 
 
@@ -198,7 +253,7 @@ async def serve_admin():
 async def serve_ui():
     f = WEB_DIR / "index.html"
     if f.exists():
-        return HTMLResponse(f.read_text(encoding="utf-8"))
+        return render_page(f)
     return HTMLResponse("<h1>PentestAI v9</h1><p>index.html not found</p>", status_code=404)
 
 
@@ -207,7 +262,7 @@ async def serve_chat(session_id: str):
     """Session-based routing — serve main UI for /chat/{session_id}"""
     f = WEB_DIR / "index.html"
     if f.exists():
-        return HTMLResponse(f.read_text(encoding="utf-8"))
+        return render_page(f)
     raise HTTPException(404, "Not found")
 
 

@@ -22,6 +22,7 @@ router = APIRouter()
 
 class ReportRequest(BaseModel):
     session_id: str
+    turn_id: Optional[str] = None
     format: str = "html"   # html | markdown | latex | pdf
 
 
@@ -34,7 +35,10 @@ async def generate_report(body: ReportRequest, user: TokenData = Depends(get_cur
     try:
         result = await report_agent.generate_report(
             body.session_id, user.user_id, body.format, user.skill_level)
-        return result
+        from memory.session_manager import session_manager
+        await session_manager.add_chat_log(body.session_id,'assistant',f"{body.format} report generated",'report',
+            {'type':'report','filename':result['filename'],'format':body.format,'turn_id':body.turn_id})
+        return {**result,'turn_id':body.turn_id}
     except Exception:
         raise HTTPException(500, "Report generation failed") from None
 

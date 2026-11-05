@@ -302,10 +302,36 @@ async def init_db():
     from sqlalchemy import text
     async with engine.connect() as conn:
         revision = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-        if revision != "0001":
+        if revision != "0003":
             raise RuntimeError("Database revision unsupported; run python -m alembic upgrade head")
 
 
 async def get_db():
     async with async_session() as session:
         yield session
+
+
+class AutonomousRun(Base):
+    """Durable run snapshot; commands are never replayed from this record."""
+    __tablename__ = "autonomous_runs"
+    id = Column(String(36), primary_key=True)
+    session_id = Column(String(36), ForeignKey("pentest_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    state = Column(String(30), nullable=False)
+    snapshot = Column(JSON, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WebAction(Base):
+    __tablename__ = "web_actions"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey("pentest_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    requester_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    evidence_id = Column(String(36), ForeignKey("chat_logs.id"), nullable=False)
+    state = Column(String(30), nullable=False, default="pending")
+    request_digest = Column(String(64), nullable=False)
+    scope_digest = Column(String(64), nullable=False)
+    protected_spec = Column(Text, nullable=False)
+    protected_response = Column(Text, nullable=True)
+    result = Column(JSON, nullable=False, default=dict)
+    expires_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)

@@ -14,6 +14,7 @@ from memory.attack_knowledge_base import attack_kb
 from memory.playbook_store import playbook_store
 
 GOAL_TEMPLATES = {
+    "discovery": {"description":"Assess configured services with bounded observations", "phases":["recon","scan"], "success_criteria":"Durable TCP port and HTTP observations within scope", "typical_path":"Bounded connect scan then HTTP observation; no access claim"},
     "initial_access": {
         "description": "Gain first shell or foothold on the target",
         "phases": ["recon", "scan", "vuln", "exploit"],
@@ -93,7 +94,7 @@ class AttackPlannerAgent(BaseAgent):
 
     async def process(self, session_id: str, user_id: str, input_data: dict,
                       skill_level: str = "intermediate") -> dict:
-        goal_type = input_data.get("goal_type", "initial_access")
+        goal_type = input_data.get("goal_type", "discovery")
         target = input_data.get("target", "")
         custom_desc = input_data.get("description", "")
 
@@ -102,7 +103,9 @@ class AttackPlannerAgent(BaseAgent):
         mode_settings = attack_kb.get_mode_settings(session_id)
         mode = attack_kb.get_attack_mode(session_id)
 
-        goal_template = GOAL_TEMPLATES.get(goal_type, GOAL_TEMPLATES["initial_access"])
+        goal_template = GOAL_TEMPLATES.get(goal_type)
+        if goal_template is None:
+            return {"commands":[],"goal_type":goal_type,"suggested_reply":"Blocked: requested goal has no supported template","rejections":[{"code":"unsupported_goal","detail":"Requested goal was preserved; no fallback goal was selected"}]}
         goal_desc = custom_desc or goal_template["description"]
 
         attack_kb.set_attack_goal(session_id, goal_type, goal_desc, target)

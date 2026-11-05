@@ -47,9 +47,9 @@ PROVIDER_CLIENTS = {
 }
 
 PROVIDER_DEFAULTS = {
-    "groq":       {"model": "llama-3.3-70b-versatile", "limit": 30, "cooldown": 60},
-    "gemini":     {"model": "gemini-2.0-flash",        "limit": 15, "cooldown": 60},
-    "openrouter": {"model": "anthropic/claude-sonnet-4-5", "limit": 10, "cooldown": 60},
+    "groq":       {"model": settings.GROQ_MODEL, "limit": 30, "cooldown": 60},
+    "gemini":     {"model": settings.GEMINI_MODEL,        "limit": 15, "cooldown": 60},
+    "openrouter": {"model": settings.OPENROUTER_MODEL, "limit": 10, "cooldown": 60},
 }
 
 
@@ -345,7 +345,13 @@ class LLMPoolManager:
                     continue
 
                 defaults = PROVIDER_DEFAULTS.get(key_state.provider, {})
-                model = model_override.get(key_state.provider) or defaults.get("model", "")
+                configured_models = {
+                    "groq": settings.GROQ_MODEL,
+                    "gemini": settings.GEMINI_MODEL,
+                    "openrouter": settings.OPENROUTER_MODEL,
+                }
+                model = model_override.get(key_state.provider) or configured_models.get(
+                    key_state.provider, defaults.get("model", ""))
                 client = client_cls(
                     api_key=self.decrypt_key(key_state.encrypted_key),
                     model=model,
@@ -355,8 +361,14 @@ class LLMPoolManager:
                 if not await self._reserve_key(user_id, key_state.key_id):
                     key_state.is_active = False
                     continue
+                from llm.validation_budget import current_budget
+                budget = current_budget.get()
+                if budget is not None and not budget.reserve(prompt, system, 4096):
+                    return {'success':False, 'content':'', 'error':'validation_budget_exhausted', 'provider':'none'}
                 try:
                     result = await client.query(prompt, system)
+                    if budget is not None:
+                        budget.record(result.get('tokens_used', 0))
                 except Exception as e:
                     key_state.last_error = "provider_request_failed"
                     log.warning("LLM exception",

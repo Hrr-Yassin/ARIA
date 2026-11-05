@@ -33,7 +33,7 @@ def _safe(value) -> str:
     text = str(value)
     # Remove non-printable control characters (keep newlines/tabs)
     text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', text)
-    return text
+    return _esc_html(text.replace("—","-").replace("–","-"))
 
 
 def _esc_html(text: str) -> str:
@@ -90,6 +90,11 @@ class ReportAgent(BaseAgent):
         target = (session or {}).get("target", "Unknown")
         scope  = (session or {}).get("scope",  {})
 
+        saved_logs = await session_manager.get_chat_logs(session_id, limit=200, msg_types=['burp_evidence','burp_replay','burp_comparison'])
+        evidence_manifest = [f"{entry['id']} | Burp Community selected capture | "
+            f"{entry.get('data',{}).get('summary',{}).get('method','')} "
+            f"{entry.get('data',{}).get('summary',{}).get('url','')}"
+            for entry in saved_logs if entry.get('type') in {'burp_evidence','burp_replay','burp_comparison'}]
         # Sort findings by severity
         sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         findings.sort(key=lambda f: sev_order.get(f.get("severity", "info"), 5))
@@ -111,6 +116,17 @@ class ReportAgent(BaseAgent):
             content = self._generate_markdown_report(
                 target, scope, findings, counts, total, tools_run)
 
+        if evidence_manifest and content is not None:
+            limitations = "Selected captures are observations, not verified vulnerabilities. Manifest covers the most recent 200 saved HTTP evidence records."
+            if fmt == "html":
+                appendix = "<h2>HTTP evidence provenance</h2><p>"+_esc_html(limitations)+"</p><pre>"+_esc_html("\n".join(evidence_manifest))+"</pre>"
+                content = content.replace("</body>", appendix+"</body>")
+            elif fmt != "latex":
+                content += "\n\n## HTTP evidence provenance\n\n"+limitations+"\n\n"+"\n".join(evidence_manifest)
+            else:
+                # Evidence IDs are UUIDs; source payloads never enter TeX.
+                refs = [entry.split(" | ",1)[0] for entry in evidence_manifest]
+                content = content.replace("\\end{document}", "\\section{HTTP evidence provenance}\nSelected captures are unverified observations. Evidence IDs: "+", ".join(refs)+"\n\\end{document}")
         # ── Ensure output dir exists ──
         report_dir = Path(settings.REPORT_OUTPUT_DIR)
         report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -126,7 +142,7 @@ class ReportAgent(BaseAgent):
         # ── Write file ──
         if fmt == "pdf":
             self._generate_pdf_report(
-                target, scope, findings, counts, total, tools_run, str(filepath))
+                target, scope, findings, counts, total, tools_run, str(filepath), evidence_manifest)
         else:
             filepath.write_text(content, encoding="utf-8")
 
@@ -143,6 +159,7 @@ class ReportAgent(BaseAgent):
             "filename":       filename,
             "filepath":       str(filepath),
             "content":        content if fmt != "pdf" else None,
+            "evidence_manifest": evidence_manifest,
             "findings_count": total,
             "counts":         counts,
         }
@@ -390,7 +407,7 @@ ol li{margin-bottom:4px;font-size:.9rem}
 
     # ── PDF (reportlab) ───────────────────────────────────────────────────
 
-    def _generate_pdf_report(self, target, scope, findings, counts, total, tools_run, filepath):
+    def _generate_pdf_report(self, target, scope, findings, counts, total, tools_run, filepath, evidence_manifest=()):
         """
         Generate a professional PTES-compliant PDF using reportlab.
         reportlab is pre-installed on the Ubuntu server; fpdf2 is NOT.
@@ -474,6 +491,7 @@ ol li{margin-bottom:4px;font-size:.9rem}
         # ── Cover page ──────────────────────────────────────────────────
         story.append(Spacer(1, 3.5*cm))
         story.append(Paragraph("Penetration Test Report", s_cover_title))
+        story.append(Spacer(1, 14))
         story.append(HRFlowable(width="80%", thickness=2, color=ACC, spaceAfter=12))
         story.append(Paragraph(_safe(f"Target: {target}"), s_cover_sub))
         story.append(Paragraph(_safe(f"Date: {now}"), s_cover_sub))
@@ -512,7 +530,7 @@ ol li{margin-bottom:4px;font-size:.9rem}
             "3. Risk Assessment",
             f"4. Detailed Findings ({total})",
             "5. Remediation Priorities",
-            "6. Appendix — Tools Used",
+            "6. Appendix - Tools Used",
         ]
         for item in toc_items:
             story.append(Paragraph(_safe(item), s_toc))
@@ -522,9 +540,9 @@ ol li{margin-bottom:4px;font-size:.9rem}
         story.append(Paragraph("1. Executive Summary", s_h1))
         story.append(HRFlowable(width="100%", thickness=1, color=ACC, spaceAfter=8))
         story.append(Paragraph(_safe(
-            f"A penetration test was conducted against {target} following the "
-            "Penetration Testing Execution Standard (PTES) and OWASP Testing Guide v4. "
-            f"A total of {total} vulnerabilities were identified. "
+            f"A scoped assessment was recorded for {target}. "
+            "Coverage is limited to retained evidence; candidate findings require validation. "
+            f"A total of {total} findings were recorded; unverified candidates are not confirmed vulnerabilities. "
             f"The overall risk rating is {risk_label}."
         ), s_body))
         story.append(Spacer(1, 0.4*cm))
@@ -562,12 +580,14 @@ ol li{margin-bottom:4px;font-size:.9rem}
         story.append(Paragraph("2. Scope &amp; Methodology", s_h1))
         story.append(HRFlowable(width="100%", thickness=1, color=ACC, spaceAfter=8))
         story.append(Paragraph(f"<b>Target:</b> {_safe(target)}", s_body))
+        from security.redaction import redact
+        story.append(Paragraph("<b>Configured scope:</b> "+_safe(json.dumps(redact(scope),sort_keys=True)),s_body))
         story.append(Paragraph("<b>Methodology:</b> PTES / OWASP Testing Guide v4", s_body))
-        story.append(Paragraph("<b>Testing Type:</b> Grey-box / Black-box", s_body))
+        story.append(Paragraph("<b>Assessment:</b> Scoped, evidence-based observations", s_body))
         story.append(Paragraph(
             f"<b>Tools Used:</b> {_safe(', '.join(tools_run) or 'None recorded')}", s_body))
         story.append(Spacer(1, 0.3*cm))
-        story.append(Paragraph("<b>Testing Phases:</b>", s_body))
+        story.append(Paragraph("<b>Reference phases (coverage varies; consult evidence):</b>", s_body))
         for phase in [
             "Pre-engagement / Scope Definition",
             "Intelligence Gathering / Reconnaissance",
@@ -602,8 +622,8 @@ ol li{margin-bottom:4px;font-size:.9rem}
                 title = _safe(f.get("title", "Untitled"))
                 cves  = ", ".join(f.get("cve_ids") or []) or "N/A"
                 cvss  = f.get("cvss_score", "N/A")
-                desc  = _safe(f.get("description", ""))[:600]
-                evid  = _safe(f.get("evidence", ""))[:400]
+                desc  = _safe(str(f.get("description", ""))[:600])
+                evid  = _safe(str(f.get("evidence", ""))[:400])
                 rec   = _safe(f.get("recommendation", ""))
 
                 block = []
@@ -644,7 +664,7 @@ ol li{margin-bottom:4px;font-size:.9rem}
         story.append(PageBreak())
 
         # ── 6. Appendix ──────────────────────────────────────────────────
-        story.append(Paragraph("6. Appendix — Tools Used", s_h1))
+        story.append(Paragraph("6. Appendix - Tools Used", s_h1))
         story.append(HRFlowable(width="100%", thickness=1, color=ACC, spaceAfter=8))
         if tools_run:
             for t in tools_run:
@@ -661,6 +681,10 @@ ol li{margin-bottom:4px;font-size:.9rem}
             sty("ft", fontSize=8, textColor=DGREY, alignment=TA_CENTER)
         ))
 
+        if evidence_manifest:
+            story.append(Paragraph("HTTP evidence provenance (selected, unverified observations)", s_h1))
+            for reference in evidence_manifest:
+                story.append(Paragraph(_esc_html(reference), s_body))
         doc.build(story)
 
 

@@ -1,7 +1,7 @@
 """
 PentestAI v8 — Sessions Router
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 
@@ -46,15 +46,22 @@ async def delete_session(session_id: str, user: TokenData = Depends(get_current_
     result = await worker_jobs.cancel_session(user.user_id, session_id)
     if result['pending']:
         raise HTTPException(409, "Worker cancellation is not confirmed; engagement was not archived")
+    from memory.web_actions import web_actions
+    web=await web_actions.cancel_all(session_id,user.user_id)
+    if web["pending"]:
+        raise HTTPException(409,"Web replay cancellation is pending; engagement was not archived")
     await autonomous_engine.detach_session(session_id)
     await session_manager.delete_session(session_id)
     return {"status": "deleted", "session_id": session_id}
 
 
 @router.get("/{session_id}/restore")
-async def restore_session(session_id: str, user: TokenData = Depends(get_current_user)):
+async def restore_session(session_id: str, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=200), user: TokenData = Depends(get_current_user)):
     session = await get_accessible_session(session_id, user)
-    logs = await session_manager.get_chat_logs(session_id)
+    logs = await session_manager.get_chat_logs(session_id, limit=limit + 1, offset=offset)
+    has_more = len(logs) > limit
+    if has_more:
+        logs = logs[1:]
     findings = await session_manager.get_findings_summary(session_id)
     counts = findings.get("counts", {})
     # Derive topbar stats from session data
@@ -66,6 +73,9 @@ async def restore_session(session_id: str, user: TokenData = Depends(get_current
         "session_id": session_id,
         "target": session.get("target", ""),
         "logs": logs,
+        "has_more": has_more,
+        "next_offset": offset + len(logs),
+        "history_status": "recorded" if logs else "no_saved_messages",
         "findings": findings.get("findings", []),
         "total": findings.get("total", 0),
         "counts": counts,

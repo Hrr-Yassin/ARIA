@@ -38,6 +38,7 @@ import structlog
 from config.settings import settings
 from memory.execution_authorization import execution_authorization
 from memory.worker_jobs import worker_jobs
+from memory.autonomous_runs import run_store, TERMINAL
 from orchestrator.risk_scorer import classify_risk
 from config.tools_registry import TOOL_AGENT_MAP
 from memory.attack_knowledge_base import attack_kb
@@ -108,6 +109,16 @@ class SessionRunState:
     subscribers: set = field(default_factory=set, repr=False)
     max_steps: int = 12
     steps_taken: int = 0
+    run_state: str = "planning"
+    reason_code: str = ""
+    reason: str = ""
+    capabilities: dict = field(default_factory=dict)
+    successful_steps: int = 0
+    evidence_job_ids: list = field(default_factory=list)
+    completed_observations: list = field(default_factory=list)
+    executed_commands: list = field(default_factory=list)
+    model_calls: int = 0
+    risk_threshold: str = settings.AUTO_RISK_THRESHOLD
     active: bool = True
     current_phase: str = "recon"
     pending_approval: Optional[ApprovalRequest] = None
@@ -157,9 +168,9 @@ class AutonomousEngine:
             return await self._start(session_id, user_id, **kwargs)
 
     async def _start(self, session_id: str, user_id: str,
-                    goal: str = "initial_access",
+                    goal: str = "discovery",
                     target: str = "",
-                    skill_level: str = "intermediate", max_steps: Optional[int] = None) -> dict:
+                    skill_level: str = "intermediate", max_steps: Optional[int] = None, auto_risk_threshold: Optional[str] = None) -> dict:
         """Create a run state and kick off the loop in a background task."""
         context = await execution_authorization._context(user_id, session_id)
         execution_authorization._validate("searchsploit scope-check", context)
@@ -174,7 +185,27 @@ class AutonomousEngine:
             auth_revision=context.get("auth_revision", 0),
             worker_epoch=context.get("worker_epoch", 0),
         )
+        state.risk_threshold = "green_only" if "green_only" in {settings.AUTO_RISK_THRESHOLD,auto_risk_threshold} else "green_orange" if settings.AUTO_RISK_THRESHOLD=="green_orange" and auto_risk_threshold in {None,"green_orange"} else "manual"
+        if goal not in {"discovery", "http_check"}:
+            state.run_state, state.reason_code = "blocked", "unsupported_goal"
+            state.reason = "This worker supports discovery and HTTP checks. Verified access capabilities are unavailable; the requested goal was preserved."
+            state.active = False
+        else:
+            try:
+                state.capabilities = await worker_jobs.client.capabilities()
+                if not isinstance(state.capabilities, dict) or not state.capabilities.get("tools"):
+                    raise ValueError("Worker did not advertise tools")
+            except Exception:
+                state.run_state, state.reason_code = "blocked", "worker_unavailable"
+                state.reason, state.active = "Worker capability discovery failed", False
         self._runs[session_id] = state
+        try:
+            await self._persist(state)
+        except BaseException:
+            self._runs.pop(session_id, None)
+            raise
+        if not state.active:
+            return self.get_status(session_id)
         self._approvals[session_id] = {}
 
         # Subscribe to KB replan events for adaptive behaviour
@@ -203,6 +234,8 @@ class AutonomousEngine:
         state = self._runs.get(session_id)
         if state:
             state.stop_requested = True
+            state.run_state = "cancelling"
+            await self._persist(state)
         cancellation = await worker_jobs.cancel_session(user_id, session_id)
         task = self._tasks.get(session_id)
         if task and not task.done():
@@ -238,7 +271,21 @@ class AutonomousEngine:
         if not state:
             return {"active": False}
         return {
-            "active": state.active,
+            "schema_version": 1,
+            "session_id": state.session_id,
+            "run_id": state.run_id,
+            "turn_id": state.run_id,
+            "run_state": state.run_state,
+            "reason_code": state.reason_code,
+            "reason": state.reason,
+            "successful_steps": state.successful_steps,
+            "evidence_job_ids": list(state.evidence_job_ids),
+            "completed_observations": list(state.completed_observations),
+            "required_observations": ["port_discovery", "http_response"] if state.goal == "discovery" else ["http_response"],
+            "required_capabilities": ["nmap", "curl"] if state.goal == "discovery" else ["curl"] if state.goal == "http_check" else ["verified_access"],
+            "model_calls": state.model_calls,
+            "auto_risk_threshold": state.risk_threshold,
+            "active": state.active and state.run_state not in TERMINAL,
             "steps_taken": state.steps_taken,
             "max_steps": state.max_steps,
             "current_phase": state.current_phase,
@@ -252,6 +299,14 @@ class AutonomousEngine:
             "stop_requested": state.stop_requested,
             "activity_tail": state.activity_log[-10:],
         }
+
+    async def restored_status(self, session_id):
+        if session_id in self._runs:
+            return self.get_status(session_id)
+        return await run_store.latest(session_id)
+
+    async def _persist(self, state):
+        await run_store.save(self.get_status(state.session_id))
 
     # ────────────────────────────────────────────────────────────────────
     #  Public API — WebSocket streaming
@@ -353,7 +408,8 @@ class AutonomousEngine:
                     break
                 # 1) Check if goal achieved
                 achieved, reason = await self._check_goal_achieved(state)
-                if achieved:
+                if achieved and state.successful_steps:
+                    state.run_state = "completed"
                     await self._emit(state, AutoActivityEvent(
                         type="goal_achieved", step=state.steps_taken,
                         action=reason, status="done",
@@ -362,12 +418,17 @@ class AutonomousEngine:
                     break
 
                 # 2) Ask the orchestrator/planner for the next step
+                state.run_state = "planning"
+                await self._persist(state)
                 next_step = await self._plan_next_step(state)
                 if not next_step:
+                    state.run_state = "blocked"
+                    state.reason_code = state.reason_code or "no_executable_proposal"
+                    state.reason = state.reason or "Planner produced no executable action; goal completion is unproven."
                     await self._emit(state, AutoActivityEvent(
                         type="auto_complete", step=state.steps_taken,
-                        action="No further actions proposed — ending cycle",
-                        status="done",
+                        action=state.reason,
+                        status="blocked",
                     ))
                     break
 
@@ -379,9 +440,10 @@ class AutonomousEngine:
                 command = next_step.get("command", "")
                 tool = next_step.get("tool", "").lower()
                 purpose = next_step.get("purpose", "")
-                threshold = settings.AUTO_RISK_THRESHOLD
+                threshold = state.risk_threshold
                 proposal = await execution_authorization.propose(
                     state.user_id, state.session_id, command, tool,
+                    turn_id=state.run_id,
                     require_approval=(next_step.get("risk_color") == "red" or threshold not in {"green_only", "green_orange"}
                                       or (threshold == "green_only" and classify_risk(tool, command) != "green")),
                 )
@@ -400,6 +462,7 @@ class AutonomousEngine:
                     )
                     self._approvals[state.session_id][action_id] = req
                     state.pending_approval = req
+                    state.run_state = "awaiting_approval"
 
                     await self._emit(state, AutoActivityEvent(
                         type="waiting_approval",
@@ -408,6 +471,7 @@ class AutonomousEngine:
                         tool=tool, risk_color=risk,
                         status="waiting_approval",
                         extra={"action_id": action_id,
+                               "command": command,
                                "purpose": purpose,
                                "reason": ("Risk level requires explicit "
                                           "human validation per project scope.")},
@@ -431,14 +495,16 @@ class AutonomousEngine:
                             action=f"Step {state.steps_taken} REJECTED by human",
                             tool=tool, risk_color=risk, status="failed",
                         ))
+                        state.reason_code = "human_rejected"
+                        state.reason = "Human rejected the proposed action"
                         # Feed the rejection back into planning context
                         attack_kb.log_event(
                             state.session_id, "human_rejected_step",
                             "autonomous_engine",
                             f"Human rejected: {command[:120]}",
                         )
-                        await asyncio.sleep(self.STEP_DELAY)
-                        continue
+                        state.run_state = "blocked"
+                        break
                     if decision == "modify":
                         command = req.modified_command or command
                         tool, risk = req.tool, req.risk_color
@@ -446,6 +512,7 @@ class AutonomousEngine:
 
                 if state.stop_requested:
                     break
+                state.run_state = "executing"
                 # 4) Execute the step
                 await self._emit(state, AutoActivityEvent(
                     step=state.steps_taken,
@@ -458,10 +525,20 @@ class AutonomousEngine:
                     state, tool, command, action_id=action_id,
                 )
 
+                if success:
+                    state.successful_steps += 1
+                    state.executed_commands.append(command)
+                    observation = "port_discovery" if tool == "nmap" else "http_response" if tool == "curl" else ""
+                    if observation and observation not in state.completed_observations:
+                        state.completed_observations.append(observation)
+                else:
+                    state.run_state = "failed"
+                    state.reason_code = "execution_failed"
+                    state.reason = "Worker execution did not succeed"
                 # 5) Parse output deterministically → KB
                 parse_result = dispatch_parser(
                     state.session_id, tool, command,
-                    stdout or stderr, state.target,
+                    stdout if success else "", state.target,
                 )
 
                 output_preview = (stdout or stderr or "")[:300].replace("\n", " ")
@@ -492,18 +569,35 @@ class AutonomousEngine:
                     human_decision=decision if not auto_ok else "none",
                 )
 
+                if not success:
+                    break
+                required = {"port_discovery", "http_response"} if state.goal == "discovery" else {"http_response"}
+                if state.goal in {"discovery", "http_check"} and required.issubset(state.completed_observations):
+                    state.run_state = "completed"
+                    await self._emit(state, AutoActivityEvent(type="goal_achieved", status="done",
+                        action="Requested assessment observations completed with durable worker evidence"))
+                    break
                 # Rate-limit between steps
                 await asyncio.sleep(self.STEP_DELAY)
 
             # Loop ended
-            if state.steps_taken >= state.max_steps:
+            if state.steps_taken >= state.max_steps and state.run_state != "completed":
+                state.run_state = "blocked"
+                state.reason_code = state.reason_code or "step_budget_exhausted"
+                state.reason = state.reason or "Step budget exhausted without goal evidence"
                 await self._emit(state, AutoActivityEvent(
                     type="auto_complete",
                     step=state.steps_taken,
-                    action=f"Max steps ({state.max_steps}) reached — pausing",
-                    status="done",
+                    action=state.reason,
+                    status="blocked",
                 ))
+        except asyncio.CancelledError:
+            state.run_state = "blocked"
+            state.reason_code, state.reason = "cancelled", "Run cancelled; inspect worker jobs for final cancellation status"
+            raise
         except Exception as exc:  # noqa: BLE001
+            state.run_state = "failed"
+            state.reason_code, state.reason = "run_error", "Run failed; inspect protected server diagnostics"
             log.exception("autonomous loop crashed",
                           session=state.session_id, error=str(exc))
             await self._emit(state, AutoActivityEvent(
@@ -512,16 +606,23 @@ class AutonomousEngine:
             ))
         finally:
             state.active = False
-            if self._runs.get(state.session_id) is state:
-                attack_kb.unregister_replan_callback(state.session_id)
+            if state.run_state not in TERMINAL:
+                state.run_state = "blocked"
+                state.reason_code = state.reason_code or "run_interrupted"
+            try:
+                await self._emit(state, AutoActivityEvent(type="auto_complete", status=state.run_state,
+                    action=state.reason or "Run ended", extra={"reason_code": state.reason_code}))
+            finally:
+                if self._runs.get(state.session_id) is state:
+                    attack_kb.unregister_replan_callback(state.session_id)
+                if self._tasks.get(state.session_id) is asyncio.current_task():
+                    self._tasks.pop(state.session_id, None)
             await self._write_decision_log(
                 state, decision_type="autonomous_stop",
                 reasoning=f"Cycle ended after {state.steps_taken} steps",
                 action_taken="engine._run_loop exit",
                 risk_color="info",
             )
-            if self._tasks.get(state.session_id) is asyncio.current_task():
-                self._tasks.pop(state.session_id, None)
             log.info("autonomous cycle ended",
                      session=state.session_id, steps=state.steps_taken)
 
@@ -551,17 +652,42 @@ class AutonomousEngine:
             for e in recent_events
         ]
 
+        feedback = []
+        for attempt in range(3):
+            if state.stop_requested:
+                return None
+            if state.model_calls >= 20:
+                state.reason_code, state.reason = "model_call_budget", "Model call budget exhausted"
+                return None
+            state.model_calls += 1
+            await self._persist(state)
+            proposal = await self._validated_plan(state, orchestrator_agent, history_str, open_ports, feedback)
+            if proposal:
+                return proposal
+        state.reason_code = "invalid_planner_output"
+        state.reason = "Planner could not produce a supported proposal after two corrective attempts: " + "; ".join(feedback[-3:])
+        return None
+
+    async def _validated_plan(self, state, orchestrator_agent, history_str, open_ports, feedback):
         try:
             resp = await orchestrator_agent.process(
                 session_id=state.session_id, user_id=state.user_id,
                 input_data={
+                    "autonomous_mode": True,
+                    "execution_evidence": [{"job_id":job_id,"source":"worker_receipt"} for job_id in state.evidence_job_ids],
                     "user_input": (f"[AUTO-MODE step {state.steps_taken+1}] "
                                    f"Goal: {state.goal}. Propose next single best "
                                    f"action. Tag it with risk_color so the loop "
                                    f"knows if human approval is needed."),
                     "target": state.target,
+                    "worker_capabilities": state.capabilities,
+                    "engagement_scope": (await execution_authorization._context(state.user_id, state.session_id))["scope"],
+                    "validation_feedback": list(feedback),
+                    "completion_criteria": "Discovery requires both a bounded TCP port observation and an HTTP response; http_check requires an HTTP response. Only current-run worker receipts count; no access claim.",
+                    "completed_observations": list(state.completed_observations),
+                    "executed_commands": list(state.executed_commands),
                     "chat_history": history_str,
-                    "tools_run": [e["event"] for e in recent_events
+                    "tools_run": [e["event"] for e in attack_kb.get_timeline(state.session_id, limit=10)
                                   if "_parsed" in e["event"]],
                     "open_ports": open_ports,
                 },
@@ -570,12 +696,35 @@ class AutonomousEngine:
         except Exception as exc:  # noqa: BLE001
             log.warning("planner failed in auto-loop",
                         session=state.session_id, error=str(exc))
+            feedback.append("Provider failed or timed out")
             return None
 
-        commands = resp.get("commands") or []
-        if not commands:
+        if not isinstance(resp, dict):
+            feedback.append("Expected an object containing commands")
             return None
-        return commands[0]
+        commands = resp.get("commands") or []
+        if not isinstance(commands, list) or not commands:
+            for rejection in resp.get("rejections", []):
+                if isinstance(rejection, dict):
+                    feedback.append(str(rejection.get("detail", rejection.get("code", "Proposal rejected")))[:250])
+            feedback.append("Expected a nonempty commands list")
+            return None
+        context = await execution_authorization._context(state.user_id, state.session_id)
+        from worker.policy import validate_worker_command
+        for command in commands:
+            try:
+                if not isinstance(command, dict):
+                    raise ValueError('Command must be an object')
+                checked = validate_worker_command(command.get('command', ''), context['scope'])
+                if checked.command in state.executed_commands:
+                    raise ValueError('Command already executed in this run; propose a missing observation')
+                if checked.tool not in state.capabilities.get('tools', []):
+                    raise ValueError('Tool is not advertised by the worker')
+                return {**command, 'command': checked.command, 'tool': checked.tool, 'risk_color': checked.risk}
+            except (ValueError, TypeError) as exc:
+                feedback.append(str(exc)[:250])
+                continue
+        return None
 
     async def _check_goal_achieved(self, state: SessionRunState) -> tuple[bool, str]:
         """
@@ -629,7 +778,10 @@ class AutonomousEngine:
             state.user_id, state.session_id, command, tool=tool, action_id=action_id,
             timeout=self.STEP_TIMEOUT, expected_revision=state.auth_revision, expected_worker_epoch=state.worker_epoch,
         )
-        return result.get("stdout", ""), result.get("stderr", ""), result.get("exit_code", -1) == 0
+        success = result.get("exit_code", -1) == 0 and bool(result.get("job_id")) and bool(result.get("stdout", "").strip())
+        if success:
+            state.evidence_job_ids.append(result["job_id"])
+        return result.get("stdout", ""), result.get("stderr", ""), success
 
     # ────────────────────────────────────────────────────────────────────
     #  Approval waiting
@@ -650,7 +802,11 @@ class AutonomousEngine:
                      event: "AutoActivityEvent | dict"):
         """Push an event into the stream queue + tail buffer."""
         ev_dict = event.to_dict() if isinstance(event, AutoActivityEvent) else event
+        from security.redaction import redact
+        ev_dict = redact(ev_dict)
+        ev_dict = {**ev_dict, "session_id": state.session_id, "run_id": state.run_id, "run_state": state.run_state}
         state.activity_log.append(ev_dict)
+        await self._persist(state)
         # Keep tail bounded
         if len(state.activity_log) > 200:
             state.activity_log = state.activity_log[-200:]

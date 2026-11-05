@@ -1,5 +1,9 @@
 # Security remediation status
 
+Worker follow-up: an initial curl/Nmap container worker is now included. See
+[worker setup](worker-setup.md) and [executed validation](worker-validation.md).
+Worker-absence statements below describe the earlier remediation checkpoint.
+
 This document tracks the local P0/P1 remediation of the findings in
 [`technical_revow.md`](../technical_revow.md). The original review remains a
 baseline assessment, not a statement that every historical finding is still open.
@@ -165,3 +169,8 @@ its historical installation, test-count and migration descriptions.
   applicability, full recovery and real embedding performance remain open. The
   earlier P1 pass used existing JSON/ledger columns; migrations now also track
   the schema revision in `alembic_version`.
+
+
+The subsequent reliability/specialist/Community work is recorded separately in
+[the upgrade validation register](aria-upgrade-validation.md), including explicit
+blocked and untested cases. Its staged implementation is not full release acceptance.

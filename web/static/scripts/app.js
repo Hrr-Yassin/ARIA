@@ -24,11 +24,22 @@ const state = {
   token:     localStorage.getItem('pentestai_token') || '',
   skill:     localStorage.getItem('skill') || 'intermediate',
   autoActive: false,
+  autoStarting: false,
+  booting: true,
+  runGeneration: 0,
+  messageGeneration: 0,
+  sessionListGeneration: 0,
+  activeTab: "hosts",
   ws:        null,
   autoStep:  0,
   autoMaxSteps: 12,
   pendingApprovals: [],
-  goalSelect: '',
+  goalSelect: 'discovery',
+  sessionEpoch: 0,
+  historyOffset: 0,
+  historyGeneration: 0,
+  historyLoading: false,
+  runningCommands: new Set(),
   modeSelect: 'lab',
 };
 
@@ -66,6 +77,7 @@ const el = {
     timeline:  $('tab-timeline'),
     decisions: $('tab-decisions'),
     playbooks: $('tab-playbooks'),
+    burp: $('tab-burp'),
   },
   toastContainer: $('toast-container'),
   approvalBanner: $('approval-banner'),
@@ -101,6 +113,12 @@ async function api(path, opts = {}) {
     body:   opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (resp.status === 401) {
+    if (state.authExpired) return null;
+    state.authExpired = true;
+    state.sessionId = "";
+    state.autoActive = false;
+    if (state.ws && typeof state.ws.close === "function") state.ws.close();
+    state.ws = null;
     state.token = "";
     localStorage.removeItem("pentestai_token");
     localStorage.removeItem("pentestai_user");
@@ -182,41 +200,9 @@ function addAriaMessage(payload) {
   bubble.className = 'msg-bubble';
   const bodyEl = document.createElement('div');
   bodyEl.textContent = payload.text || '';
+  bodyEl.style.whiteSpace = 'pre-wrap';
+  bodyEl.style.overflowWrap = 'anywhere';
   bubble.appendChild(bodyEl);
-
-  // Reasoning chain (collapsible)
-  if (payload.reasoning && payload.reasoning.length) {
-    const det = document.createElement('details');
-    det.className = 'collapse';
-    const summ = document.createElement('summary');
-    summ.textContent = `Reasoning chain (${payload.reasoning.length} steps)`;
-    det.appendChild(summ);
-    const body = document.createElement('div');
-    body.className = 'body';
-    payload.reasoning.forEach((r, i) => {
-      const step = document.createElement('div');
-      step.className = 'reasoning-step';
-      const t = document.createElement('div');
-      t.className = 'thought';
-      t.textContent = `Step ${i+1}: ${r.thought || ''}`;
-      step.appendChild(t);
-      if (r.action) {
-        const a = document.createElement('div');
-        a.className = 'action';
-        a.textContent = `→ ${r.action.command || JSON.stringify(r.action)}`;
-        step.appendChild(a);
-      }
-      if (r.observation) {
-        const o = document.createElement('div');
-        o.className = 'observation';
-        o.textContent = r.observation;
-        step.appendChild(o);
-      }
-      body.appendChild(step);
-    });
-    det.appendChild(body);
-    bubble.appendChild(det);
-  }
 
   // Commands
   if (payload.commands && payload.commands.length) {
@@ -241,6 +227,7 @@ function addAriaMessage(payload) {
   msg.appendChild(bubble);
   el.messages.appendChild(msg);
   scrollMessages();
+  return msg;
 }
 
 function renderCmdCard(cmd) {
@@ -373,6 +360,10 @@ function setTarget(target) {
 
 // ── Send message ───────────────────────────────────────────────────────
 async function sendMessage() {
+  if (el.sendBtn.disabled || state.historyLoading || state.booting) return;
+  const sessionId = state.sessionId;
+  const epoch = state.sessionEpoch;
+  const messageGeneration = ++state.messageGeneration;
   const text = el.input.value.trim();
   if (!text) return;
   if (!state.sessionId) {
@@ -384,6 +375,7 @@ async function sendMessage() {
     const ipm = text.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
     if (ipm) setTarget(ipm[1]);
   }
+  el.sendBtn.disabled = true;
   addUserMessage(text);
   el.input.value = '';
   el.input.style.height = 'auto';
@@ -401,10 +393,15 @@ async function sendMessage() {
         tools_run: Array.from(toolsRun),
       },
     });
+    if (state.sessionId !== sessionId || state.sessionEpoch !== epoch || state.messageGeneration !== messageGeneration) return;
     el.thinking.classList.add('hidden');
 
     const plan = resp && (resp.plan || resp);
-    if (plan && Array.isArray(plan.commands)) {
+    if(plan?.type==='report_select') {
+      renderReportChoices(plan,sessionId,epoch);
+    } else if(plan?.type==='report' && plan.filename) {
+      renderReportLink(plan);
+    } else if (plan && Array.isArray(plan.commands)) {
       state.phase = plan.current_phase || state.phase;
       updatePhaseUI();
       const risk = (plan.commands || []).some(c => c.risk_color === 'red')  ? 'red'
@@ -415,63 +412,107 @@ async function sendMessage() {
         phase: state.phase,
         risk,
         commands: plan.commands,
-        reasoning: plan.react_trace || [],
       });
     } else if (resp) {
       addAriaMessage({ text: resp.suggested_reply || JSON.stringify(resp) });
     }
     refreshKB();
   } catch (exc) {
+    if(state.sessionEpoch !== epoch || state.messageGeneration !== messageGeneration) return;
     el.thinking.classList.add('hidden');
     toast('danger', 'Request failed', exc.message);
+  } finally {
+    if(state.sessionEpoch === epoch && state.messageGeneration === messageGeneration) el.sendBtn.disabled = false;
+  }
+}
+
+function renderReportLink(report) {
+  const message=addAriaMessage({text:`${report.format || 'Assessment'} report is ready.`});
+  const link=document.createElement('a');
+  link.textContent='Download report';
+  link.href=`/api/report/download/${encodeURIComponent(report.filename)}`;
+  message.appendChild(link);
+  scrollMessages();
+}
+
+function renderReportChoices(plan,sid=state.sessionId,epoch=state.sessionEpoch) {
+  const message=addAriaMessage({text:'Choose a report format. Reports include evidence references and verification limits.'});
+  for(const format of plan.formats || []) {
+    const button=document.createElement('button'); button.className='cmd-btn'; button.textContent=format.label;
+    button.onclick=async()=>{
+      if(state.sessionEpoch!==epoch || button.disabled) return;
+      button.disabled=true;
+      try {
+        const report=await api('/api/report/generate',{method:'POST',body:{session_id:sid,format:format.id,turn_id:plan.turn_id || null}});
+        if(report?.filename && state.sessionEpoch===epoch) renderReportLink(report);
+      } catch(exc) { toast('danger','Report failed',exc.message); }
+      finally { button.disabled=false; }
+    };
+    message.appendChild(button);
   }
 }
 
 // ── Run a single command ───────────────────────────────────────────────
 async function runCommand(cmd) {
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
+  const target = state.target;
+  const key = sid + ':' + cmd.command;
+  if (state.runningCommands.has(key)) return;
+  state.runningCommands.add(key);
   addToolPill(cmd.tool);
   toast('info', 'Dispatching', cmd.tool || 'command');
   try {
     const proposal = await api('/api/execution/proposals', {
-      method: 'POST', body: {session_id: state.sessionId, command: cmd.command, tool: cmd.tool || ''},
+      method: 'POST', body: {session_id: sid, command: cmd.command, tool: cmd.tool || '', turn_id: cmd.turn_id || ''},
     });
-    if (!proposal) return;
+    if (!proposal || state.sessionId !== sid || state.sessionEpoch !== epoch) return;
     if (proposal.status === 'pending') {
       const approved = confirm(`Server policy requires approval. Run this command?\n\n${proposal.command}`);
       await api(`/api/execution/${proposal.action_id}/decision`, {
-        method: 'POST', body: {session_id: state.sessionId, decision: approved ? 'approve' : 'reject'},
+        method: 'POST', body: {session_id: sid, decision: approved ? 'approve' : 'reject'},
       });
       if (!approved) return;
     }
+    if (state.sessionId !== sid || state.sessionEpoch !== epoch) return;
     const res = await api('/api/kali/execute', {
       method: 'POST',
       body: {
-        session_id: state.sessionId,
+        session_id: sid,
         command:    proposal.command,
         tool:       proposal.tool,
         action_id:  proposal.action_id,
-        target:     state.target,
+        target:     target,
       },
     });
-    if (res && (res.stdout || res.stderr)) {
-      await api('/api/tool-results', {
+    if (res && state.sessionId === sid && state.sessionEpoch === epoch) {
+      addAriaMessage({text: (res.stdout || '') + '\n' + (res.stderr || '')});
+      if (res.exit_code !== 0 || res.status === 'cancelled') {
+        toast('danger', 'Execution failed', res.stderr || res.status || 'Nonzero exit status');
+        return;
+      }
+      const analysis = await api('/api/tool-results', {
         method: 'POST',
         body: {
-          session_id: state.sessionId,
+          session_id: sid,
           job_id: res.job_id || null,
           agent_type: cmd.agent || 'scan',
           command: cmd.command,
           stdout: res.stdout || '',
           stderr: res.stderr || '',
           exit_code: res.exit_code || 0,
-          target: state.target,
+          target: target,
         },
       });
+      const reply = analysis?.chat_message || analysis?.summary || analysis?.suggested_reply;
+      if (reply && state.sessionId === sid && state.sessionEpoch === epoch) addAriaMessage({text: reply});
       toast('success', 'Done', `${cmd.tool} completed`);
       refreshKB();
     }
   } catch (exc) {
     toast('danger', 'Exec failed', exc.message);
+  } finally {
+    state.runningCommands.delete(key);
   }
 }
 
@@ -482,6 +523,9 @@ async function toggleAuto() {
 }
 
 async function startAuto() {
+  if (state.autoStarting || state.booting) return;
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
   if (!state.target) {
     toast('warn', 'Target required',
           'Set a target (e.g. 192.168.57.10) before starting auto mode.');
@@ -491,28 +535,37 @@ async function startAuto() {
     toast('warn', 'No session', 'Create a session first.');
     return;
   }
+  state.runGeneration += 1;
+  state.autoStarting = true;
+  el.autoBtn.disabled = true;
   try {
     const res = await api(`/api/pentest/${state.sessionId}/autonomous/start`, {
       method: 'POST',
-      body: { goal: state.goalSelect || 'initial_access', target: state.target },
+      body: { goal: state.goalSelect || 'discovery', target: state.target, max_steps: state.autoMaxSteps, auto_risk_threshold: el.riskThreshold.value || 'green_only' },
     });
+    if (state.sessionId !== sid || state.sessionEpoch !== epoch) return;
     if (res && (res.status === 'started' || res.status === 'already_running')) {
       state.autoActive = true;
       updateAutoUI();
       connectAutoWS();
       toast('success', 'AUTO mode active',
-            `Goal: ${state.goalSelect || 'initial_access'}`);
+            `Goal: ${state.goalSelect || 'discovery'}`);
     } else {
-      toast('warn', 'Auto', res?.status || 'unknown');
+      toast('warn', res?.run_state || 'Auto', res?.reason || res?.status || 'unknown');
     }
   } catch (exc) {
     toast('danger', 'Auto start failed', exc.message);
+  } finally {
+    state.autoStarting = false;
+    el.autoBtn.disabled = false;
   }
 }
 
 async function stopAuto() {
+  state.runGeneration += 1;
   try {
-    await api(`/api/pentest/${state.sessionId}/autonomous/stop`, { method: 'POST' });
+    const stopped = await api(`/api/pentest/${state.sessionId}/autonomous/stop`, { method: 'POST' });
+    if (stopped?.pending) { toast('warn', 'Cancellation pending', 'Worker termination is not confirmed'); return; }
     state.autoActive = false;
     updateAutoUI();
     if (state.ws) { state.ws.close(); state.ws = null; }
@@ -547,9 +600,12 @@ function connectAutoWS() {
     return;
   }
   state.ws = ws;
+  const epoch = state.sessionEpoch;
+  const runGeneration = state.runGeneration;
   ws.onopen = () => ws.send(JSON.stringify({ token: state.token }));
 
   ws.onmessage = (e) => {
+    if (state.ws !== ws || state.sessionEpoch !== epoch) return;
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
     handleAutoEvent(ev);
@@ -558,8 +614,8 @@ function connectAutoWS() {
     // errors often precede close; handled in onclose
   };
   ws.onclose = () => {
-    if (state.autoActive) {
-      setTimeout(() => { if (state.autoActive) connectAutoWS(); }, 2000);
+    if (state.autoActive && state.ws === ws && state.sessionEpoch === epoch) {
+      setTimeout(() => { if (state.autoActive && state.ws === ws && state.sessionEpoch === epoch && state.runGeneration === runGeneration) connectAutoWS(); }, 2000);
     }
   };
 }
@@ -596,7 +652,7 @@ function handleAutoEvent(ev) {
       break;
 
     case 'auto_complete':
-      renderAutoLine({...ev, type: 'auto_activity', status: 'done',
+      renderAutoLine({...ev, type: 'auto_activity', status: ev.status || 'done',
                        action: ev.action || 'Autonomous cycle complete'});
       state.autoActive = false;
       updateAutoUI();
@@ -668,12 +724,12 @@ function renderAutoLine(ev) {
 function showApprovalBanner(req) {
   el.approvalDetail.textContent =
       `Step ${req.step}: ${req.reason || req.purpose || ''}`;
-  el.approvalCommand.textContent = req.action || '';
+  el.approvalCommand.textContent = req.command || req.action || '';
   el.approvalBanner.classList.remove('hidden');
   el.btnApprove.dataset.actionId = req.action_id;
   el.btnReject.dataset.actionId  = req.action_id;
   el.btnModify.dataset.actionId  = req.action_id;
-  el.btnApprove.dataset.command  = req.action || '';
+  el.btnApprove.dataset.command  = req.command || req.action || '';
 }
 
 async function submitApproval(decision) {
@@ -710,9 +766,11 @@ async function submitApproval(decision) {
 // ── Intel panel refresh ────────────────────────────────────────────────
 async function refreshKB() {
   if (!state.sessionId) return;
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
   try {
     const snap = await api(`/api/pentest/${state.sessionId}/kb-snapshot`);
-    if (snap) renderIntel(snap);
+    if (snap && state.sessionId === sid && state.sessionEpoch === epoch) renderIntel(snap);
   } catch (exc) {
     // silent
   }
@@ -858,16 +916,19 @@ function renderTimeline(events) {
 
 // ── Decision log (academic brief: traceability) ────────────────────────
 async function loadDecisionLog() {
+  const epoch = state.sessionEpoch;
   const root = el.bodies.decisions;
   root.textContent = '';
   try {
     const res = await api(`/api/pentest/${state.sessionId}/decision-log?limit=100`);
+    if (state.sessionEpoch !== epoch) return;
     if (!res || !res.entries || !res.entries.length) {
       emptyState(root, 'No decisions recorded yet.');
       return;
     }
     res.entries.forEach(e => root.appendChild(renderDecisionEntry(e)));
   } catch (exc) {
+    if (state.sessionEpoch !== epoch) return;
     emptyState(root, 'Could not load decision log.');
   }
 }
@@ -922,16 +983,19 @@ function renderDecisionEntry(e) {
 
 // ── Playbooks tab ──────────────────────────────────────────────────────
 async function loadPlaybooks() {
+  const epoch = state.sessionEpoch;
   const root = el.bodies.playbooks;
   root.textContent = '';
   try {
     const res = await api(`/api/pentest/${state.sessionId}/playbooks`);
+    if (state.sessionEpoch !== epoch) return;
     if (!res || !res.playbooks || !res.playbooks.length) {
       emptyState(root, 'No playbooks saved yet. They appear after successful engagements.');
       return;
     }
     res.playbooks.forEach(p => root.appendChild(renderPlaybookCard(p)));
   } catch (exc) {
+    if (state.sessionEpoch !== epoch) return;
     emptyState(root, 'Could not load playbooks.');
   }
 }
@@ -972,11 +1036,168 @@ function renderPlaybookCard(p) {
   return card;
 }
 
+// ── Burp Community: selected evidence and explicit checks ───────────────
+async function loadBurp() {
+  const root = el.bodies.burp;
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
+  root.textContent = 'Loading Burp Community status…';
+  try {
+    const caps = await api('/api/burp/capabilities');
+    if (state.sessionEpoch !== epoch) return;
+    root.textContent = '';
+    const note = document.createElement('p');
+    note.textContent = caps?.enabled
+      ? 'Community: selected Proxy evidence and Repeater staging. Scanner is unavailable. Exact replay and mutation require request-bound approval; authenticated requests and mutations also require engagement authorization.'
+      : 'Burp Community integration is disabled pending release validation. Scanner is unavailable.';
+    root.appendChild(note);
+    if (!caps?.enabled) return;
+    try {
+      const history=await api(`/api/burp/${sid}/proxy-history`);
+      if(state.sessionEpoch !== epoch) return;
+      const selected=[];
+      for(const capture of history?.captures || []) {
+        const label=document.createElement('label');
+        const checkbox=document.createElement('input'); checkbox.type='checkbox'; checkbox.value=capture.capture_id;
+        checkbox.onchange=()=>{ if(checkbox.checked) selected.push(capture.capture_id); else selected.splice(selected.indexOf(capture.capture_id),1); };
+        label.appendChild(checkbox); label.appendChild(document.createTextNode(`${capture.method} ${capture.url}`)); root.appendChild(label);
+      }
+      const importButton=document.createElement('button'); importButton.textContent='Import selected Proxy captures';
+      importButton.onclick=async()=>{
+        if(!selected.length || selected.length>20) { toast('warn','Select captures','Choose between one and twenty in-scope captures.'); return; }
+        importButton.disabled=true;
+        try { await api(`/api/burp/${sid}/import-selected`,{method:'POST',body:{capture_ids:selected}}); if(state.sessionEpoch===epoch) loadBurp(); }
+        catch(exc) { toast('danger','Import failed',exc.message); }
+        finally { importButton.disabled=false; }
+      };
+      root.appendChild(importButton);
+    } catch(exc) {
+      if(state.sessionEpoch !== epoch) return;
+      const disconnected=document.createElement('p'); disconnected.textContent='Burp is disconnected. Saved evidence remains available.'; root.appendChild(disconnected);
+    }
+    const map = await api(`/api/burp/${sid}/map`);
+    if (state.sessionEpoch !== epoch) return;
+    const saved = await api(`/api/burp/${sid}/replays`);
+    if (state.sessionEpoch !== epoch) return;
+    for (const job of saved?.actions || []) renderReplayJob(sid,job,epoch);
+    const refresh = document.createElement('button');
+    refresh.textContent = 'Refresh imported evidence';
+    refresh.onclick = loadBurp;
+    root.appendChild(refresh);
+    for (const entry of map?.endpoints || []) {
+      const card = document.createElement('div');
+      card.className = 'cmd-card';
+      const label = document.createElement('p');
+      label.textContent = `${entry.method} ${entry.url} · auth: ${entry.authentication_context} · evidence: ${entry.evidence_id}`;
+      card.appendChild(label);
+      const stage = document.createElement('button');
+      stage.textContent = 'Stage in Repeater';
+      stage.onclick = async () => {
+        stage.disabled = true;
+        try {
+          if (state.sessionEpoch !== epoch) return;
+          await api(`/api/burp/${sid}/${entry.evidence_id}/repeater`, {method:'POST'});
+          toast('info', 'Repeater', 'Request staged. Send it manually in Burp after review.');
+        } catch (exc) { toast('danger', 'Repeater unavailable', exc.message); }
+        finally { stage.disabled = false; }
+      };
+      const check = document.createElement('button');
+      check.textContent = 'Review availability check';
+      check.disabled = entry.authentication_context !== 'anonymous' || !['GET','HEAD'].includes(entry.method);
+      check.onclick = async () => {
+        check.disabled = true;
+        try {
+          if (state.sessionEpoch !== epoch) return;
+          const proposal = await api(`/api/burp/${sid}/${entry.evidence_id}/check-proposal`, {method:'POST'});
+          if (!proposal || state.sessionEpoch !== epoch) return;
+          const approved = confirm(`${proposal.policy}\n\n${proposal.command}`);
+          await api(`/api/execution/${proposal.action_id}/decision`, {method:'POST',body:{session_id:sid,decision:approved?'approve':'reject'}});
+          if (!approved || state.sessionEpoch !== epoch) return;
+          const result = await api(`/api/burp/${sid}/${entry.evidence_id}/check`, {method:'POST',body:{action_id:proposal.action_id}});
+          if (result && state.sessionEpoch === epoch) addAriaMessage({text:JSON.stringify(result,null,2)});
+        } catch (exc) { toast('danger', 'Check unavailable', exc.message); }
+        finally { check.disabled = false; }
+      };
+      const replay = document.createElement('button');
+      replay.textContent = 'Review exact replay';
+      replay.onclick = () => reviewReplay(sid, entry.evidence_id, epoch, null, replay);
+      const mutate = document.createElement('button');
+      mutate.textContent = 'Review request changes';
+      mutate.onclick = () => {
+        const changes = prompt('Request changes as JSON: method, path, headers, body_b64. Changes require engagement authorization.', '{}');
+        if (changes === null) return;
+        try { reviewReplay(sid, entry.evidence_id, epoch, JSON.parse(changes), mutate); }
+        catch (exc) { toast('warn', 'Invalid request changes', exc.message); }
+      };
+      card.append(stage,check,replay,mutate);
+      root.appendChild(card);
+    }
+  } catch (exc) {
+    if (state.sessionEpoch === epoch) root.textContent = `Burp status could not be loaded: ${exc.message}`;
+  }
+}
+
+async function reviewReplay(sid, evidenceId, epoch, mutation, button) {
+  if (state.sessionEpoch !== epoch || button.disabled) return;
+  button.disabled = true;
+  try {
+    const proposal = await api(`/api/burp/${sid}/${evidenceId}/replay-proposals`, {method:'POST', body:{mutation}});
+    if (!proposal || state.sessionEpoch !== epoch) return;
+    const summary = proposal.result?.summary || {};
+    const accepted = confirm(`Approve this exact ${mutation ? 'mutated request' : 'replay'}?\n${summary.method} ${summary.url}\nAuth context: ${summary.authentication_context}\nRequest SHA-256: ${proposal.request_digest}\nOne request; no redirects; ten-second response timeout.`);
+    await api(`/api/burp/${sid}/replays/${proposal.action_id}/decision`, {method:'POST',body:{decision:accepted?'approve':'reject'}});
+    if (!accepted || state.sessionEpoch !== epoch) return;
+    const result = await api(`/api/burp/${sid}/replays/${proposal.action_id}/execute`, {method:'POST'});
+    if (result && state.sessionEpoch === epoch) renderReplayJob(sid,result,epoch);
+  } catch (exc) { toast('danger','Replay unavailable',exc.message); }
+  finally { button.disabled = false; }
+}
+
+function renderReplayJob(sid, result, epoch) {
+  if (state.sessionEpoch !== epoch) return;
+  const card = document.createElement('div');
+  card.className = 'cmd-card';
+  const status = document.createElement('p');
+  status.textContent = `Replay ${result.action_id}: ${result.state}`;
+  card.appendChild(status);
+  if (result.result?.comparison) {
+    const comparison = document.createElement('pre');
+    comparison.textContent = JSON.stringify(result.result.comparison,null,2);
+    card.appendChild(comparison);
+  }
+  const refresh = document.createElement('button');
+  refresh.textContent = 'Refresh replay status';
+  refresh.onclick = async () => {
+    refresh.disabled = true;
+    try {
+      const update = await api(`/api/burp/${sid}/replays/${result.action_id}`);
+      if (update && state.sessionEpoch === epoch) {
+        card.remove(); renderReplayJob(sid,update,epoch);
+      }
+    } catch(exc) { toast('warn','Replay status unavailable',exc.message); }
+    finally { refresh.disabled=false; }
+  };
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancel replay';
+  cancel.disabled = ['completed','failed','rejected','cancelled','cancelled_after_dispatch'].includes(result.state);
+  cancel.onclick = async () => {
+    cancel.disabled = true;
+    try {
+      const update = await api(`/api/burp/${sid}/replays/${result.action_id}/cancel`,{method:'POST'});
+      if (update && state.sessionEpoch === epoch) { card.remove(); renderReplayJob(sid,update,epoch); }
+    } catch(exc) { toast('warn','Cancellation pending',exc.message); }
+    finally { cancel.disabled=false; }
+  };
+  card.append(refresh,cancel);
+  el.bodies.burp.appendChild(card);
+}
+
 // ── Session list ───────────────────────────────────────────────────────
 async function loadSessions() {
+  const generation=++state.sessionListGeneration;
   try {
     const res = await api('/api/session/list');
-    if (!res) return;
+    if (!res || state.sessionListGeneration !== generation) return;
     el.sessionList.textContent = '';
     (res.sessions || []).forEach(s => {
       const item = document.createElement('div');
@@ -991,16 +1212,101 @@ async function loadSessions() {
   }
 }
 
+function historyNotice(text, retry = false) {
+  const notice = document.createElement(retry ? 'button' : 'div');
+  notice.textContent = text;
+  notice.className = 'history-status';
+  if (retry) notice.onclick = () => restoreChat();
+  el.messages.appendChild(notice);
+}
+
+async function restoreChat(older = false) {
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
+  const offset = older ? state.historyOffset : 0;
+  const generation = ++state.historyGeneration;
+  state.historyLoading = true;
+  if (!older) {
+    el.messages.textContent = '';
+    historyNotice('Loading saved history…');
+  }
+  try {
+    const restored = await api(`/api/session/${sid}/restore?offset=${offset}`);
+    if (state.sessionId !== sid || state.sessionEpoch !== epoch || state.historyGeneration !== generation) return;
+    if (!restored || !Array.isArray(restored.logs)) throw new Error('Invalid history response');
+    // Older pages are rendered before the existing messages.
+    const previous = older ? Array.from(el.messages.children) : [];
+    el.messages.textContent = '';
+    if (restored.has_more) {
+      const more = document.createElement('button');
+      more.textContent = 'Load older messages';
+      more.onclick = () => restoreChat(true);
+      el.messages.appendChild(more);
+    }
+    for (const entry of restored.logs) {
+      if (entry.role === 'user') addUserMessage(entry.content);
+      else if(entry.data?.type==='report_select') renderReportChoices(entry.data,sid,epoch);
+      else if(entry.type==='report' && entry.data?.filename) renderReportLink(entry.data);
+      else addAriaMessage({text: entry.content || '', commands: entry.data?.commands || []});
+    }
+    previous.filter(n => n.textContent !== 'Load older messages').forEach(n => el.messages.appendChild(n));
+    state.historyOffset = offset + restored.logs.length;
+    for (const tool of restored.tools_run || []) addToolPill(tool);
+    if (!restored.logs.length && !older) historyNotice('No saved messages. Earlier activity may not have been recorded.');
+  } catch (exc) {
+    if (state.sessionId !== sid || state.sessionEpoch !== epoch || state.historyGeneration !== generation) return;
+    if (!older) el.messages.textContent = '';
+    historyNotice('History could not be loaded. Click to retry.', true);
+  } finally {
+    if (state.sessionEpoch === epoch && state.historyGeneration === generation) state.historyLoading = false;
+  }
+}
+
 function switchSession(s) {
+  state.sessionEpoch += 1;
+  state.runGeneration += 1;
+  state.messageGeneration += 1;
+  el.sendBtn.disabled = false;
+  el.thinking.classList.add("hidden");
+  Object.values(el.bodies).forEach(root=>root.textContent="");
+  if (state.ws) { state.ws.close(); state.ws = null; }
+  state.autoActive = false;
+  state.pendingApprovals = [];
+  el.autoLines.textContent = '';
+  state.autoStep = 0;
+  toolsRun.clear();
+  el.approvalBanner.classList.add('hidden');
   state.sessionId = s.session_id;
   localStorage.setItem('current_session', s.session_id);
   el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
   setTarget(s.target || '');
   state.phase = s.phase || 'scope';
   updatePhaseUI();
-  el.messages.textContent = '';
+  updateAutoUI();
   loadSessions();
   refreshKB();
+  restoreChat();
+  restoreRunStatus();
+  if(state.activeTab==="burp") loadBurp();
+  if(state.activeTab==="decisions") loadDecisionLog();
+  if(state.activeTab==="playbooks") loadPlaybooks();
+}
+
+async function restoreRunStatus() {
+  const sid = state.sessionId;
+  const epoch = state.sessionEpoch;
+  const runGeneration = state.runGeneration;
+  try {
+    const status = await api(`/api/pentest/${sid}/autonomous/status`);
+    if (state.sessionId !== sid || state.sessionEpoch !== epoch || state.runGeneration !== runGeneration || !status) return;
+    state.autoActive = Boolean(status.active);
+    state.autoMaxSteps = status.max_steps || 12;
+    updateAutoUI();
+    if (status.active) connectAutoWS();
+    else if (status.run_state) renderAutoLine({status: status.run_state, action: status.reason || status.run_state});
+  } catch (exc) {
+    if (state.sessionEpoch === epoch) toast('warn', 'Run status unavailable', exc.message);
+  }
 }
 
 async function createNewSession() {
@@ -1023,10 +1329,17 @@ async function createNewSession() {
 // ── Settings ───────────────────────────────────────────────────────────
 function openSettings() {
   el.settingsPanel.classList.remove('hidden');
+  el.settingsPanel.setAttribute('aria-hidden','false');
   loadLLMKeys();
+  api('/api/profile').then(profile => {
+    if (!profile?.skill_level) return;
+    state.skill = profile.skill_level;
+    document.querySelectorAll('input[name="skill"]').forEach(radio => radio.checked=radio.value===state.skill);
+  }).catch(exc => toast('warn','Profile unavailable',exc.message));
 }
 function closeSettings() {
   el.settingsPanel.classList.add('hidden');
+  el.settingsPanel.setAttribute('aria-hidden','true');
 }
 
 async function loadLLMKeys() {
@@ -1100,6 +1413,7 @@ function bindEvents() {
   el.autoBtn.onclick = toggleAuto;
 
   // Goal / mode selects
+  el.goalSel.value = state.goalSelect;
   el.goalSel.onchange = (e) => state.goalSelect = e.target.value;
   el.modeSel.onchange = (e) => {
     state.modeSelect = e.target.value;
@@ -1115,11 +1429,13 @@ function bindEvents() {
       el.tabs.forEach(t => t.classList.remove('active'));
       Object.values(el.bodies).forEach(b => b.classList.remove('active'));
       tab.classList.add('active');
+      state.activeTab=tab.dataset.tab;
       const target = el.bodies[tab.dataset.tab];
       if (target) target.classList.add('active');
       // Lazy load tabs
       if (tab.dataset.tab === 'decisions') loadDecisionLog();
       if (tab.dataset.tab === 'playbooks') loadPlaybooks();
+      if (tab.dataset.tab === 'burp') loadBurp();
     };
   });
 
@@ -1139,6 +1455,27 @@ function bindEvents() {
   }
   if (el.newKeyAdd) el.newKeyAdd.onclick = addKey;
 
+  el.riskThreshold.value = localStorage.getItem('auto_risk_threshold') || 'green_orange';
+  el.riskThreshold.onchange = () => localStorage.setItem('auto_risk_threshold',el.riskThreshold.value);
+  document.querySelectorAll('input[name="skill"]').forEach(radio => {
+    radio.onchange = async () => {
+      try {
+        const result=await api('/api/profile',{method:'PATCH',body:{skill_level:radio.value}});
+        if(result?.skill_level) { state.skill=result.skill_level; localStorage.setItem('skill',state.skill); }
+      } catch(exc) { toast('warn','Profile update failed',exc.message); }
+    };
+  });
+  const logoutButton=$('logout-button');
+  if(logoutButton) logoutButton.onclick=async () => {
+    try {
+      await api('/api/logout',{method:'POST'});
+      localStorage.removeItem('pentestai_token'); localStorage.removeItem('current_session');
+      localStorage.removeItem('pentestai_user'); window.location.href='/login';
+    } catch(exc) { toast('danger','Sign out failed',exc.message); }
+  };
+  el.modeSel.disabled = true;
+  el.modeSel.title = 'Only the configured isolated lab mode is supported in this release';
+
   // New session
   el.newSessionBtn.onclick = createNewSession;
 }
@@ -1149,6 +1486,8 @@ async function boot() {
     window.location.href = '/login.html';
     return;
   }
+  state.booting = true;
+  el.autoBtn.disabled = true;
   bindEvents();
   updatePhaseUI();
   await loadSessions();
@@ -1162,17 +1501,9 @@ async function boot() {
         updatePhaseUI();
       }
     } catch {}
+    await restoreChat();
     await refreshKB();
-    // Check if auto is already running on this session (page reload case)
-    try {
-      const status = await api(`/api/pentest/${state.sessionId}/autonomous/status`);
-      if (status && status.active) {
-        state.autoActive = true;
-        state.autoMaxSteps = status.max_steps || 12;
-        updateAutoUI();
-        connectAutoWS();
-      }
-    } catch {}
+    await restoreRunStatus();
   } else {
     addAriaMessage({
       text: 'Welcome to PentestAI v10. Create a session to begin, then set a '
@@ -1184,6 +1515,8 @@ async function boot() {
     });
   }
 
+  state.booting = false;
+  el.autoBtn.disabled = false;
   // Periodic KB refresh every 15s (belt-and-braces alongside WS)
   setInterval(refreshKB, 15000);
 }

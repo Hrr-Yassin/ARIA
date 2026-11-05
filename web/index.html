@@ -142,6 +142,8 @@
         <div class="input-actions">
           <select id="goal-select" class="input-select" aria-label="Attack goal">
             <option value="">Set goal</option>
+            <option value="http_check">HTTP availability check</option>
+            <option value="discovery">Discovery assessment</option>
             <option value="initial_access">Initial access</option>
             <option value="dump_creds">Dump credentials</option>
             <option value="pivot">Pivot</option>
@@ -179,6 +181,7 @@
       <button class="intel-tab" data-tab="timeline" role="tab">Timeline</button>
       <button class="intel-tab" data-tab="decisions" role="tab">Decisions</button>
       <button class="intel-tab" data-tab="playbooks" role="tab">Playbooks</button>
+      <button class="intel-tab" data-tab="burp" role="tab">Burp Community</button>
     </div>
     <div class="intel-tab-bodies">
       <div class="intel-body active" id="tab-hosts"></div>
@@ -188,6 +191,7 @@
       <div class="intel-body" id="tab-timeline"></div>
       <div class="intel-body" id="tab-decisions"></div>
       <div class="intel-body" id="tab-playbooks"></div>
+      <div class="intel-body" id="tab-burp"></div>
     </div>
   </aside>
 </main>
@@ -221,7 +225,7 @@
       <h3>Autonomous mode</h3>
       <div class="form-row">
         <label for="max-steps">Max steps per cycle</label>
-        <input id="max-steps" type="range" min="4" max="20" step="1" value="12">
+        <input id="max-steps" type="range" min="1" max="12" step="1" value="12">
         <span id="max-steps-value">12</span>
       </div>
       <div class="form-row">
@@ -251,6 +255,7 @@
         </label>
       </div>
     </section>
+    <section class="settings-section"><button id="logout-button" class="btn btn-ghost">Sign out</button></section>
   </div>
 </aside>
 

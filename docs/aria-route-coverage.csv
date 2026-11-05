@@ -1,0 +1,70 @@
+route,methods,status,evidence_or_limitation
+/openapi.json,GET HEAD,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/burp/capabilities,GET,passed,Offline capability checks; no live Burp desktop
+/api/burp/{session_id}/import,POST,passed,Disabled gate and ownership denial offline; encrypted storage/deduplication in real SQL integration
+/api/burp/{session_id}/map,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/burp/{session_id}/{evidence_id}/repeater,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/burp/{session_id}/{evidence_id}/check-proposal,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/burp/{session_id}/{evidence_id}/check,POST,passed,"Rejected action, evidence binding and budget denial only; live approved flow untested"
+/api/burp/{session_id}/analyze,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/v8/input,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/tool-results,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/v8/cache/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/v8/status/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/v8/llm-status,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/findings/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/kali/execute,POST,passed,Mocked worker/API; no live scan in this upgrade
+/api/execution/proposals,POST,passed,Offline authorization store and frontend VM
+/api/execution/{action_id}/decision,POST,passed,Offline authorization store and frontend VM
+/api/kali/health,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/kali/tools,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/ws/chat,WEBSOCKET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/kill/{session_id},POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/jobs/{session_id}/{job_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/running/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/history/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/kb/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/autonomous/start,POST,passed,"Offline ownership, bounds, unsupported goals and mocked planning"
+/api/pentest/{session_id}/autonomous/stop,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/autonomous/status,GET,passed,Offline access and real SQL recovery
+/api/pentest/{session_id}/autonomous/approvals,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/autonomous/approve,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/ws/{session_id}/auto,WEBSOCKET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/decision-log,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/playbooks,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/pentest/{session_id}/kb-snapshot,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/session/new,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/session/list,GET,passed,Actual Firefox and disposable-service API
+/api/session/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/session/{session_id},DELETE,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/session/{session_id}/restore,GET,passed,"Actual/synthetic Firefox, real SQL pagination and offline API checks"
+/api/session/{session_id}/phase,PATCH,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/report/generate,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/report/view/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/report/download/{filename},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/keys/,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/keys/,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/keys/{key_id},DELETE,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/keys/{key_id},PATCH,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/users,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/sessions,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/users,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/users/{user_id},PATCH,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/users/{user_id},DELETE,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/audit-logs,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/activity,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/health,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/admin/errors,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/login,POST,passed,Actual Firefox and disposable SQL/API
+/api/logout,POST,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/health,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/api/ready,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/static,WEBSOCKET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/login,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/admin,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/chat/{session_id},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/login.html,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/admin.html,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/index.html,GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.
+/{path:path},GET,untested,Not individually attributed in this upgrade; existing tests may exercise portions. No full-route coverage claim.

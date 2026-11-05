@@ -248,21 +248,25 @@ class SessionManager:
             db.add(log_entry)
             await db.commit()
 
-    async def get_chat_logs(self, session_id: str, limit: int = 200) -> list:
+    async def get_chat_logs(self, session_id: str, limit: int = 200, offset: int = 0, msg_types: Optional[List[str]] = None) -> list:
         async with async_session() as db:
+            query=select(ChatLog).where(ChatLog.session_id == session_id)
+            if msg_types:
+                query=query.where(ChatLog.msg_type.in_(msg_types))
             result = await db.execute(
-                select(ChatLog).where(ChatLog.session_id == session_id)
-                .order_by(ChatLog.created_at.asc())
-                .limit(limit)
+                query.order_by(ChatLog.created_at.desc(), ChatLog.id.desc())
+                .offset(max(0, offset)).limit(min(max(1, limit), 201))
             )
             logs = result.scalars().all()
             return [{
+                "id": l.id,
+                "turn_id": (l.data or {}).get("turn_id"),
                 "role": l.role,
                 "content": l.content,
                 "type": l.msg_type,
                 "data": l.data or {},
                 "ts": l.created_at.timestamp() if l.created_at else 0,
-            } for l in logs]
+            } for l in reversed(logs)]
 
     # ── Audit Logs ───────────────────────────────────────────────────────
 

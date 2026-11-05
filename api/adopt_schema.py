@@ -5,7 +5,8 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.autogenerate import compare_metadata
 from sqlalchemy import inspect
-from memory.database_models import Base, engine
+from migrations.schema_v1 import Base
+from memory.database_models import engine
 
 
 def validate(connection):
