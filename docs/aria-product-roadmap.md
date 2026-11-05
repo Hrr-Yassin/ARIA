@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; later phases remain proposed backlog.
+Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; later phases remain proposed backlog.
 
 ## Objective
 
@@ -47,16 +47,21 @@ unexplained regression failures, and preserved session/authorization isolation.
 
 Dependencies: Phase 0; preserve the shared execution gate.
 
-- [ ] SCOPE-01: Define program and policy-snapshot models with source URL, retrieval time, content hash, and engagement owner.
-- [ ] SCOPE-02: Add official program-page import, with manual text import when authenticated pages cannot be fetched.
-- [ ] SCOPE-03: Extract included assets, exclusions, eligible issue classes, account requirements, and automation restrictions into a draft.
-- [ ] SCOPE-04: Link every extracted rule to source text; mark missing or ambiguous rules unknown.
-- [ ] SCOPE-05: Add human policy review and activation; model output alone cannot activate permission.
-- [ ] SCOPE-06: Enforce exact hostname/wildcard semantics, relevant paths, ports, redirects, and third-party exclusions server-side and at execution boundaries.
-- [ ] SCOPE-07: Store policy revisions; suspend affected pending actions when a policy changes until revalidated.
-- [ ] SCOPE-08: Add shared per-engagement request/concurrency budgets; honor documented limits and stop/back off on overload or throttling.
-- [ ] SCOPE-09: Rank candidate programs by technical fit, accessible accounts, eligible classes, automation compatibility, and research cost; unknown values remain visible.
-- [ ] SCOPE-10: Separate paid bounty programs from disclosure-only programs; display participation prerequisites without assuming eligibility.
+Work started by Codex on 2026-11-05. See [implementation status](phase1-policy-status.md)
+for the implementation, supported boundaries, and acceptance evidence.
+Phase 1 is complete for bounded curl GET/HEAD observations. Discovery/import alone
+cannot activate execution permission; unsupported profiles remain blocked.
+
+- [x] SCOPE-01: Define program and policy-snapshot models with source URL, retrieval time, content hash, and engagement owner.
+- [x] SCOPE-02: Add official program-page import, with manual text import when authenticated pages cannot be fetched.
+- [x] SCOPE-03: Extract included assets, exclusions, eligible issue classes, account requirements, and automation restrictions into a draft.
+- [x] SCOPE-04: Link every extracted rule to source text; mark missing or ambiguous rules unknown.
+- [x] SCOPE-05: Add human policy review and activation; model output alone cannot activate permission.
+- [x] SCOPE-06: Enforce exact hostname/wildcard semantics, relevant paths, ports, redirects, and third-party exclusions server-side and at execution boundaries.
+- [x] SCOPE-07: Store policy revisions; suspend affected pending actions when a policy changes until revalidated.
+- [x] SCOPE-08: Add shared per-engagement request/concurrency budgets; honor documented limits and stop/back off on overload or throttling.
+- [x] SCOPE-09: Rank candidate programs by technical fit, accessible accounts, eligible classes, automation compatibility, and research cost; unknown values remain visible.
+- [x] SCOPE-10: Separate paid bounty programs from disclosure-only programs; display participation prerequisites without assuming eligibility.
 
 Gate: a policy fixture set rejects excluded assets, prohibited actions, redirect
 escapes, ambiguous permission, and stale approvals. Program discovery never authorizes testing.

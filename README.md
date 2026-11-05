@@ -9,6 +9,9 @@ The research question is whether specialized agents, structured tool evidence, a
 Phase 0 engineering status, current schema requirement, capability inventory and
 reproducible disposable validation are recorded in [the baseline](docs/phase0-baseline.md).
 The task backlog is [the product roadmap](docs/aria-product-roadmap.md).
+Phase 1 adds owner-reviewed program policies, a private ranked shortlist, and
+budgeted HTTP observations in Settings. See [policy setup and acceptance](docs/phase1-policy-status.md)
+for supported scopes, activation, worker requirements, and validation.
 
 ## Current architecture
 

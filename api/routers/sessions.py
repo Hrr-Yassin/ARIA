@@ -21,6 +21,8 @@ class NewSession(BaseModel):
 
 @router.post("/new")
 async def create_session(body: NewSession, user: TokenData = Depends(get_current_user)):
+    if body.scope and 'program_policy' in body.scope:
+        raise HTTPException(422, 'Program policy is server-owned; use policy import, review and activation')
     result = await session_manager.create_session(
         user.user_id, body.target, body.name, body.context_type,
         body.scope or {"targets": [body.target], "exclusions": []})

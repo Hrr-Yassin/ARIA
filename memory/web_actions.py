@@ -35,6 +35,8 @@ def scope_binding(session):
 
 
 def replay_spec(data, scope, mutation=None):
+    if scope.get('program_policy'):
+        raise HTTPException(403, 'Reviewed programs require the shared budgeted HTTP worker; connector replay is unavailable')
     source = original(data)
     raw = base64.b64decode(source['request_b64'],validate=True)
     head, _, body = raw.partition(b'\r\n\r\n')

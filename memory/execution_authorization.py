@@ -187,6 +187,10 @@ class ExecutionAuthorization:
         if not await self._stored(self.store.transition, proposal, claimed):
             raise HTTPException(409, 'Authorization already consumed')
         # Claim commits before contacting the worker; a timeout cannot replay it.
+        if context['scope'].get('program_policy') and executor is not None:
+            raise HTTPException(403, 'Program traffic requires the budgeted isolated worker')
+        if context['scope'].get('program_policy') and settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
+            raise HTTPException(403, 'Program traffic requires jobs-v1')
         if executor is not None:
             output = await executor({'tool': validated.tool, 'command': validated.command, 'risk_color': validated.risk})
             return {'stdout': str(output), 'stderr': '', 'exit_code': 0, 'turn_id': proposal.turn_id}

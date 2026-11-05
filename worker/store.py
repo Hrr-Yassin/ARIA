@@ -59,3 +59,10 @@ class JobStore:
         async with self.engine.connect() as conn:
             rows = await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'state' NOT IN ('succeeded','failed','cancelled')"))
             return [dict(row) for row in rows]
+
+
+    async def for_session(self, session_id: str) -> list[dict]:
+        async with self.engine.connect() as conn:
+            rows = await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'session_id' = :sid"),
+                                      {'sid': session_id})
+            return [dict(row) for row in rows]

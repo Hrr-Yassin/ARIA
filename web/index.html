@@ -210,6 +210,47 @@
       <p class="settings-note">Tools mentioned by agents are proposals. Arbitrary shell commands, Nmap scripts, raw/UDP scans, post-access execution and Burp Scanner are unavailable in this release.</p>
       <p class="settings-note">Live specialist expertise has not been established.</p>
     </section>
+    <section class="settings-section" id="program-policy-panel">
+      <h3>Program discovery and policy</h3>
+      <p class="settings-note">Imports are research drafts. Only the engagement owner can activate reviewed HTTP observations. Unknown permission blocks testing.</p>
+      <button id="program-refresh" class="btn btn-ghost">Load policies and shortlist</button>
+      <p id="program-status" role="status" aria-live="polite"></p>
+      <div id="program-catalog"></div>
+      <details class="settings-details">
+        <summary>Import official program policy</summary>
+        <label>Program name<input id="program-name" maxlength="200"></label>
+        <label>Official HTTPS policy URL<input id="program-url" type="url" placeholder="https://example.com/security"></label>
+        <label>Program type<select id="program-type"><option value="unknown">Unknown</option><option value="paid_bounty">Paid bounty</option><option value="disclosure_only">Disclosure only</option></select></label>
+        <label>Policy text (manual fallback)<textarea id="program-text" rows="8" maxlength="200000"></textarea></label>
+        <div class="form-row"><button id="program-import-text" class="btn btn-ghost">Import text</button><button id="program-import-page" class="btn btn-ghost">Fetch public page</button></div>
+        <p class="settings-note">Page import uses public HTTPS only and does not follow redirects or sign in. Paste the policy if fetching fails.</p>
+      </details>
+      <details class="settings-details">
+        <summary>Review and activate current policy</summary>
+        <pre id="program-source" class="program-source"></pre>
+        <div id="program-rule-review"></div>
+        <p class="settings-note">Asset format: hostname | path | ports | schemes. One asset per line. *.example.com includes subdomains, but excludes example.com. Paths include their descendants.</p>
+        <label>Included assets<textarea id="program-assets" rows="3" placeholder="app.example.com | /api | 443 | https"></textarea></label>
+        <label>Excluded assets<textarea id="program-exclusions" rows="2"></textarea></label>
+        <label>Third-party exclusions<textarea id="program-third-party" rows="2"></textarea></label>
+        <label>Automation permission<select id="program-automation"><option value="unknown">Unknown</option><option value="prohibited">Prohibited</option><option value="allowed">Explicitly allowed</option></select></label>
+        <label>Total requests<input id="program-requests" type="number" min="1" max="1000" value="10"></label>
+        <label>Concurrent requests<input id="program-concurrency" type="number" min="1" max="5" value="1"></label>
+        <label>Minimum seconds between requests<input id="program-interval" type="number" min="1" max="86400" value="5"></label>
+        <label><input id="program-accounts" type="checkbox"> I meet the account requirements</label>
+        <label><input id="program-prerequisites" type="checkbox"> I meet the participation prerequisites</label>
+        <label><input id="program-permission" type="checkbox"> I reviewed the complete policy, including exclusions, and confirm permission for bounded GET/HEAD observations</label>
+        <label>Review note<textarea id="program-note" rows="2"></textarea></label>
+        <div class="form-row"><button id="program-review" class="btn btn-ghost">Save review</button><button id="program-reject" class="btn btn-ghost">Reject policy</button><button id="program-activate" class="btn btn-primary">Activate reviewed policy</button></div>
+        <p class="settings-note">Activation replaces this engagement's execution scope. Updating an activated policy suspends execution and cancels outstanding jobs. Request use never resets on revision. Throttling or overload stops further traffic.</p>
+      </details>
+      <details class="settings-details">
+        <summary>Assess program fit</summary>
+        <div id="program-fit-fields"></div>
+        <label>Assessment basis<textarea id="program-fit-basis" rows="2"></textarea></label>
+        <button id="program-fit-save" class="btn btn-ghost">Save fit assessment</button>
+      </details>
+    </section>
     <section class="settings-section">
       <h3>LLM providers</h3>
       <div id="llm-keys-list"></div>
@@ -266,6 +307,7 @@
   </div>
 </aside>
 
+<script src="/static/scripts/programs.js" defer></script>
 <script src="/static/scripts/app.js" defer></script>
 </body>
 </html>

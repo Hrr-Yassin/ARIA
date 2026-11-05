@@ -119,7 +119,7 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
         if not app.state.healthy:
             raise HTTPException(503, 'Worker reconciliation unavailable')
         return {'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
-                'network_scope': True, 'tools': ['curl', 'nmap'], 'max_timeout': 300}
+                'network_scope': True, 'program_policy_version': 1, 'tools': ['curl', 'nmap'], 'max_timeout': 300}
 
     @app.post('/jobs', dependencies=[Depends(authenticate)])
     async def submit(request: Request):

@@ -30,3 +30,10 @@ index.html,history retry,passed,Real Firefox synthetic API
 index.html,load older messages,untested,Real SQL/API pagination only
 index.html,Stage in Repeater,untested,Runtime Burp desktop unavailable
 index.html,Review availability check,untested,Actual browser button not exercised
+index.html,program-refresh,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-import-text,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-import-page,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-review,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-activate,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-fit-save,passed,integration.browser_program_policy; synthetic Firefox workflow; .local-lab/phase1-browser/result.json
+index.html,program-reject,passed,integration.browser_program_policy; synthetic Firefox rejection workflow

@@ -30,6 +30,25 @@ class SQLJobStore:
                 DecisionLog.decision_type == 'worker_job', DecisionLog.metadata_['state'].as_string().not_in(TERMINAL)))).scalars().all()
             if len(active) >= 5 or any(r.metadata_['state'] in {'unknown', 'cancel_requested'} or r.metadata_.get('cancel_requested') for r in active):
                 raise HTTPException(409, 'Engagement has active or unresolved worker jobs')
+            policy = (session.scope or {}).get('program_policy')
+            if policy:
+                from orchestrator.program_scope import ExecutionRules
+                if policy.get('state') != 'active' or session.scope != job.get('scope'):
+                    raise HTTPException(409, 'Program policy changed before admission')
+                rules = ExecutionRules.model_validate(policy['rules'])
+                metadata = dict(session.metadata_ or {})
+                used = int(metadata.get('program_requests_used', 0))
+                now = time.time()
+                if used >= rules.max_requests:
+                    raise HTTPException(429, 'Engagement request budget exhausted')
+                if len(active) >= rules.concurrency:
+                    raise HTTPException(429, 'Engagement concurrency budget exhausted')
+                if now < max(float(metadata.get('program_next_request_at', 0)),
+                             float(metadata.get('program_backoff_until', 0))):
+                    raise HTTPException(429, 'Engagement rate limit or overload backoff is active')
+                metadata.update(program_requests_used=used + 1,
+                                program_next_request_at=now + rules.min_interval_seconds)
+                session.metadata_ = metadata
             db.add(DecisionLog(id=self.key(job['job_id']), session_id=job['session_id'],
                 user_id=job['user_id'], decision_type='worker_job', metadata_=job))
             await db.commit()
@@ -69,6 +88,14 @@ class SQLJobStore:
                 return previous
             previous.update(values, revision=previous.get('revision', 0) + 1)
             row.metadata_ = previous
+            if values.get('overloaded'):
+                session = (await db.execute(select(PentestSession).where(
+                    PentestSession.id == previous['session_id']).with_for_update())).scalar_one()
+                metadata = dict(session.metadata_ or {})
+                # Stop until explicit owner review; retry-after cannot shorten this stop.
+                metadata['program_backoff_until'] = time.time() + 86400
+                metadata['program_overloaded'] = True
+                session.metadata_ = metadata
             await db.commit()
             return previous
 
@@ -152,6 +179,11 @@ class WorkerJobs:
             values['exit_code'] = snapshot.get('exit_code', -1)
             values['output_hash'] = hashlib.sha256(snapshot.get('stdout', '').encode()).hexdigest()
             values['stderr_hash'] = hashlib.sha256(snapshot.get('stderr', '').encode()).hexdigest()
+            if job.get('scope', {}).get('program_policy'):
+                import re
+                statuses = re.findall(r'ARIA_HTTP_STATUS:(\d{3})', snapshot.get('stdout', ''))
+                # Missing receipt status also stops further requests conservatively.
+                values['overloaded'] = not statuses or statuses[-1] in {'000', '429'} or int(statuses[-1]) >= 500
         return await self.store.update(job['job_id'], values, expected=STATES - TERMINAL)
 
     async def cancel_job(self, job):
@@ -249,7 +281,9 @@ class WorkerJobs:
         await self.store.create(job)  # failure denies dispatch
         try:
             if settings.KALI_WORKER_PROTOCOL != 'legacy-execute':
-                await self.client.capabilities()
+                caps = await self.client.capabilities()
+                if job['scope'].get('program_policy') and caps.get('program_policy_version') != 1:
+                    raise HTTPException(409, 'Worker must be upgraded for reviewed program policies')
             if authorization_check is not None:
                 await authorization_check()
             job = await self.store.update(job_id, {'state': 'dispatching'}, expected={'prepared'})
@@ -287,6 +321,8 @@ class WorkerJobs:
             current = await self.store.get(job_id)
             if current and current['state'] not in TERMINAL:
                 await self.cancel_job(current)
+            if exc.response.status_code in {429, 503} and job['scope'].get('program_policy'):
+                await self.store.update(job_id, {'overloaded': True})
             if exc.response.status_code == 403:
                 raise HTTPException(403, 'Worker rejected this command: check supported flags and engagement IP/port scope') from None
             raise HTTPException(502, 'Worker returned HTTP ' + str(exc.response.status_code)) from None

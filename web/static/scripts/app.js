@@ -1508,6 +1508,7 @@ async function boot() {
   state.booting = true;
   el.autoBtn.disabled = true;
   bindEvents();
+  if (window.AriaPrograms) window.AriaPrograms.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   updatePhaseUI();
   await loadSessions();
   if (state.sessionId) {

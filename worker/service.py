@@ -38,12 +38,25 @@ class WorkerService:
                 raise HTTPException(409, 'Engagement cancellation is unresolved')
             if len(active) >= self.max_jobs:
                 raise HTTPException(429, 'Worker capacity reached; job was not admitted')
+            if request.get('scope', {}).get('program_policy'):
+                from orchestrator.program_scope import ExecutionRules
+                rules = ExecutionRules.model_validate(request['scope']['program_policy']['rules'])
+                history = await self.store.for_session(request['session_id'])
+                admitted = [job for job in history if job.get('scope', {}).get('program_policy')]
+                if len(admitted) >= rules.max_requests:
+                    raise HTTPException(429, 'Worker engagement request budget exhausted')
+                if sum(job['session_id'] == request['session_id'] for job in active) >= rules.concurrency:
+                    raise HTTPException(429, 'Worker engagement concurrency exhausted')
+                if any(job.get('overloaded') for job in admitted):
+                    raise HTTPException(429, 'Worker engagement stopped after overload; use a new engagement after review')
+                if admitted and time.time() < max(job.get('admitted_at', 0) for job in admitted) + rules.min_interval_seconds:
+                    raise HTTPException(429, 'Worker engagement rate limit')
             try:
                 plan = await self.planner(request['command'], request['scope'], self.ceiling, self.allowed_ports)
             except (ValueError, TypeError, KeyError, OSError, asyncio.TimeoutError):
                 raise HTTPException(403, 'Worker scope or tool policy denied the job') from None
             job = {**request, 'fingerprint': fingerprint(request), 'plan': plan,
-                   'deadline': time.time() + request['timeout'], 'state': 'queued'}
+                   'deadline': time.time() + request['timeout'], 'state': 'queued', 'admitted_at': time.time()}
             await self.store.save(job)  # Durable ID precedes ANY container mutation.
             try:
                 await self.runtime.create(job)
@@ -106,6 +119,10 @@ class WorkerService:
                 if not await self.runtime.stop(job):
                     return await self._cancel(job)
                 exit_code = int(state['ExitCode'])
+                if job.get('scope', {}).get('program_policy'):
+                    import re
+                    codes = re.findall(r'ARIA_HTTP_STATUS:(\d{3})', stdout)
+                    job['overloaded'] = not codes or codes[-1] in {'000', '429'} or int(codes[-1]) >= 500
                 job.update(state='succeeded' if exit_code == 0 else 'failed',
                            exit_code=exit_code, stdout=stdout, stderr=stderr, terminated=True)
                 await self.store.save(job)
