@@ -1331,11 +1331,30 @@ function openSettings() {
   el.settingsPanel.classList.remove('hidden');
   el.settingsPanel.setAttribute('aria-hidden','false');
   loadLLMKeys();
+  loadExecutionCapabilities();
   api('/api/profile').then(profile => {
     if (!profile?.skill_level) return;
     state.skill = profile.skill_level;
     document.querySelectorAll('input[name="skill"]').forEach(radio => radio.checked=radio.value===state.skill);
   }).catch(exc => toast('warn','Profile unavailable',exc.message));
+}
+async function loadExecutionCapabilities() {
+  const summary = $('execution-capabilities');
+  summary.textContent = 'Checking worker availability…';
+  try {
+    const result = await api('/api/capabilities');
+    if (!result?.worker) throw new Error('Capabilities unavailable');
+    const worker = result.worker;
+    if (worker.status === 'online') {
+      summary.textContent = `Worker online. Available supported tools: ${worker.available_tools.join(', ') || 'none'}.`;
+    } else {
+      summary.textContent = worker.status === 'not_configured'
+        ? 'Worker is not configured. Execution is unavailable.'
+        : 'Worker is unreachable. Execution availability could not be verified.';
+    }
+  } catch (_) {
+    summary.textContent = 'Capabilities could not be loaded. Reopen settings to retry.';
+  }
 }
 function closeSettings() {
   el.settingsPanel.classList.add('hidden');

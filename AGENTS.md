@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-ARIA is a Python 3.11 penetration-testing research prototype with a FastAPI backend and browser interface. `api/` contains routes, authentication, and administrative commands; `agents/` contains specialist agents; `orchestrator/` handles workflow and execution policy. `memory/` owns persistence and evidence processing, `llm/` provides model adapters, and `security/` and `config/` hold security helpers and settings. Browser pages and assets live in `web/`. Database revisions live in `migrations/`; offline regressions in `tests/`; service integration tests in `integration/`. Consult `docs/` for security status, worker contracts, and lab setup. The external Kali worker implementation is not included.
+ARIA is a Python 3.11 penetration-testing research prototype with a FastAPI backend and browser interface. `api/` contains routes, authentication, and administrative commands; `agents/` contains specialist agents; `orchestrator/` handles workflow and execution policy. `memory/` owns persistence and evidence processing, `llm/` provides model adapters, and `security/` and `config/` hold security helpers and settings. Browser pages and assets live in `web/`. Database revisions live in `migrations/`; offline regressions in `tests/`; service integration tests in `integration/`. Consult `docs/` for security status, worker contracts, and lab setup. An isolated curl/Nmap TCP execution worker is included in `worker/`; broader Kali tool profiles are not implemented.
 
 ## Build, Test, and Development Commands
 Run commands from the repository root with the Python 3.11 virtual environment activated:

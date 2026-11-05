@@ -23,6 +23,7 @@ async def main():
         for key, name in [('a','Saved Alpha'),('b','Saved Beta'),('c','Empty legacy'),('d','Retry history')]]
     failed = True
     slow = False
+    worker_status = 'online'
     async def fixture(route):
         nonlocal failed, slow
         path = route.request.url.split(BASE)[-1].split('?')[0]
@@ -30,6 +31,11 @@ async def main():
         data = {}
         status = 200
         if path == '/api/session/list': data = {'sessions':sessions}
+        elif path == '/api/capabilities':
+            if worker_status == 'error':
+                status, data = 503, {'detail':'fixture unavailable'}
+            else:
+                data = {'worker':{'status':worker_status, 'available_tools':['curl','nmap'] if worker_status == 'online' else []}}
         elif path.startswith('/api/session/'):
             sid = path.split('/')[3]
             session = next((s for s in sessions if s['session_id'] == sid), {})
@@ -68,6 +74,14 @@ async def main():
                 await page.evaluate("localStorage.setItem('pentestai_token','synthetic-fixture'); localStorage.setItem('current_session','a')")
                 await page.goto(BASE)
                 await expect(page.locator('#messages')).to_contain_text('Saved Alpha response')
+                for worker_status, expected in [('online','curl, nmap'), ('not_configured','not configured'),
+                                                ('unreachable','unreachable'), ('error','could not be loaded')]:
+                    await page.locator('#settings-button').click()
+                    await expect(page.locator('#execution-capabilities')).to_contain_text(expected)
+                    await expect(page.locator('#settings-panel')).to_contain_text('Tools mentioned by agents are proposals')
+                    await page.screenshot(path=str(OUTPUT/('capabilities-'+worker_status+'.png')), full_page=True)
+                    await page.locator('#settings-close').click()
+                results['capability_availability_and_failure_states'] = 'passed'
                 results['fresh_profile_history'] = 'passed'
                 await page.screenshot(path=str(OUTPUT/'fresh-history.png'), full_page=True)
                 await page.locator('.session-item', has_text='Saved Beta').click()

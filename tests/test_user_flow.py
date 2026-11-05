@@ -11,6 +11,24 @@ class UserFlowTests(OfflineCase):
         app.dependency_overrides.clear()
         await super().asyncTearDown()
 
+    async def test_worker_result_ingestion_uses_existing_workflow_interface(self):
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        manager = 'api.routers.pentest.session_manager.'
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), \
+             patch('api.routers.pentest.worker_jobs.verify_receipt', AsyncMock()) as verify, \
+             patch('api.routers.pentest.orchestrator_agent.analyze_output', AsyncMock(return_value={'findings':[], 'findings_count':0})), \
+             patch(manager+'add_tools_run', AsyncMock()), \
+             patch(manager+'get_session', AsyncMock(return_value={'phase':'scanning', 'tools_run':['nmap']})), \
+             patch(manager+'update_phase', AsyncMock()) as advance, \
+             patch(manager+'add_audit_log', AsyncMock()):
+            response = await self.client.post('/api/tool-results', json={
+                'session_id':'engagement', 'command':'nmap -p 80 192.0.2.1',
+                'target':'192.0.2.1', 'job_id':'job', 'stdout':'80/tcp open http', 'exit_code':0})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['analysis']['evidence_source'], 'worker_receipt')
+        verify.assert_awaited_once()
+        advance.assert_awaited_once_with('engagement', 'vulnerability_analysis')
+
     async def test_http_request_preserves_ports_and_history(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
         store = AsyncMock()

@@ -1,5 +1,9 @@
 # ARIA reliability / specialist / Community validation register
 
+Historical validation checkpoint: counts and deployment statements below apply to
+that recorded stage. See [the Phase 0 baseline](phase0-baseline.md) for the current
+source inventory, schema head `0003`, and new validation results.
+
 Date: 2026-11-04. This is a staged implementation, **not a release acceptance certificate**.
 Existing uncommitted changes were preserved. The owner database `aria`, provider
 credentials and Redis DB 0 were not reset or migrated. No service restart was performed.

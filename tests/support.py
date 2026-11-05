@@ -8,6 +8,8 @@ from api.main import app
 
 class OfflineCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        self.worker_manifest = patch('agents.report_agent.worker_evidence_manifest', AsyncMock(return_value=[]))
+        self.worker_manifest.start()
         # Run persistence is tested separately; these service fixtures remain offline.
         self.connector_owner=patch("config.settings.settings.BURP_CONNECTOR_USER_ID","owner")
         self.connector_owner.start()
@@ -28,6 +30,7 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver')
 
     async def asyncTearDown(self):
+        self.worker_manifest.stop()
         await self.client.aclose()
         self.embedder.stop()
         self.admission.stop()

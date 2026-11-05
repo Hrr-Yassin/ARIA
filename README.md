@@ -6,6 +6,10 @@ The research question is whether specialized agents, structured tool evidence, a
 
 **Current status:** prototype under integration. P0 and prioritized P1 fixes have offline regression coverage, including private retrieval/report access, revocation, credential handling and durable worker cancellation state; broader integration and recovery work remains. It is not ready for an exposed or production deployment. See [docs/security-review.md](docs/security-review.md) for current remediation status and [technical_revow.md](technical_revow.md) for the baseline review. Features described as proposed below are evaluation targets, not verified guarantees of this release.
 
+Phase 0 engineering status, current schema requirement, capability inventory and
+reproducible disposable validation are recorded in [the baseline](docs/phase0-baseline.md).
+The task backlog is [the product roadmap](docs/aria-product-roadmap.md).
+
 ## Current architecture
 
 ```mermaid
@@ -46,7 +50,7 @@ The diagram shows the implemented components and intended connections. Execution
 | `config/` | Environment settings, tool metadata and CVE enrichment | `settings.py`, `tools_registry.py`, `cve_enricher.py` |
 | `web/` | Login, tactical workspace and administrator interface | `index.html`, `login.html`, `admin.html`, `static/` |
 
-PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
+PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Authorization decisions and run snapshots are durable in SQL. Attack graphs, live subscribers, planning tasks, and much of the investigation memory remain process-local. PostgreSQL persistence therefore does not imply complete run recovery.
 
 An initial isolated execution service is included in `worker/`, running separately from the API. It supports curl and Nmap TCP scans with a PostgreSQL job ledger and per-job network policy. See [worker setup](docs/worker-setup.md), [worker contract](docs/worker-contract.md) and [executed validation](docs/worker-validation.md). Other Kali tools require additional reviewed worker profiles.
 
@@ -193,6 +197,6 @@ have a real Firefox test; see [browser validation](docs/browser-validation.md).
 
 Reliability, specialist-result contracts and the gated Burp Community connector are
 tracked in [the upgrade validation register](docs/aria-upgrade-validation.md).
-The new backend requires migration `0002`; the owner's deployment was not migrated.
+The current backend requires migration head `0003` (`0002` run snapshots, `0003` web actions). Phase 0 does not migrate the owner's deployment.
 Burp remains disabled pending runtime/release checks. See
 [Community connector setup and limitations](burp-community/README.md).

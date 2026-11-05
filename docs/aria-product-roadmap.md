@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-05. Status: proposed backlog, not implemented capability.
+Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; later phases remain proposed backlog.
 
 ## Objective
 
@@ -27,14 +27,18 @@ Estimates assume one experienced developer; acceptance gates take priority over 
 
 Dependencies: none.
 
-- [ ] BASE-01: Inventory existing routes, specialists, worker profiles, migrations, and feature flags; identify implemented, validated, and unavailable features separately.
-- [ ] BASE-02: Reconcile README and validation registers with the actual source revision; distinguish historical checkpoints from current results.
-- [ ] BASE-03: Document a staging configuration using disposable services and synthetic accounts, separate from owner data.
-- [ ] BASE-04: Run the offline Python and frontend suites; attach exact commands, revision, environment, and results.
-- [ ] BASE-05: Validate all pending migrations on an empty disposable database and a backed-up staging restore; document rollback through restore.
-- [ ] BASE-06: Trace one lab action through proposal, policy, approval, worker receipt, stored evidence, and report.
-- [ ] BASE-07: Verify restart reconciliation does not replay actions and preserves reviewable history.
-- [ ] BASE-08: Add a UI capability summary distinguishing supported tools from tools merely mentioned in prompts.
+Completed by Codex in the Phase 0 working tree. Evidence, commands, limitations,
+and the route inventory are in [the Phase 0 baseline](phase0-baseline.md).
+No owner deployment or schema was changed.
+
+- [x] BASE-01: Inventory existing routes, specialists, worker profiles, migrations, and feature flags; identify implemented, validated, and unavailable features separately.
+- [x] BASE-02: Reconcile README and validation registers with the actual source revision; distinguish historical checkpoints from current results.
+- [x] BASE-03: Document a staging configuration using disposable services and synthetic accounts, separate from owner data.
+- [x] BASE-04: Run the offline Python and frontend suites; attach exact commands, revision, environment, and results.
+- [x] BASE-05: Validate all pending migrations on an empty disposable database and a backed-up staging restore; document rollback through restore.
+- [x] BASE-06: Trace one lab action through proposal, policy, approval, worker receipt, stored evidence, and report.
+- [x] BASE-07: Verify restart reconciliation does not replay actions and preserves reviewable history.
+- [x] BASE-08: Add a UI capability summary distinguishing supported tools from tools merely mentioned in prompts.
 
 Gate: one complete lab assessment trace, consistent schema documentation, no
 unexplained regression failures, and preserved session/authorization isolation.

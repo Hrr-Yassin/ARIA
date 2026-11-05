@@ -178,6 +178,34 @@ async def health():
     return {"status": "ok", "version": settings.APP_VERSION}
 
 
+@app.get("/api/capabilities")
+async def capabilities(user: TokenData = Depends(get_current_user)) -> dict:
+    """Describe supported profiles separately from current worker availability."""
+    import asyncio
+    from memory.worker_jobs import worker_jobs
+    worker = {"status": "not_configured", "available_tools": []}
+    if settings.KALI_AGENT_URL:
+        worker["status"] = "unreachable"
+        try:
+            async with asyncio.timeout(3):
+                advertised = await worker_jobs.client.capabilities()
+            tools = advertised.get("tools", [])
+            if not isinstance(tools, list) or any(not isinstance(tool, str) for tool in tools):
+                raise ValueError("Invalid worker tools")
+            worker = {"status": "online", "available_tools": sorted(set(tools) & {"curl", "nmap"})}
+        except Exception:
+            pass  # Never expose endpoint, credentials, or transport errors.
+    return {
+        "worker": worker,
+        "supported_profiles": ["HTTP requests with curl", "Bounded Nmap TCP scans"],
+        "unavailable": ["Arbitrary shell commands", "Nmap scripts, raw and UDP scans",
+                        "Post-access execution", "Burp Scanner"],
+        "burp_connector_enabled": bool(settings.BURP_COMMUNITY_ENABLED
+                                      and settings.BURP_CONNECTOR_USER_ID == user.user_id),
+        "expertise_validation": "Live specialist expertise has not been established",
+    }
+
+
 @app.get("/api/ready")
 async def readiness():
     import asyncio

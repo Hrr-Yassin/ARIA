@@ -1,5 +1,9 @@
 # Browser flow implementation and validation
 
+Historical validation checkpoint: counts and deployment statements below apply to
+that recorded stage. See [the Phase 0 baseline](phase0-baseline.md) for the current
+source inventory, schema head `0003`, and new validation results.
+
 Validated locally on 2026-11-04 against ARIA at `http://localhost:7000` and the
 existing isolated Metasploitable VM at `192.168.77.20`. Tests used real Playwright
 Firefox in a separate headless profile; the user's personal browser storage was
