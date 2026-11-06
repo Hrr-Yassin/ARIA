@@ -110,7 +110,7 @@ async def main():
             await engine.dispose()
             print('Native capture, import, Repeater, exact replay and mutation passed',flush=True)
     except Exception as exc:
-        results['runtime']='blocked: '+str(exc)
+        results['runtime']='blocked: '+type(exc).__name__
         raise
     finally:
         if process is not None:

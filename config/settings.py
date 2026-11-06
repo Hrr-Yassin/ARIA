@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     KALI_WORKER_PROTOCOL: Literal["jobs-v1", "legacy-execute"] = "jobs-v1"
     KALI_AGENT_TOKEN: str = Field(min_length=32, repr=False)
 
+    BROWSER_MAPPING_ENABLED: bool = False
+    HTTP_REPLAY_KEY: str = Field(default="", repr=False)
     BURP_COMMUNITY_ENABLED: bool = False
     BURP_CONNECTOR_USER_ID: str = ""
     BURP_CONNECTOR_URL: str = "http://127.0.0.1:17777"

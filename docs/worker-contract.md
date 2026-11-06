@@ -80,3 +80,33 @@ Jobs-v1 workers predating `network_scope: true` must be upgraded; the client fai
 closed instead of silently accepting a worker without that capability. The built-in
 worker requires UUID job/session IDs, a 16 KiB request maximum and a timeout of
 1..300 seconds. Legacy compatibility does not provide these new isolation guarantees.
+
+
+## Optional Phase 3 authenticated HTTP extension
+
+A configured `HTTP_REPLAY_KEY` enables capability `authenticated_http_version: 1`.
+The API and worker must use the same dedicated Fernet-format key. This capability
+uses `aria-http <identity-id> <capture-or-request-id> <request-digest> <GET|HEAD> <url>`
+commands and an additional encrypted `protected_http` field in `POST /jobs`.
+The command/digest, current identity, scope and one-use approval are revalidated;
+there is no legacy-execute or custom-executor fallback.
+
+The profile accepts bodyless GET/HEAD without query strings, userinfo, fragments,
+redirects or retries. Only registered authentication headers are sent. Its maximum
+timeout is ten seconds and its response bound is 32 KiB. Mapping-enabled scopes
+share a 1–20 admission budget, concurrency one and one-second admission spacing.
+Reviewed program snapshots do not authorize this profile.
+
+Worker snapshots carry encrypted private HTTP evidence. The API validates and
+stores that encrypted payload, but emits only status/digest metadata to ordinary
+chat/tool/model paths. This is an exception to ordinary hash-only result storage;
+plaintext originals are never placed in the job ledger.
+
+`POST /jobs/{job_id}/retention` takes `session_id` and an aware ISO `expires_at`.
+It can only shorten the existing private-evidence deadline, cancels an expired
+running job, and erases terminal encrypted payloads while retaining identity/state
+history. Both services also perform periodic expiry cleanup. A disconnected worker
+leaves synchronization pending; no immediate remote deletion is claimed.
+
+See [Phase 3 acceptance](phase3-mapping-status.md) for setup, private snapshot
+format limits, API workflow and executed two-account/browser controls.

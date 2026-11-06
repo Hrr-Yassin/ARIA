@@ -112,6 +112,9 @@ def validate_command(command, scope, claimed_tool=''):
     tool = argv[0]
     if claimed_tool and claimed_tool != tool:
         raise PolicyError('Tool does not match the command executable')
+    if tool == 'aria-http':
+        from worker.http_profile import validate
+        return validate(command, scope)
     if tool not in FLAGS and tool != 'msfconsole':
         raise PolicyError('No reviewed adapter exists for this tool')
     if scope.get('mode') == 'bug_bounty' and tool in {'hydra', 'sqlmap', 'msfconsole'}:

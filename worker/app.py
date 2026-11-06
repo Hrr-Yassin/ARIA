@@ -24,6 +24,13 @@ class Submission(BaseModel):
     command: str = Field(min_length=1, max_length=4096)
     timeout: int = Field(ge=1, le=300)
     scope: dict
+    protected_http: str | None = Field(default=None, max_length=12000)
+
+
+class Retention(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    session_id: str
+    expires_at: str = Field(max_length=50)
 
 
 class Cancellation(BaseModel):
@@ -118,7 +125,8 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
     async def capabilities():
         if not app.state.healthy:
             raise HTTPException(503, 'Worker reconciliation unavailable')
-        return {'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
+        from worker.http_profile import available
+        return {'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
                 'network_scope': True, 'program_policy_version': 1, 'tools': ['curl', 'nmap'], 'max_timeout': 300}
 
     @app.post('/jobs', dependencies=[Depends(authenticate)])
@@ -128,7 +136,14 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
         data = await body(request, Submission)
         identifier(data['job_id'])
         identifier(data['session_id'])
+        if data['protected_http'] is None:
+            data.pop('protected_http')
         return await app.state.service.submit(data)
+
+    @app.post('/jobs/{job_id}/retention', dependencies=[Depends(authenticate)])
+    async def retention(job_id: str, request: Request):
+        data = await body(request, Retention)
+        return await app.state.service.retention(identifier(job_id), identifier(data['session_id']), data['expires_at'])
 
     @app.get('/jobs/{job_id}', dependencies=[Depends(authenticate)])
     async def status(job_id: str):

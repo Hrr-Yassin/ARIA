@@ -117,6 +117,8 @@ class WebActions:
         row = (await db.execute(select(WebAction).where(WebAction.id==action_id).with_for_update())).scalar_one_or_none()
         if row is None or row.session_id!=session_id or row.requester_id!=user_id:
             raise HTTPException(403,'Replay action does not belong to this engagement and requester')
+        if check_scope and (row.result or {}).get('retention_expired'):
+            raise HTTPException(410, 'Replay source expired under engagement retention policy')
         if check_scope and row.scope_digest!=scope_binding(session):
             raise HTTPException(403,'Replay scope changed; create a new proposal')
         return session,row
@@ -178,6 +180,9 @@ class WebActions:
             if state not in {'queued','running','completed','failed','unknown','cancel_requested','cancelled'}:
                 state='unknown'
             row.state=('cancel_requested' if row.state=='cancel_requested' else 'claimed') if state in {'queued','running'} else 'cancelled_after_dispatch' if state=='cancelled' else state
+            if (row.result or {}).get('retention_expired'):
+                await db.commit()
+                return public(row)
             if result.get('response_b64') and state=='completed':
                 raw=base64.b64decode(result['response_b64'],validate=True)
                 if len(raw)>1048576: raise HTTPException(502,'Connector response exceeds evidence limit')
@@ -261,6 +266,25 @@ class WebActions:
                     else: row.state='unknown'; pending+=1
                     await db.commit()
         return {'pending':pending,'actions_cancelled_or_requested':len(rows)}
+
+    async def retention_cleanup(self):
+        async with async_session() as db:
+            rows = (await db.execute(select(WebAction).where(
+                WebAction.state == 'cancel_requested',
+                WebAction.result['retention_expired'].as_boolean() == True))).scalars().all()
+            identifiers = [row.id for row in rows]
+        for action_id in identifiers:
+            try:
+                result = await self.connector('POST', '/jobs/' + action_id + '/cancel', {})
+            except HTTPException:
+                continue
+            async with async_session() as db:
+                row = await db.get(WebAction, action_id)
+                if row and (row.result or {}).get('retention_expired'):
+                    state = result.get('state')
+                    if state in {'cancelled', 'completed', 'failed'}:
+                        row.state = 'cancelled_after_dispatch' if state == 'cancelled' else state
+                    await db.commit()
 
     async def recover(self):
         async with async_session() as db:

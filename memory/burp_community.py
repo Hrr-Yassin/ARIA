@@ -84,6 +84,10 @@ async def get_evidence(session_id, evidence_id):
 
 
 def original(data):
+    from datetime import datetime, timezone
+    if (data.get('retention_expired') or (data.get('retention_expires_at')
+            and datetime.fromisoformat(data['retention_expires_at']) <= datetime.now(timezone.utc))):
+        raise HTTPException(410, 'Original capture expired under engagement retention policy')
     return json.loads(evidence_cipher().decrypt(data['protected_original'].encode()))
 
 

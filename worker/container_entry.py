@@ -25,8 +25,15 @@ def main() -> int:
     remaining = plan['deadline'] - time.time()
     if remaining <= 0:
         return 124
+    if plan.get('protected_http'):
+        if sys.argv[-1] == 'http':
+            from worker.http_runner import run
+            return run(plan)
+        plan['argv'] = [sys.executable, '-m', 'worker.container_entry', sys.argv[1], 'http']
     environment = {'PATH': '/usr/bin:/bin', 'HOME': '/tmp', 'LANG': 'C.UTF-8'}
-    child = subprocess.Popen(plan['argv'], env=environment, cwd='/tmp', start_new_session=True)
+    child = subprocess.Popen(plan['argv'], env=environment,
+                             cwd='/opt/aria' if plan.get('protected_http') else '/tmp',
+                             start_new_session=True)
     try:
         return child.wait(timeout=remaining)
     except subprocess.TimeoutExpired:

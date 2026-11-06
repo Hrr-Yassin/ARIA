@@ -3,6 +3,9 @@ import asyncio
 import base64
 import json
 import re
+import os
+import stat
+from pathlib import Path
 
 
 class DockerRuntime:
@@ -48,6 +51,21 @@ class DockerRuntime:
         if code or data.get('Driver', data.get('driver')) != 'bridge':
             raise RuntimeError('Worker requires a Docker bridge network')
 
+    def key_directory(self, job: dict, create: bool = False) -> Path:
+        root = Path('/tmp') / ('aria-worker-http-' + str(os.getuid()))
+        if create:
+            root.mkdir(mode=0o700, exist_ok=True)
+        if root.exists() or root.is_symlink():
+            info = root.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise RuntimeError('HTTP key directory is not private')
+        directory = root / self.name(job)
+        if directory.exists() or directory.is_symlink():
+            info = directory.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                raise RuntimeError('HTTP job key directory is not private')
+        return directory
+
     async def create(self, job: dict) -> None:
         payload = base64.b64encode(json.dumps({**job['plan'], 'deadline': job['deadline']}).encode()).decode()
         args = ['create', '--pull=never', '--name', self.name(job),
@@ -59,6 +77,17 @@ class DockerRuntime:
             '--cap-add=SETUID', '--cap-add=SETGID', '--security-opt=no-new-privileges=true',
             '--log-driver=json-file', '--log-opt=max-size=1m', '--log-opt=max-file=1',
             '--dns=127.0.0.1', '--no-healthcheck']
+        if job['plan'].get('protected_http'):
+            # Private host directory; the mounted file is readable by the
+            # unprivileged container, but never appears in argv/environment.
+            directory = self.key_directory(job, create=True)
+            directory.mkdir(mode=0o700)
+            keyfile = directory / 'key'
+            fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
+            os.fchmod(fd, 0o444)  # The private parent protects host access; uid 65534 must read the mount.
+            with os.fdopen(fd, 'w') as stream:
+                stream.write(os.environ['HTTP_REPLAY_KEY'])
+            args.extend(['--volume', str(keyfile) + ':/run/aria-http-key:ro,Z'])
         for host, addresses in job['plan']['hosts'].items():
             for address in addresses:
                 args.extend(['--add-host', f'{host}:{address}'])
@@ -96,7 +125,13 @@ class DockerRuntime:
             code, _, _ = await self.cli('rm', self.name(job))
             if code:
                 return False
-        return await self.inspect(job) is None
+        removed = await self.inspect(job) is None
+        if removed and job.get('plan', {}).get('protected_http'):
+            directory = self.key_directory(job)
+            (directory / 'key').unlink(missing_ok=True)
+            if directory.exists():
+                directory.rmdir()
+        return removed
 
     async def output(self, job: dict) -> tuple[str, str]:
         code, stdout, stderr = await self.cli('logs', self.name(job))

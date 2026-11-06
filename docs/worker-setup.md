@@ -4,12 +4,19 @@ The `worker/` service implements ARIA's jobs-v1 protocol. It runs separately fro
 ARIA and uses its own PostgreSQL database and a local Docker or rootless Podman
 engine. The initial supported tools are **curl and Nmap TCP scans**. Other tools,
 Nmap raw/ICMP scans and NSE scripts are rejected; there is no host-shell fallback.
-No new Python dependencies are needed beyond the locked core environment.
+The optional authenticated HTTP profile and its hash-locked image dependencies
+are documented in [Phase 3 mapping](phase3-mapping-status.md). The worker service
+still uses the locked core Python environment.
 
 ## What the worker enforces
 
+Curl/Nmap containers have no host mounts. Opt-in authenticated HTTP containers
+receive one read-only key file from a private worker-owned directory; it is removed
+after confirmed container removal. Credentials themselves remain encrypted in the
+job request. The key never appears in container argv/environment.
+
 - Each accepted job gets one named container with a private PID/network namespace,
-  read-only root, no host mounts, one CPU, 256 MiB memory, 64 processes, bounded
+  read-only root, no caller-selected host mounts, one CPU, 256 MiB memory, 64 processes, bounded
   rotating logs and 32 MiB temporary space. The image must be a preinstalled,
   immutable local `sha256:` image ID. Jobs cannot select images or runtime flags.
 - The trusted entrypoint installs an nftables default-deny firewall before starting

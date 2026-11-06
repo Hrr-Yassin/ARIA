@@ -69,6 +69,17 @@ class ModelAccounting:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             metadata = dict(session.metadata_ or {})
+            if metadata.get('application_mapping'):
+                from memory.application_map import unseal, known_secrets
+                key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:' + sid))
+                mapping = await db.get(DecisionLog, key)
+                if mapping is None:
+                    raise HTTPException(403, 'Application data consent is unavailable')
+                state = unseal(mapping.metadata_['sealed'])
+                if state['policy']['provider_sharing'] != 'redacted_metadata':
+                    raise HTTPException(403, 'Engagement provider sharing is disabled')
+                if any(secret and secret in prompt + system for secret in known_secrets(state)):
+                    raise HTTPException(403, 'Registered identity credential cannot enter provider context')
             limits = ModelLimits.model_validate(metadata.get('model_limits', {}))
             tariffs = [t for t in limits.tariffs if t.provider == provider and t.model == model]
             if len(tariffs) != 1:

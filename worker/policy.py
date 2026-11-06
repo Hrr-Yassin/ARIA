@@ -79,6 +79,7 @@ async def prepare(command: str, scope: dict, ceiling: list[str], allowed_ports: 
                     excluded.append(ipaddress.ip_network(asset['host']))
                 except ValueError:
                     excluded.extend(ipaddress.ip_network(ip) for ip in await resolver(asset['host']))
+    if (scope.get('program_policy') or scope.get('web_authenticated_replay') is True) and validated.tool == 'curl':
         # Config-free, no URL globbing/retries/redirects; include deterministic status evidence.
         argv[1:1] = ['-q', '--globoff', '-i', '--proto', '=http,https', '--max-redirs', '0',
                      '--write-out', '\nARIA_HTTP_STATUS:%{http_code}\n']

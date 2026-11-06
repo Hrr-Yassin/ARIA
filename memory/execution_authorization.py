@@ -183,6 +183,8 @@ class ExecutionAuthorization:
             raise HTTPException(422, 'Invalid timeout') from None
         if not 1 <= timeout <= settings.AUTONOMOUS_STEP_TIMEOUT_SECONDS:
             raise HTTPException(422, 'Timeout exceeds policy limit')
+        if validated.tool == 'aria-http' and timeout > 10:
+            raise HTTPException(422, 'Authenticated HTTP is bounded to ten seconds')
         claimed = replace(proposal, status='consumed', revision=proposal.revision + 1)
         if not await self._stored(self.store.transition, proposal, claimed):
             raise HTTPException(409, 'Authorization already consumed')
@@ -191,6 +193,8 @@ class ExecutionAuthorization:
             raise HTTPException(403, 'Program traffic requires the budgeted isolated worker')
         if context['scope'].get('program_policy') and settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
             raise HTTPException(403, 'Program traffic requires jobs-v1')
+        if validated.tool == 'aria-http' and (executor is not None or settings.KALI_WORKER_PROTOCOL != 'jobs-v1'):
+            raise HTTPException(403, 'Authenticated HTTP requires the reviewed jobs worker')
         if executor is not None:
             output = await executor({'tool': validated.tool, 'command': validated.command, 'risk_color': validated.risk})
             return {'stdout': str(output), 'stderr': '', 'exit_code': 0, 'turn_id': proposal.turn_id}
@@ -208,6 +212,13 @@ class ExecutionAuthorization:
             validated = self._validate(command, context)
             if proposal.status != 'consumed' or proposal.command != validated.command:
                 raise HTTPException(403, 'Dispatch authorization changed')
+            if validated.tool == 'aria-http':
+                from memory.application_map import application_map
+                from worker.http_profile import parse
+                args = parse(command)
+                current, _ = await application_map.replay_material(session_id, user_id, args[1], args[2])
+                if current != validated.command:
+                    raise HTTPException(403, 'HTTP identity/request binding changed')
             return context
         return await worker_jobs.execute(job_id, user_id, session_id, command, timeout, authorization_check=check)
 

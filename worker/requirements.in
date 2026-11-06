@@ -1,0 +1,2 @@
+# Keep this pin aligned with requirements.in; hashes are copied from the core lock.
+cryptography==44.0.0

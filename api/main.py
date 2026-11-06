@@ -2,6 +2,7 @@
 PentestAI v10 — Main Application
 FastAPI backend serving API + Web UI on Ubuntu.
 """
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -25,6 +26,7 @@ from api.routers import sessions as sessions_router
 from api.routers import reports as reports_router
 from api.routers import api_keys as api_keys_router
 from api.routers import admin as admin_router
+from api.routers import application_map as application_map_router
 from api.routers import team as team_router
 from api.routers import programs as programs_router
 from api.routers import burp as burp_router
@@ -74,15 +76,25 @@ async def lifespan(app: FastAPI):
     from memory.web_actions import web_actions
     await web_actions.recover()
 
+    from memory.application_map import application_map
+    await application_map.purge_expired()
+
     # Ensure report directory
     Path(settings.REPORT_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
     log.info("ARIA ready",
              api_port=settings.API_PORT,
              web_port=settings.WEB_PORT)
-    yield
+    retention_task = asyncio.create_task(application_map.retention_loop())
+    try:
+        yield
+    finally:
+        retention_task.cancel()
+        await asyncio.gather(retention_task, return_exceptions=True)
 
     from agents.autonomous_engine import autonomous_engine
+    from orchestrator.browser_mapping import browser_mapping
+    await browser_mapping.close()
     await autonomous_engine.shutdown()
     await worker_jobs.recover()
     await worker_jobs.drain_cleanup()
@@ -127,6 +139,7 @@ async def request_correlation(request: Request, call_next):
 
 # ── Routers ──────────────────────────────────────────────────────────────
 
+app.include_router(application_map_router.router, prefix="/api/application-map", tags=["application-map"])
 app.include_router(team_router.router, prefix="/api/team", tags=["team-tasks"])
 app.include_router(programs_router.router, prefix="/api/programs", tags=["program-policies"])
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
@@ -190,6 +203,7 @@ async def capabilities(user: TokenData = Depends(get_current_user)) -> dict:
     import asyncio
     from memory.worker_jobs import worker_jobs
     worker = {"status": "not_configured", "available_tools": []}
+    advertised = {}
     if settings.KALI_AGENT_URL:
         worker["status"] = "unreachable"
         try:
@@ -203,6 +217,15 @@ async def capabilities(user: TokenData = Depends(get_current_user)) -> dict:
             pass  # Never expose endpoint, credentials, or transport errors.
     return {
         "worker": worker,
+        "application_mapping": {
+            "saved_evidence": True,
+            "authenticated_http_worker": advertised.get("authenticated_http_version") == 1,
+            "browser_enabled": settings.BROWSER_MAPPING_ENABLED,
+            "approval_required": True,
+            "methods": ["GET", "HEAD"],
+            "max_response_bytes": 32768,
+            "max_timeout_seconds": 10,
+        },
         "supported_profiles": ["HTTP requests with curl", "Bounded Nmap TCP scans"],
         "unavailable": ["Arbitrary shell commands", "Nmap scripts, raw and UDP scans",
                         "Post-access execution", "Burp Scanner"],

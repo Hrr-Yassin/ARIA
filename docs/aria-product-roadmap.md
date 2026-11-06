@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-05. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phases 3–8 remain proposed backlog.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phases 4–8 remain proposed backlog.
 
 ## Objective
 
@@ -92,15 +92,23 @@ every specialist conclusion has attributable evidence or explicit uncertainty.
 
 Dependencies: Phases 1–2.
 
-- [ ] WEB-01: Define researcher-controlled identities and object ownership records; store credentials encrypted behind opaque handles.
-- [ ] WEB-02: Add isolated browser contexts per identity and engagement; prevent cookie and storage leakage.
-- [ ] WEB-03: Complete real Burp Community capture and Repeater handoff validation before enabling its connector.
-- [ ] WEB-04: Build an endpoint catalog from selected captures and bounded browsing: method, route, parameters, role, and source evidence.
-- [ ] WEB-05: Map workflows and state changes, including sharing, invitations, exports, and account settings.
-- [ ] WEB-06: Record expected role/object permissions with human corrections.
-- [ ] WEB-07: Implement structured authenticated HTTP replay as a reviewed worker capability; bind identity, target, policy, and approval.
-- [ ] WEB-08: Add response normalization and semantic comparison; preserve original bounded evidence privately.
-- [ ] WEB-09: Enforce retention, redaction, and provider data-sharing settings; prevent raw credentials entering model context.
+Implemented and validated by Codex on 2026-11-06 in the working tree based on
+`d278f45`; no PR created. See [implementation and acceptance](phase3-mapping-status.md)
+for the realized capabilities, configuration, exact boundaries and lab evidence.
+The gate passed for bodyless GET/HEAD lab observations, with reviewed worker-fed
+Firefox rendering and real Community capture/Repeater validation. Query strings,
+mutations, automatic crawling and authenticated execution under reviewed program
+snapshots remain unsupported. No owner deployment was enabled.
+
+- [x] WEB-01: Define researcher-controlled identities and object ownership records; store credentials encrypted behind opaque handles.
+- [x] WEB-02: Add isolated browser contexts per identity and engagement; prevent cookie and storage leakage.
+- [x] WEB-03: Complete real Burp Community capture and Repeater handoff validation before enabling its connector.
+- [x] WEB-04: Build an endpoint catalog from selected captures and bounded browsing: method, route, parameters, role, and source evidence.
+- [x] WEB-05: Map workflows and state changes, including sharing, invitations, exports, and account settings.
+- [x] WEB-06: Record expected role/object permissions with human corrections.
+- [x] WEB-07: Implement structured authenticated HTTP replay as a reviewed worker capability; bind identity, target, policy, and approval.
+- [x] WEB-08: Add response normalization and semantic comparison; preserve original bounded evidence privately.
+- [x] WEB-09: Enforce retention, redaction, and provider data-sharing settings; prevent raw credentials entering model context.
 
 Gate: two lab accounts remain isolated; ARIA maps their objects and permissions,
 and every replay is scoped, attributable, bounded, and cancellable.

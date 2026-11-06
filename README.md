@@ -9,7 +9,7 @@
 A research platform for a human researcher working with specialized AI agents
 on authorized web applications and APIs.
 
-[Product roadmap](docs/aria-product-roadmap.md) · [Implementation status](docs/phase2-team-status.md) · [Local setup](#run-aria-locally) · [Documentation](#documentation)
+[Product roadmap](docs/aria-product-roadmap.md) · [Implementation status](docs/phase3-mapping-status.md) · [Local setup](#run-aria-locally) · [Documentation](#documentation)
 
 </div>
 
@@ -26,16 +26,17 @@ The first product focuses on **one researcher, web applications and APIs,
 researcher-controlled accounts, bounded execution, and human-reviewed submissions**.
 A separate contracted penetration-testing workflow is part of the longer-term plan.
 
-**Today:** Phases 0–2 provide the engineering baseline, reviewed program policies,
-and durable team analysis of saved evidence. Phases 3–8 describe the product still
-to build. ARIA remains a research prototype; full autonomous vulnerability research
+**Today:** Phases 0–3 provide the engineering baseline, reviewed program policies,
+durable team analysis, and supervised authenticated lab mapping. Phases 4–8 describe
+the product still to build. ARIA remains a research prototype; full autonomous vulnerability research
 and production readiness have not been established.
 
 ## From program policy to a reviewed report
 
-The diagram shows the **planned end-to-end product workflow**. Authenticated
-mapping, focused investigation methods, independent finding verification and the
-complete submission lifecycle are later roadmap work.
+The diagram shows the **planned end-to-end product workflow**. Authenticated lab
+mapping is implemented for bounded reviewed GET/HEAD observations. Focused
+investigation methods, independent finding verification and the complete submission
+lifecycle remain later roadmap work.
 
 ```mermaid
 flowchart TB
@@ -83,7 +84,7 @@ flowchart TB
 | Find suitable programs | Compare technical fit, accounts, eligible classes, automation rules and research cost | Private shortlist with visible unknowns and participation prerequisites |
 | Understand permission | Turn program policy into reviewed, versioned execution rules | Source-linked review, explicit activation, scope checks and HTTP traffic budgets |
 | Organize a research team | Give specialists clear questions, dependencies, evidence and completion criteria | Durable tasks, typed results, owner review and restart blocking without replay |
-| Understand the application | Map endpoints, identities, objects, permissions and workflows | Authenticated mapping is planned for Phase 3; selected-capture infrastructure already exists |
+| Understand the application | Map endpoints, identities, objects, permissions and workflows | Implemented for supervised bounded lab observations; see Phase 3 acceptance |
 | Investigate specific weaknesses | Focus on authorization, sessions, exposure, input handling and business logic | Specialist entry points exist; validated investigation methods are Phase 4 work |
 | Separate a clue from a finding | Reproduce behavior, compare controls and reject unsupported conclusions | Evidence catalogs and uncertainty exist; the full verification lifecycle is planned |
 | Produce useful reports | Preserve reproduction evidence, review claims and track triage outcomes | Existing report exports; the complete reviewed reporting workflow is planned |
@@ -210,26 +211,26 @@ Read the [full roadmap](docs/aria-product-roadmap.md) for individual tasks and d
 
 ```mermaid
 flowchart TB
-    subgraph FOUNDATION["IMPLEMENTED FOUNDATION · PHASES 0–2"]
+    subgraph FOUNDATION["IMPLEMENTED FOUNDATION · PHASES 0–3"]
         direction LR
-        P0["0 · Baseline"] --> P1["1 · Program policy"] --> P2["2 · Durable team and evidence"]
+        P0["0 · Baseline"] --> P1["1 · Program policy"] --> P2["2 · Durable team and evidence"] --> P3["3 · Authenticated mapping"]
     end
-    subgraph RESEARCH["NEXT · PHASES 3–5"]
+    subgraph RESEARCH["NEXT · PHASES 4–5"]
         direction LR
-        P3["3 · Authenticated mapping"] --> P4["4 · Focused investigations"] --> P5["5 · Independent verification"]
+        P4["4 · Focused investigations"] --> P5["5 · Independent verification"]
     end
     subgraph PRODUCT["LATER · PHASES 6–8"]
         direction LR
         P6["6 · Reports and outcomes"] --> P7["7 · Benchmark and pilot"] --> P8["8 · Operational maturity"]
     end
-    P2 --> P3
+    P3 --> P4
     P5 --> P6
 
     classDef done fill:#ccfbf1,stroke:#0d9488,color:#134e4a,stroke-width:2px;
     classDef next fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px;
     classDef later fill:#f1f5f9,stroke:#64748b,color:#334155,stroke-width:2px;
-    class P0,P1,P2 done;
-    class P3,P4,P5 next;
+    class P0,P1,P2,P3 done;
+    class P4,P5 next;
     class P6,P7,P8 later;
 ```
 
@@ -238,7 +239,7 @@ flowchart TB
 | **0 · Baseline** | Reproducible tests, migration/restore evidence, action-to-report trace and restart checks | Complete for the engineering baseline |
 | **1 · Program discovery and scope** | Human-reviewed program policy and bounded HTTP observations | Complete for unauthenticated curl GET/HEAD |
 | **2 · Durable team tasks and evidence** | Saved tasks, evidence/coverage ledgers, reviewed specialist results and shared model budgets | Implemented for supervised saved-evidence analysis |
-| **3 · Authenticated mapping** | Isolated identities, workflow maps and reviewed HTTP replay | Planned — next development phase |
+| **3 · Authenticated mapping** | Isolated identities, workflow maps and reviewed HTTP replay | Complete for supervised bounded GET/HEAD lab mapping |
 | **4 · Focused investigations** | Tested specialist methods with positive and negative controls | Planned |
 | **5 · Independent verification** | Reproduction, evidence requirements and reviewer decisions | Planned |
 | **6 · Reporting and outcomes** | Reviewed deliverables, reproduction attachments and triage tracking | Planned |
@@ -247,17 +248,22 @@ flowchart TB
 
 ## What works today
 
-The current worker supports **curl and bounded Nmap TCP profiles**. Reviewed
-program policies narrow that to **unauthenticated curl GET/HEAD observations**.
-Arbitrary shell commands, raw/UDP/NSE scans, authenticated replay and post-access
-execution are unavailable. The Burp Community connector remains feature-gated
-pending its desktop/runtime acceptance.
+The worker supports **curl and bounded Nmap TCP profiles**, plus an explicitly
+configured **identity-bound GET/HEAD lab profile**. Authenticated observations and
+Firefox previews require one-use shared approvals, an encrypted credential handle,
+and the worker's independent network ceiling. Reviewed program policies still
+permit only their existing **unauthenticated curl GET/HEAD observations**.
+Arbitrary shell commands, raw/UDP/NSE scans and post-access execution remain
+unavailable. Burp Community capture and Repeater staging passed real runtime
+validation; its deployment flag remains off by default.
 
-Phase 2 acceptance records **177 passing offline Python tests**, **nine synthetic
-Firefox checks**, and **seven grouped disposable SQL/worker checks**. These are
-engineering results from the documented validation revision, not a vulnerability
-benchmark or a production certification. Provider responses were mocked.
-See [Phase 2 acceptance](docs/phase2-team-status.md) for exact commands and limits.
+Phase 3 acceptance records **199 passing offline Python tests**, real Firefox
+identity/storage isolation, **14 disposable SQL/worker/browser acceptance checks**,
+and **eight real Community runtime checks**. No live model calls were made and no
+owner database was used. These are engineering results, not a vulnerability
+benchmark or production certification. See [Phase 3 acceptance](docs/phase3-mapping-status.md)
+for configuration, exact commands, retained evidence and the bounded profile's
+limitations. Historical Phase 2 results remain in its own status document.
 
 ## How success will be measured
 
@@ -390,6 +396,7 @@ service checks and container-worker/Phase 2 acceptance.
 | [Phase 0 baseline](docs/phase0-baseline.md) | Capability inventory, schema, migration/restore and trace evidence |
 | [Phase 1 policy status](docs/phase1-policy-status.md) | Program import, owner activation, scope semantics and traffic budgets |
 | [Phase 2 team status](docs/phase2-team-status.md) | Durable tasks, evidence, model budgets, setup and acceptance |
+| [Phase 3 mapping status](docs/phase3-mapping-status.md) | Controlled identities, reviewed browser/HTTP observations, retention and acceptance |
 | [Worker setup](docs/worker-setup.md) · [Contract](docs/worker-contract.md) | Execution deployment, limits and cancellation guarantees |
 | [Security status](docs/security-review.md) · [Original review](technical_revow.md) | Remediation history and remaining limitations |
 | [Fedora lab](docs/fedora-lab.md) | Recorded local lab configuration and operation |

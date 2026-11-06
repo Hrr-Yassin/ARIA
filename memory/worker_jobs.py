@@ -55,6 +55,22 @@ class SQLJobStore:
                 user_id=job['user_id'], decision_type='worker_job', metadata_=job))
             await db.commit()
 
+    async def expire_http(self):
+        from datetime import datetime, timezone
+        async with async_session() as db:
+            rows = (await db.execute(select(DecisionLog).where(
+                DecisionLog.decision_type == 'worker_job',
+                DecisionLog.metadata_['state'].as_string().in_(TERMINAL),
+                DecisionLog.metadata_['private_expires_at'].as_string() <= datetime.now(timezone.utc).isoformat()
+            ).with_for_update())).scalars().all()
+            for row in rows:
+                data = dict(row.metadata_)
+                data.pop('protected_http', None)
+                data.pop('protected_response', None)
+                data['private_evidence_expired'] = True
+                row.metadata_ = data
+            await db.commit()
+
     async def fence(self, session_id, resume=False):
         async with async_session() as db:
             session = (await db.execute(select(PentestSession).where(PentestSession.id == session_id).with_for_update())).scalar_one_or_none()
@@ -151,7 +167,7 @@ class WorkerClient:
     async def submit(self, job, command, timeout):
         return self.snapshot(await self.request('POST', '/jobs', {'job_id': job['job_id'],
             'session_id': job['session_id'], 'command': command, 'timeout': timeout,
-            'scope': job.get('scope', {})}, timeout=timeout+5), job)
+            'scope': job.get('scope', {}), **({'protected_http': job['protected_http']} if job.get('protected_http') else {})}, timeout=timeout+5), job)
 
     async def status(self, job):
         return self.snapshot(await self.request('GET', '/jobs/' + job['job_id']), job)
@@ -181,6 +197,21 @@ class WorkerJobs:
             values['exit_code'] = snapshot.get('exit_code', -1)
             values['output_hash'] = hashlib.sha256(snapshot.get('stdout', '').encode()).hexdigest()
             values['stderr_hash'] = hashlib.sha256(snapshot.get('stderr', '').encode()).hexdigest()
+            if job.get('protected_http'):
+                from worker.http_profile import public_receipt
+                values['output_hash'] = hashlib.sha256(public_receipt(snapshot.get('stdout', '')).encode()).hexdigest()
+                values['stderr_hash'] = hashlib.sha256(b'').hexdigest()
+            if job.get('protected_http') and snapshot['state'] == 'succeeded':
+                from worker.http_profile import cipher
+                import base64
+                receipt = json.loads(snapshot['stdout'])
+                protected = receipt['protected_response']
+                original = json.loads(cipher(settings.HTTP_REPLAY_KEY).decrypt(protected.encode()))
+                raw = base64.b64decode(original['response_b64'], validate=True)
+                if len(raw) > 32768 or hashlib.sha256(raw).hexdigest() != receipt['response_sha256']:
+                    raise ValueError('Invalid authenticated HTTP receipt')
+                values['protected_response'] = protected
+                values['response_sha256'] = receipt['response_sha256']
             if job.get('scope', {}).get('program_policy'):
                 import re
                 statuses = re.findall(r'ARIA_HTTP_STATUS:(\d{3})', snapshot.get('stdout', ''))
@@ -266,6 +297,16 @@ class WorkerJobs:
         return {'cancelled': sum(j['state'] == 'cancelled' for j in result),
                 'pending': sum(j['state'] not in TERMINAL for j in result)}
 
+    async def enforce_retention(self):
+        for job in await self.store.list():
+            if job.get('private_expires_at') and job.get('http_identity') and job.get('protocol') == 'jobs-v1':
+                try:
+                    await self.client.request('POST', '/jobs/' + job['job_id'] + '/retention',
+                        {'session_id': job['session_id'], 'expires_at': job['private_expires_at']})
+                except Exception:
+                    import structlog
+                    structlog.get_logger(__name__).warning('worker_retention_sync_pending')
+
     async def recover(self):
         # Recovery cancels/reconciles orphans, never replays a submission.
         jobs = await self.store.list()
@@ -280,10 +321,26 @@ class WorkerJobs:
                'created_at': time.time(), 'deadline': time.time() + timeout,
                'endpoint': settings.KALI_AGENT_URL, 'protocol': settings.KALI_WORKER_PROTOCOL,
                'cancel_requested': False, 'revision': 0, 'scope': (context or {}).get('scope', {})}
+        if command.startswith('aria-http '):
+            if settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
+                raise HTTPException(403, 'Authenticated HTTP requires jobs-v1')
+            from memory.application_map import application_map
+            from worker.http_profile import parse
+            args = parse(command)
+            current, token = await application_map.replay_material(session_id, user_id, args[1], args[2])
+            if current != command:
+                raise HTTPException(403, 'HTTP request binding changed')
+            job['protected_http'] = token
+            job['http_identity'] = args[1]
+            job['http_capture'] = args[2]
+            from worker.http_profile import cipher
+            job['private_expires_at'] = json.loads(cipher(settings.HTTP_REPLAY_KEY).decrypt(token.encode()))['expires_at']
         await self.store.create(job)  # failure denies dispatch
         try:
             if settings.KALI_WORKER_PROTOCOL != 'legacy-execute':
                 caps = await self.client.capabilities()
+                if job.get('protected_http') and caps.get('authenticated_http_version') != 1:
+                    raise HTTPException(409, 'Worker authenticated HTTP capability is unavailable')
                 if job['scope'].get('program_policy') and caps.get('program_policy_version') != 1:
                     raise HTTPException(409, 'Worker must be upgraded for reviewed program policies')
             if authorization_check is not None:
@@ -304,6 +361,9 @@ class WorkerJobs:
             while True:
                 current = await self.record_snapshot(job, snapshot)
                 if current['state'] in TERMINAL:
+                    if job.get('protected_http'):
+                        from worker.http_profile import public_receipt
+                        snapshot = {**snapshot, 'stdout': public_receipt(snapshot.get('stdout', '')), 'stderr': ''}
                     return {**snapshot, 'job_id': job_id, 'status': current['state'],
                             'exit_code': -1 if current['state'] == 'cancelled' else snapshot.get('exit_code', -1)}
                 if current.get('cancel_requested'):
