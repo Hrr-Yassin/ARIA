@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phases 5–8 remain proposed backlog.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phases 6–8 remain proposed backlog.
 
 ## Objective
 
@@ -149,17 +149,25 @@ HTTP success codes, model confidence, and scanner labels alone cannot confirm fi
 
 Dependencies: Phase 4.
 
-- [ ] VERIFY-01: Add finding states: observation, hypothesis, tested, reproduced, reviewed, reportable, rejected, inconclusive, blocked.
-- [ ] VERIFY-02: Implement deterministic transition prerequisites and evidence requirements.
-- [ ] VERIFY-03: Add a reviewer role that can reject specialist conclusions and request the smallest missing validation.
-- [ ] VERIFY-04: Reproduce candidates from clean state and check negative controls.
-- [ ] VERIFY-05: Confirm account/object ownership, expected permissions, and meaningful response content.
-- [ ] VERIFY-06: Separate demonstrated impact from potential escalation; stop once sufficient proof exists.
-- [ ] VERIFY-07: Detect local duplicates by underlying cause and affected workflow, while acknowledging private program duplicates are unknown.
-- [ ] VERIFY-08: Require recorded human review before a finding becomes ready for external submission.
+Implemented on 2026-11-06; see [implementation and offline acceptance](phase5-verification-status.md).
+The owner acts as an independent human reviewer of specialist evidence. Clean-state
+reproduction is supervised and recorded, not automatically executed. Reviewed and
+reportable findings require original private-JSON positive/negative controls for
+both runs; unsupported classes remain below that gate. No live reproduction,
+deployment acceptance or external submission was performed.
 
-Gate: independently reproducible lab findings pass; misleading and unsupported
-claims are rejected or inconclusive. Agreement between models is not verification.
+- [x] VERIFY-01: Add finding states: observation, hypothesis, tested, reproduced, reviewed, reportable, rejected, inconclusive, blocked.
+- [x] VERIFY-02: Implement deterministic transition prerequisites and evidence requirements.
+- [x] VERIFY-03: Add a reviewer role that can reject specialist conclusions and request the smallest missing validation.
+- [x] VERIFY-04: Reproduce candidates from clean state and check negative controls.
+- [x] VERIFY-05: Confirm account/object ownership, expected permissions, and meaningful response content.
+- [x] VERIFY-06: Separate demonstrated impact from potential escalation; stop once sufficient proof exists.
+- [x] VERIFY-07: Detect local duplicates by underlying cause and affected workflow, while acknowledging private program duplicates are unknown.
+- [x] VERIFY-08: Require recorded human review before a finding becomes ready for external submission.
+
+Gate: passed for the bounded offline saved-evidence controls documented in the
+status file. Live independent lab reproduction remains unverified. Misleading and
+unsupported claims cannot become reportable; model agreement is not verification.
 
 ## Phase 6: professional reports and outcome tracking (1–2 weeks)
 

@@ -8,6 +8,7 @@ from memory.team_tasks import (
     Strict, CreateTask, MigrateTask, Transition, EvidenceInput, KnowledgeInput, CoverageInput, team_store,
 )
 from agents.coordinator_agent import coordinator_agent
+from memory.finding_verification import Candidate, Review, verification_store
 from orchestrator.specialist_investigations import InvestigationRequest, plan_investigation
 
 router = APIRouter()
@@ -96,3 +97,19 @@ async def investigation_plan(session_id: str, body: InvestigationRequest, user: 
         advertised = {}
     from orchestrator.specialist_investigations import investigation_capabilities
     return plan_investigation(body, investigation_capabilities(advertised, engagement.get('scope', {})))
+
+
+# Explicit human review endpoints; specialist collection never advances findings.
+@router.get('/{session_id}/findings')
+async def verification_findings(session_id: str, user: TokenData = Depends(get_current_user)):
+    return await verification_store.view(session_id, user.user_id)
+
+
+@router.post('/{session_id}/findings')
+async def create_verification_finding(session_id: str, body: Candidate, user: TokenData = Depends(get_current_user)):
+    return await verification_store.create(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/findings/{finding_id}/review')
+async def review_verification_finding(session_id: str, finding_id: str, body: Review, user: TokenData = Depends(get_current_user)):
+    return await verification_store.review(session_id, user.user_id, finding_id, body)

@@ -6,6 +6,10 @@ five enabled specialties. This is not deployment or live-container acceptance of
 the new profiles. No scans, services, databases, container images or deployments
 were changed by this update; no external target or provider was contacted.
 
+Phase 5 follow-up: [independent verification status](phase5-verification-status.md)
+adds a separate saved-evidence finding ledger and human sign-off. The Phase 4
+observations below still cannot themselves confirm a finding.
+
 ## Implemented scope
 
 - The owner-only `POST /api/team/{session_id}/investigation-plan` returns structured,
