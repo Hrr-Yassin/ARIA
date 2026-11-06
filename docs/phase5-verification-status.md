@@ -9,6 +9,9 @@ classes can retain candidates and human validation, but cannot become reviewed o
 reportable without a supported original-content control. Phase 4's deployment
 limitations still apply.
 
+Phase 6 follow-up: [reporting and outcomes](phase6-reporting-status.md) adds a
+separate immutable, signed report workflow. Legacy report exports remain observations.
+
 ## Lifecycle and review
 
 Owner-only endpoints under `/api/team/{session_id}`:

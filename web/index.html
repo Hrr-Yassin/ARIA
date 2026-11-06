@@ -263,6 +263,50 @@
         <pre id="team-model-usage"></pre>
       </details>
     </section>
+    <section class="settings-section" id="reports-panel">
+      <h3>Reviewed reports and outcomes</h3>
+      <p class="settings-note">Build a draft from verified findings. Inspect its complete redacted evidence, reproduce from the report, then sign the exact revision. Downloading never submits a report.</p>
+      <button id="reports-refresh" class="btn btn-ghost">Load findings and report drafts</button>
+      <p id="reports-status" role="status" aria-live="polite"></p>
+      <label>Report template<select id="reports-template"><option value="bug_bounty">Bug bounty (one verified finding)</option><option value="pentest">Pentest (findings, coverage and observations)</option></select></label>
+      <div id="reports-candidates"></div>
+      <label>Previous report ID (optional, for a new revision)<input id="reports-previous"></label>
+      <button id="reports-create" class="btn btn-ghost">Create immutable draft</button>
+      <div id="reports-drafts"></div>
+      <div id="reports-preview" class="report-preview"></div>
+      <div id="reports-actions" class="hidden">
+        <label><input id="reports-reviewed" type="checkbox"> I reviewed this exact report and all attachments</label>
+        <label><input id="reports-reproduced" type="checkbox"> I reproduced the finding from this report alone (or reviewed the no-finding report)</label>
+        <label><input id="reports-redacted" type="checkbox"> I checked credential redaction and the remaining evidence</label>
+        <label>Sign-off reason<textarea id="reports-reason" rows="2"></textarea></label>
+        <button id="reports-signoff" class="btn btn-primary">Sign reviewed report revision</button>
+      </div>
+      <div id="reports-signed-actions" class="hidden">
+        <button id="reports-export" class="btn btn-ghost">Download signed Markdown and evidence ZIP</button>
+        <details><summary>Record a platform outcome</summary>
+          <p class="settings-note">Record an action or response that actually happened outside ARIA.</p>
+          <label>Outcome<select id="reports-outcome-state"><option>submitted</option><option>triaged</option><option>duplicate</option><option>informative</option><option>rejected</option><option>accepted</option><option>resolved</option><option>paid</option></select></label>
+          <label>Platform reference<input id="reports-platform"></label>
+          <label>Note<textarea id="reports-outcome-note" rows="2"></textarea></label>
+          <label>Actual payment amount (paid outcomes only)<input id="reports-amount" type="number" min="0.01" step="0.01"></label>
+          <label>Payment currency (three letters, e.g. USD)<input id="reports-currency" maxlength="3"></label>
+          <button id="reports-outcome" class="btn btn-ghost">Save recorded outcome</button>
+        </details>
+        <label>Reported finding<select id="reports-finding"></select></label>
+        <details><summary>Record a reviewed retest from saved evidence</summary>
+          <p class="settings-note">Collect fresh evidence through the approved execution workflow first. This action only records your review and requires the report's scope to remain current.</p>
+          <label>Result<select id="reports-retest-result"><option>fixed</option><option>still_vulnerable</option><option>inconclusive</option></select></label>
+          <label>Fresh catalog evidence IDs<input id="reports-retest-refs"></label>
+          <label>Review rationale<textarea id="reports-retest-reason" rows="2"></textarea></label>
+          <button id="reports-retest" class="btn btn-ghost">Save reviewed retest result</button>
+        </details>
+        <details><summary>Draft a triage reply</summary>
+          <label>Topic<select id="reports-triage-topic"><option>reproduction</option><option>impact</option><option>scope</option><option>retest</option></select></label>
+          <button id="reports-triage" class="btn btn-ghost">Draft reply from saved evidence</button>
+          <pre id="reports-triage-preview"></pre>
+        </details>
+      </div>
+    </section>
     <section class="settings-section" id="program-policy-panel">
       <h3>Program discovery and policy</h3>
       <p class="settings-note">Imports are research drafts. Only the engagement owner can activate reviewed HTTP observations. Unknown permission blocks testing.</p>
@@ -362,6 +406,7 @@
 
 <script src="/static/scripts/programs.js" defer></script>
 <script src="/static/scripts/team.js" defer></script>
+<script src="/static/scripts/reports.js" defer></script>
 <script src="/static/scripts/app.js" defer></script>
 </body>
 </html>

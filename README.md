@@ -9,7 +9,7 @@
 A research platform for a human researcher working with specialized AI agents
 on authorized web applications and APIs.
 
-[Product roadmap](docs/aria-product-roadmap.md) · [Implementation status](docs/phase3-mapping-status.md) · [Local setup](#run-aria-locally) · [Documentation](#documentation)
+[Product roadmap](docs/aria-product-roadmap.md) · [Implementation status](docs/phase6-reporting-status.md) · [Local setup](#run-aria-locally) · [Documentation](#documentation)
 
 </div>
 
@@ -85,9 +85,9 @@ flowchart TB
 | Understand permission | Turn program policy into reviewed, versioned execution rules | Source-linked review, explicit activation, scope checks and HTTP traffic budgets |
 | Organize a research team | Give specialists clear questions, dependencies, evidence and completion criteria | Durable tasks, typed results, owner review and restart blocking without replay |
 | Understand the application | Map endpoints, identities, objects, permissions and workflows | Implemented for supervised bounded lab observations; see Phase 3 acceptance |
-| Investigate specific weaknesses | Focus on authorization, sessions, exposure, input handling and business logic | Specialist entry points exist; validated investigation methods are Phase 4 work |
-| Separate a clue from a finding | Reproduce behavior, compare controls and reject unsupported conclusions | Evidence catalogs and uncertainty exist; the full verification lifecycle is planned |
-| Produce useful reports | Preserve reproduction evidence, review claims and track triage outcomes | Existing report exports; the complete reviewed reporting workflow is planned |
+| Investigate specific weaknesses | Focus on authorization, sessions, exposure, input handling and business logic | Five bounded specialist workflows with offline controls; deployment limits remain documented |
+| Separate a clue from a finding | Reproduce behavior, compare controls and reject unsupported conclusions | Phase 5 lifecycle with supervised reproduction records, original private-JSON controls and human review |
+| Produce useful reports | Preserve reproduction evidence, review claims and track triage outcomes | Immutable reviewed drafts, complete redacted evidence ZIPs, human sign-off and recorded outcomes |
 
 ## How the team works
 
@@ -176,9 +176,10 @@ restoration and distributed scheduling remain outside the current implementation
 
 ## The evidence standard
 
-The planned verification lifecycle makes the difference between a promising clue
-and a reportable finding visible. This lifecycle belongs to **Phases 5–6**;
-Phase 2 currently stores observations, hypotheses, uncertainty and human task review.
+The Phase 5 verification lifecycle separates candidates from reportable findings.
+Phase 6 binds current verified evidence to immutable drafts, full redacted attachments
+and human report sign-off. Reportable claims currently use the bounded private-JSON
+disclosure verifier; independent live reproduction acceptance remains unverified.
 
 ```mermaid
 flowchart LR
@@ -215,11 +216,11 @@ flowchart TB
         direction LR
         P0["0 · Baseline"] --> P1["1 · Program policy"] --> P2["2 · Durable team and evidence"] --> P3["3 · Authenticated mapping"]
     end
-    subgraph RESEARCH["NEXT · PHASES 4–5"]
+    subgraph RESEARCH["BOUNDED OFFLINE WORKFLOWS · PHASES 4–5"]
         direction LR
         P4["4 · Focused investigations"] --> P5["5 · Independent verification"]
     end
-    subgraph PRODUCT["LATER · PHASES 6–8"]
+    subgraph PRODUCT["REPORTING AND REMAINING WORK · PHASES 6–8"]
         direction LR
         P6["6 · Reports and outcomes"] --> P7["7 · Benchmark and pilot"] --> P8["8 · Operational maturity"]
     end
@@ -230,8 +231,8 @@ flowchart TB
     classDef next fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px;
     classDef later fill:#f1f5f9,stroke:#64748b,color:#334155,stroke-width:2px;
     class P0,P1,P2,P3 done;
-    class P4,P5 next;
-    class P6,P7,P8 later;
+    class P4,P5,P6 done;
+    class P7,P8 later;
 ```
 
 | Phase | Outcome | Status |
@@ -240,9 +241,9 @@ flowchart TB
 | **1 · Program discovery and scope** | Human-reviewed program policy and bounded HTTP observations | Complete for unauthenticated curl GET/HEAD |
 | **2 · Durable team tasks and evidence** | Saved tasks, evidence/coverage ledgers, reviewed specialist results and shared model budgets | Implemented for supervised saved-evidence analysis |
 | **3 · Authenticated mapping** | Isolated identities, workflow maps and reviewed HTTP replay | Complete for supervised bounded GET/HEAD lab mapping |
-| **4 · Focused investigations** | Tested specialist methods with positive and negative controls | Planned |
-| **5 · Independent verification** | Reproduction, evidence requirements and reviewer decisions | Planned |
-| **6 · Reporting and outcomes** | Reviewed deliverables, reproduction attachments and triage tracking | Planned |
+| **4 · Focused investigations** | Tested specialist methods with positive and negative controls | Implemented for bounded supervised workflows; offline specialty controls |
+| **5 · Independent verification** | Reproduction, evidence requirements and reviewer decisions | Implemented with a bounded private-JSON reportable gate; offline acceptance |
+| **6 · Reporting and outcomes** | Reviewed deliverables, reproduction attachments and triage tracking | Implemented for signed Markdown/evidence drafts and recorded outcomes; live independent reproduction remains unverified |
 | **7 · Benchmark and supervised pilot** | Measured quality, coverage, human effort and cost | Planned |
 | **8 · Operational maturity** | Recovery, retention, contracted pentesting and additional reviewed profiles | Planned |
 
@@ -264,6 +265,11 @@ owner database was used. These are engineering results, not a vulnerability
 benchmark or production certification. See [Phase 3 acceptance](docs/phase3-mapping-status.md)
 for configuration, exact commands, retained evidence and the bounded profile's
 limitations. Historical Phase 2 results remain in its own status document.
+
+Phase 6 adds Settings → **Reviewed reports and outcomes** for preview, exact-package
+human sign-off, full redacted Markdown/evidence ZIP downloads, and recorded outcomes,
+retests and triage drafts. No submission or new testing is performed by reporting.
+See [Phase 6 status](docs/phase6-reporting-status.md) for acceptance and limitations.
 
 ## How success will be measured
 
@@ -397,6 +403,9 @@ service checks and container-worker/Phase 2 acceptance.
 | [Phase 1 policy status](docs/phase1-policy-status.md) | Program import, owner activation, scope semantics and traffic budgets |
 | [Phase 2 team status](docs/phase2-team-status.md) | Durable tasks, evidence, model budgets, setup and acceptance |
 | [Phase 3 mapping status](docs/phase3-mapping-status.md) | Controlled identities, reviewed browser/HTTP observations, retention and acceptance |
+| [Phase 4 investigations](docs/phase4-investigations-status.md) | Bounded specialist profiles and positive/negative offline controls |
+| [Phase 5 verification](docs/phase5-verification-status.md) | Independent saved-evidence lifecycle and human sign-off |
+| [Phase 6 reporting](docs/phase6-reporting-status.md) | Immutable reports, full redacted attachments, outcome histories and acceptance |
 | [Worker setup](docs/worker-setup.md) · [Contract](docs/worker-contract.md) | Execution deployment, limits and cancellation guarantees |
 | [Security status](docs/security-review.md) · [Original review](technical_revow.md) | Remediation history and remaining limitations |
 | [Fedora lab](docs/fedora-lab.md) | Recorded local lab configuration and operation |

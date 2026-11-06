@@ -77,8 +77,8 @@ class ReportAgent(BaseAgent):
         findings_data = await session_manager.get_findings_summary(session_id)
         findings = [dict(f) for f in findings_data.get("findings", [])]
         for finding in findings:
-            if not finding.get("human_verified"):
-                finding["description"] = finding.get("description", "") + "\nEvidence source: " + finding.get("evidence_source", "legacy_unverified") + ". Not human-verified."
+            finding["title"] = "Observation: " + finding.get("title", "Untitled")
+            finding["description"] = finding.get("description", "") + "\nEvidence source: " + finding.get("evidence_source", "legacy_unverified") + ". Legacy observation; not certified by the Phase 5 verification gate. Use a signed Phase 6 draft for submission."
         counts   = findings_data.get("counts",   {})
         total    = findings_data.get("total",    0)
 

@@ -127,6 +127,7 @@ async function api(path, opts = {}) {
     window.location.href = '/login.html';
     return null;
   }
+  if (resp.ok && opts.responseType === 'blob') return await resp.blob();
   const ct = resp.headers.get('content-type') || '';
   const data = ct.includes('application/json')
     ? await resp.json().catch(() => ({}))
@@ -1278,6 +1279,7 @@ function switchSession(s) {
   el.approvalBanner.classList.add('hidden');
   state.sessionId = s.session_id;
   if (window.AriaTeam && window.AriaTeam.reset) window.AriaTeam.reset();
+  if (window.AriaReports && window.AriaReports.reset) window.AriaReports.reset();
   localStorage.setItem('current_session', s.session_id);
   el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
   setTarget(s.target || '');
@@ -1510,6 +1512,7 @@ async function boot() {
   el.autoBtn.disabled = true;
   bindEvents();
   if (window.AriaTeam) window.AriaTeam.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
+  if (window.AriaReports) window.AriaReports.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   if (window.AriaPrograms) window.AriaPrograms.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   updatePhaseUI();
   await loadSessions();

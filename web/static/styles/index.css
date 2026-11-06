@@ -1026,3 +1026,19 @@ input:focus, textarea:focus, select:focus {
 #team-panel label { display: block; margin: .5rem 0; }
 #team-panel textarea, #team-panel input, #team-panel select { width: 100%; box-sizing: border-box; }
 .team-card { padding: .75rem; margin: .5rem 0; border: 1px solid var(--bg-border-strong); border-radius: .4rem; }
+
+/* Reports keep complete evidence readable without widening the settings panel. */
+.report-preview pre, #reports-triage-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 28rem;
+  overflow: auto;
+}
+#reports-panel label { display: block; margin: 0.6rem 0; }
+#reports-panel label input[type="checkbox"] { width: auto; margin-right: 0.5rem; }
+#reports-panel label > input:not([type="checkbox"]),
+#reports-panel label > textarea, #reports-panel label > select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+}

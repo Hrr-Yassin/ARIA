@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phases 6–8 remain proposed backlog.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phase 6 is implemented for signed Markdown/evidence reports and human-recorded outcomes with offline acceptance; Phases 7–8 remain proposed backlog.
 
 ## Objective
 
@@ -173,17 +173,27 @@ unsupported claims cannot become reportable; model agreement is not verification
 
 Dependencies: Phase 5.
 
-- [ ] REPORT-01: Add a bug bounty template: title, asset, prerequisites, exact steps, expected/actual behavior, evidence, impact, and remediation.
-- [ ] REPORT-02: Add a pentest template: scope, coverage, limitations, findings, priorities, and retest status.
-- [ ] REPORT-03: Preserve complete reproduction evidence in attachments/manifests; do not rely on truncated PDF excerpts.
-- [ ] REPORT-04: Validate every report claim against finding status and evidence; keep observations separate from confirmed findings.
-- [ ] REPORT-05: Add report preview and human sign-off with immutable report revision and evidence references.
-- [ ] REPORT-06: Export a platform-ready draft; external submission remains an explicit human action.
-- [ ] REPORT-07: Track submitted, triaged, duplicate, informative, rejected, accepted, resolved, and paid outcomes separately.
-- [ ] REPORT-08: Draft triage answers from saved evidence and record retest results without silently retesting changed scope.
+Implemented on 2026-11-06; see [reporting implementation and acceptance](phase6-reporting-status.md).
+The owner can preview and sign immutable bug bounty/pentest drafts with full redacted
+retained evidence, export Markdown/JSON/evidence ZIPs, record platform outcomes and
+saved-evidence retests, and draft unsent triage answers. Demonstrated claims use the
+bounded Phase 5 private-JSON verifier; legacy reports remain observations. Offline
+engineering acceptance passed. Independent live reproduction from the exported
+report alone remains unverified; no submissions or deployment changes were made.
 
-Gate: an independent reviewer reproduces a finding from the report alone; secrets
-are redacted and unverified impact is not represented as demonstrated fact.
+- [x] REPORT-01: Add a bug bounty template: title, asset, prerequisites, exact steps, expected/actual behavior, evidence, impact, and remediation.
+- [x] REPORT-02: Add a pentest template: scope, coverage, limitations, findings, priorities, and retest status.
+- [x] REPORT-03: Preserve complete reproduction evidence in attachments/manifests; do not rely on truncated PDF excerpts.
+- [x] REPORT-04: Validate every report claim against finding status and evidence; keep observations separate from confirmed findings.
+- [x] REPORT-05: Add report preview and human sign-off with immutable report revision and evidence references.
+- [x] REPORT-06: Export a platform-ready draft; external submission remains an explicit human action.
+- [x] REPORT-07: Track submitted, triaged, duplicate, informative, rejected, accepted, resolved, and paid outcomes separately.
+- [x] REPORT-08: Draft triage answers from saved evidence and record retest results without silently retesting changed scope.
+
+Gate: engineering checks pass for complete redacted evidence, exact-revision
+sign-off, stale-source denial and bounded demonstrated claims. Independent human
+reproduction from the exported report alone is still a live acceptance requirement;
+it is not established by the offline synthetic controls.
 
 ## Phase 7: benchmark and supervised pilot (2–4 weeks)
 
