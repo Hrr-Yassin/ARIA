@@ -27,12 +27,12 @@ class UserFlowTests(OfflineCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['analysis']['evidence_source'], 'worker_receipt')
         verify.assert_awaited_once()
-        advance.assert_awaited_once_with('engagement', 'vulnerability_analysis')
+        advance.assert_not_awaited()
 
     async def test_http_request_preserves_ports_and_history(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
         store = AsyncMock()
-        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), patch('api.routers.pentest.session_manager.add_chat_log', store), patch('api.routers.pentest.session_manager.get_chat_logs', AsyncMock(return_value=[])):
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), patch('api.routers.pentest.worker_jobs.client.capabilities', AsyncMock(return_value={'tools':['nmap']})), patch('api.routers.pentest.session_manager.add_chat_log', store), patch('api.routers.pentest.session_manager.get_chat_logs', AsyncMock(return_value=[])):
             response = await self.client.post('/api/v8/input', json={'session_id':'engagement','user_input':'scan http port'})
         self.assertEqual(response.status_code, 200)
         data = response.json()

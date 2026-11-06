@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from agents.result_contract import AgentResult
-from memory.database_models import ChatLog, DecisionLog, PentestSession, async_session
+from memory.database_models import ChatLog, DecisionLog, PentestSession, PentestPhase, async_session
 from memory.program_policy import owned_engagement
 from security.redaction import redact, deployment_secrets
 
@@ -46,11 +46,29 @@ class TaskSpec(Strict):
     budget: TaskBudget = Field(default_factory=TaskBudget)
     expected_output: str = Field(min_length=1, max_length=2000)
     completion_criteria: list[Criterion] = Field(min_length=1, max_length=20)
+    security_questions: list[Reference] = Field(default_factory=list, max_length=20)
+    phase: Literal['scope', 'reconnaissance', 'scanning', 'vulnerability_analysis', 'exploitation', 'post_exploitation', 'reporting'] | None = None
+    specialty: Literal['authorization', 'authentication', 'exposure', 'input_validation', 'business_logic'] | None = None
+
+    @model_validator(mode='after')
+    def specialty_questions(self):
+        if self.specialty and (not self.phase or not self.security_questions or
+                len(set(self.security_questions)) != len(self.security_questions)):
+            raise ValueError('Specialist tasks require a phase and distinct security question keys')
+        return self
 
 
 class CreateTask(Strict):
     request_id: uuid.UUID
     task: TaskSpec
+
+
+class MigrateTask(Strict):
+    request_id: uuid.UUID
+    expected_revision: int = Field(ge=1)
+    phase: Literal['scope', 'reconnaissance', 'scanning', 'vulnerability_analysis', 'exploitation', 'post_exploitation', 'reporting']
+    security_questions: list[Reference] = Field(min_length=1, max_length=20)
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class Transition(Strict):
@@ -112,6 +130,25 @@ def transition_task(task: dict, target: str, reason: str, *, internal: bool = Fa
     return {**task, 'state': target, 'reason': public(reason), 'revision': task['revision'] + 1}
 
 
+def completion_readiness(task: dict, state: dict) -> dict:
+    """Describe required human-recorded coverage without treating it as verified."""
+    questions = []
+    for key in task.get('security_questions', []):
+        coverage = state['coverage'].get(key)
+        refs = coverage.get('evidence_references', []) if coverage else []
+        ready = bool(coverage and coverage.get('status') == 'tested' and refs and
+                     all(ref in state['evidence'] for ref in refs))
+        questions.append({'key': key, 'ready': ready,
+                          'question': coverage.get('question') if coverage else None,
+                          'feature': coverage.get('feature') if coverage else None,
+                          'status': coverage.get('status') if coverage else 'missing',
+                          'evidence_references': list(refs) if ready else []})
+    return {'mode': 'security_questions' if questions else 'legacy',
+            'ready': task.get('state') == 'awaiting_review' and bool(task.get('result')) and all(item['ready'] for item in questions),
+            'questions': questions,
+            'limitation': 'Coverage is a human assertion and does not verify a finding.'}
+
+
 class TeamStore:
     async def _events(self, db, sid: str) -> list[dict]:
         rows = (await db.execute(select(DecisionLog).where(
@@ -124,7 +161,17 @@ class TeamStore:
             events = await self._events(db, sid)
             state = materialize(events)
             return {**{key: list(value.values()) for key, value in state.items() if key != 'cursor'},
-                    'cursor': state['cursor'], 'target': getattr(session, 'target', '')}
+                    'cursor': state['cursor'], 'target': getattr(session, 'target', ''), 'scope': session.scope or {}}
+
+    async def completion_readiness(self, sid: str, owner: str, task_id: str) -> dict:
+        async with async_session() as db:
+            await owned_engagement(db, sid, owner)
+            state = materialize(await self._events(db, sid))
+            task = state['tasks'].get(task_id)
+            if not task:
+                raise HTTPException(404, 'Task not found')
+            return {'task_id': task_id, 'revision': task['revision'],
+                    **completion_readiness(task, state)}
 
     async def events(self, sid: str, owner: str, after: int = 0) -> dict:
         async with async_session() as db:
@@ -158,16 +205,68 @@ class TeamStore:
             raise HTTPException(422, 'Reference is not in this engagement catalog')
 
     async def create(self, sid: str, owner: str, body: CreateTask) -> dict:
+        task_data = body.task.model_dump(exclude={'phase'} if body.task.phase is None else set())
         async def build(db, session, state):
             if len(state['tasks']) >= 500:
                 raise HTTPException(409, 'Engagement task limit reached')
             self._references(state, body.task.dependencies, 'tasks')
             self._references(state, body.task.evidence_inputs)
             task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-task:{sid}:{body.request_id}'))
-            return 'tasks', task_id, {**body.task.model_dump(), 'id': task_id, 'session_id': sid,
+            return 'tasks', task_id, {**task_data, 'id': task_id, 'session_id': sid,
                 'owner_id': owner, 'state': 'queued', 'revision': 1, 'attempts': 0, 'result': None,
                 'created_at': datetime.now(timezone.utc).isoformat()}
-        return await self.mutate(sid, owner, str(body.request_id), {'create': body.task.model_dump()}, build)
+        return await self.mutate(sid, owner, str(body.request_id), {'create': task_data}, build)
+
+    async def migrate_task(self, sid: str, owner: str, task_id: str, body: MigrateTask) -> dict:
+        async def build(db, session, state):
+            task = state['tasks'].get(task_id)
+            if not task:
+                raise HTTPException(404, 'Task not found')
+            if task['revision'] != body.expected_revision:
+                raise HTTPException(409, 'Task changed; reload before migration')
+            if task['state'] in {'running', 'cancelled', 'failed'}:
+                raise HTTPException(409, 'This task cannot be migrated in its current state')
+            if task.get('phase') and task.get('security_questions'):
+                raise HTTPException(409, 'Task already has phase and security questions')
+            if len(set(body.security_questions)) != len(body.security_questions) or not body.reason.strip():
+                raise HTTPException(422, 'Distinct questions and a migration reason are required')
+            self._references(state, body.security_questions, 'coverage')
+            updated = {**task, 'phase': body.phase, 'security_questions': body.security_questions,
+                       'revision': task['revision'] + 1, 'migration_reason': public(body.reason)}
+            if task['state'] == 'completed':
+                # Migration is an explicit new review of the selected evidence.
+                review = completion_readiness({**updated, 'state': 'awaiting_review'}, state)
+                if not review['ready']:
+                    raise HTTPException(409, 'Completed tasks require a result and tested evidence for every question')
+                updated['completion_review'] = review['questions']
+                updated['reviewed_by'] = owner
+            return 'tasks', task_id, updated
+        return await self.mutate(sid, owner, str(body.request_id),
+            {'migrate_task': task_id, **body.model_dump(mode='json')}, build)
+
+    async def update_phase(self, sid: str, owner: str, phase: str) -> None:
+        from config.tools_registry import PENTEST_PHASES
+        from orchestrator.workflow_engine import workflow_engine
+        if phase not in PENTEST_PHASES:
+            raise HTTPException(422, 'Unknown phase')
+        async with async_session() as db:
+            session = await owned_engagement(db, sid, owner)
+            current = getattr(session.current_phase, 'value', session.current_phase) or 'scope'
+            if current not in PENTEST_PHASES:
+                raise HTTPException(409, 'Current phase is unknown')
+            if PENTEST_PHASES.index(phase) > PENTEST_PHASES.index(current):
+                if PENTEST_PHASES.index(phase) != PENTEST_PHASES.index(current) + 1:
+                    raise HTTPException(409, 'Advance one phase at a time')
+                state = materialize(await self._events(db, sid))
+                ledger = {key: list(value.values()) for key, value in state.items() if key != 'cursor'}
+                if workflow_engine.evidence_readiness(current, ledger)['state'] != 'ready':
+                    raise HTTPException(409, 'Current phase requires tested evidence and human review')
+            session.current_phase = PentestPhase(phase)
+            session.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            await db.commit()
+        from memory.session_manager import session_manager
+        if session_manager._redis:
+            await session_manager._redis.delete(f'session:{sid}')
 
     async def transition(self, sid: str, owner: str, task_id: str, body: Transition) -> dict:
         async def build(db, session, state):
@@ -178,6 +277,13 @@ class TeamStore:
                 raise HTTPException(409, 'Task changed; reload before reviewing')
             updated = transition_task(task, body.state, body.reason)
             if body.state == 'completed':
+                # Snapshot the exact evidence at review; later coverage edits do not
+                # rewrite the historical basis of this completion event.
+                readiness = completion_readiness(task, state)
+                if not readiness['ready']:
+                    raise HTTPException(409, 'Each required security question needs tested coverage and evidence')
+                if readiness['mode'] == 'security_questions':
+                    updated['completion_review'] = readiness['questions']
                 updated['reviewed_by'] = owner
             return 'tasks', task_id, updated
         return await self.mutate(sid, owner, str(body.request_id), {'task': task_id, **body.model_dump(mode='json')}, build)

@@ -217,7 +217,7 @@ class WorkerServerTests(unittest.IsolatedAsyncioTestCase):
         captured = []
         async def handler(req):
             if req.url.path == '/capabilities':
-                return httpx.Response(200, json={'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True, 'network_scope': True})
+                return httpx.Response(200, json={'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True, 'network_scope': True, 'tools': ['curl']})
             data = json.loads(req.content)
             captured.append(data)
             return httpx.Response(200, json={**data, 'state': 'succeeded', 'exit_code': 0})

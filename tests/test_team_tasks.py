@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from agents.result_contract import AgentResult
 from memory.team_tasks import (
-    TeamStore, CreateTask, TaskSpec, Transition, KnowledgeInput, CoverageInput, EvidenceInput,
+    TeamStore, CreateTask, TaskSpec, MigrateTask, Transition, KnowledgeInput, CoverageInput, EvidenceInput,
     materialize, transition_task,
 )
 from orchestrator.team_coordinator import TeamCoordinator
@@ -61,6 +61,62 @@ class TeamTasks(OfflineCase):
         self.assertEqual(error.exception.status_code,409)
         self.assertEqual(len(self.events),1)
 
+    async def test_phase_is_optional_and_legacy_request_fingerprint_is_unchanged(self):
+        request = CreateTask(request_id=uuid.uuid4(), task=spec())
+        event = await self.store.create('engagement', 'owner', request)
+        self.assertNotIn('phase', event['data'])
+        self.assertTrue((await self.store.create('engagement', 'owner', request))['duplicate'])
+        tagged = await self.store.create('engagement', 'owner', CreateTask(
+            request_id=uuid.uuid4(), task=spec(phase='scanning', security_questions=['q'])))
+        self.assertEqual(tagged['data']['phase'], 'scanning')
+
+    async def test_migrate_legacy_task_requires_existing_questions_and_fresh_revision(self):
+        task = await self.create(); tid = task['entity_id']
+        body = MigrateTask(request_id=uuid.uuid4(), expected_revision=1, phase='scanning',
+                           security_questions=['q'], reason='Map legacy objective to reviewed question')
+        with self.assertRaises(HTTPException): await self.store.migrate_task('engagement', 'owner', tid, body)
+        await self.store.coverage('engagement', 'owner', CoverageInput(request_id=uuid.uuid4(), key='q',
+            question='Is access restricted?', feature='resource', status='untested', gap_reason='Not tested'))
+        migrated = await self.store.migrate_task('engagement', 'owner', tid, body)
+        self.assertEqual(migrated['data']['revision'], 2)
+        self.assertEqual(migrated['data']['state'], 'queued')
+        self.assertTrue((await self.store.migrate_task('engagement', 'owner', tid, body))['duplicate'])
+        with self.assertRaises(HTTPException):
+            await self.store.migrate_task('engagement', 'owner', tid, body.model_copy(update={'request_id': uuid.uuid4()}))
+
+    async def test_migrate_completed_task_requires_new_evidence_review(self):
+        task = await self.create(); tid, rid = task['entity_id'], str(uuid.uuid4())
+        await self.store.claim('engagement', 'owner', tid, rid)
+        collected = await self.store.collect('engagement', 'owner', tid, rid,
+            AgentResult(interpreted_request='Review', uncertainty=['Unknown']))
+        done = await self.store.transition('engagement', 'owner', tid, Transition(request_id=uuid.uuid4(),
+            expected_revision=collected['data']['revision'], state='completed', reason='Legacy review'))
+        await self.store.coverage('engagement', 'owner', CoverageInput(request_id=uuid.uuid4(), key='q',
+            question='Is access restricted?', feature='resource', status='blocked', gap_reason='No evidence'))
+        body = MigrateTask(request_id=uuid.uuid4(), expected_revision=done['data']['revision'], phase='scanning',
+                           security_questions=['q'], reason='Review legacy result')
+        with self.assertRaises(HTTPException): await self.store.migrate_task('engagement', 'owner', tid, body)
+        self.events.append({'collection': 'evidence', 'entity_id': 'e1', 'data': {'id': 'e1'},
+                            'sequence': len(self.events) + 1, 'id': str(uuid.uuid4())})
+        await self.store.coverage('engagement', 'owner', CoverageInput(request_id=uuid.uuid4(), key='q',
+            question='Is access restricted?', feature='resource', status='tested', gap_reason='', evidence_references=['e1']))
+        migrated = await self.store.migrate_task('engagement', 'owner', tid, body)
+        self.assertEqual(migrated['data']['completion_review'][0]['evidence_references'], ['e1'])
+        self.assertEqual(migrated['data']['reviewed_by'], 'owner')
+        from memory.database_models import PentestPhase
+        self.session.current_phase = PentestPhase.SCANNING
+        await self.store.update_phase('engagement', 'owner', 'vulnerability_analysis')
+        self.assertEqual(self.session.current_phase, PentestPhase.VULNERABILITY_ANALYSIS)
+
+    async def test_manual_phase_advancement_requires_evidence_review(self):
+        from memory.database_models import PentestPhase
+        self.session.current_phase = PentestPhase.SCANNING
+        with self.assertRaises(HTTPException): await self.store.update_phase('engagement', 'owner', 'vulnerability_analysis')
+        with self.assertRaises(HTTPException): await self.store.update_phase('engagement', 'owner', 'reporting')
+        self.assertEqual(self.session.current_phase, PentestPhase.SCANNING)
+        await self.store.update_phase('engagement', 'owner', 'reconnaissance')
+        self.assertEqual(self.session.current_phase, PentestPhase.RECONNAISSANCE)
+
     async def test_storage_failure_does_not_publish(self):
         self.db.commit.side_effect = RuntimeError('database down')
         with self.assertRaises(RuntimeError): await self.create()
@@ -89,6 +145,41 @@ class TeamTasks(OfflineCase):
         self.assertEqual(claim['data']['state'],'running')
         with self.assertRaises(HTTPException):
             await self.store.claim('engagement','owner',tid,str(uuid.uuid4()))
+
+    async def test_required_security_question_needs_tested_evidence(self):
+        event = await self.create(security_questions=['access'])
+        tid, rid = event['entity_id'], str(uuid.uuid4())
+        await self.store.claim('engagement', 'owner', tid, rid)
+        collected = await self.store.collect('engagement', 'owner', tid, rid,
+            AgentResult(interpreted_request='Review', uncertainty=['No conclusion']))
+        def review():
+            return Transition(request_id=uuid.uuid4(), expected_revision=collected['data']['revision'],
+                              state='completed', reason='Reviewed')
+        readiness = await self.store.completion_readiness('engagement', 'owner', tid)
+        self.assertFalse(readiness['ready'])
+        self.assertEqual(readiness['questions'][0]['status'], 'missing')
+        with self.assertRaises(HTTPException):
+            await self.store.transition('engagement', 'owner', tid, review())
+        await self.store.coverage('engagement', 'owner', CoverageInput(
+            request_id=uuid.uuid4(), key='access', question='Is access restricted?', feature='object',
+            status='blocked', gap_reason='Missing control'))
+        with self.assertRaises(HTTPException):
+            await self.store.transition('engagement', 'owner', tid, review())
+        self.events.append({'collection': 'evidence', 'entity_id': 'e1', 'data': {'id': 'e1'},
+                            'sequence': len(self.events) + 1, 'id': str(uuid.uuid4())})
+        await self.store.coverage('engagement', 'owner', CoverageInput(
+            request_id=uuid.uuid4(), key='access', question='Is access restricted?', feature='object',
+            status='tested', gap_reason='', evidence_references=['e1']))
+        done = await self.store.transition('engagement', 'owner', tid, review())
+        self.assertEqual(done['data']['state'], 'completed')
+        self.assertEqual(done['data']['completion_review'][0]['evidence_references'], ['e1'])
+        self.assertEqual(done['data']['completion_review'][0]['question'], 'Is access restricted?')
+        await self.store.coverage('engagement', 'owner', CoverageInput(
+            request_id=uuid.uuid4(), key='access', question='Is access restricted?', feature='object',
+            status='unresolved', gap_reason='New conflicting evidence'))
+        current = await self.store.completion_readiness('engagement', 'owner', tid)
+        self.assertFalse(current['questions'][0]['ready'])
+        self.assertEqual((await self.store.view('engagement', 'owner'))['tasks'][0]['completion_review'][0]['evidence_references'], ['e1'])
 
     async def test_cancellation_fences_late_result_and_stale_review(self):
         event=await self.create();tid=event['entity_id'];rid=str(uuid.uuid4())

@@ -125,8 +125,8 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
     async def capabilities():
         if not app.state.healthy:
             raise HTTPException(503, 'Worker reconciliation unavailable')
-        from worker.http_profile import available
-        return {'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
+        from worker.http_profile import available, specialties_available
+        return {'specialist_http_version': 1 if specialties_available() else 0, 'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
                 'network_scope': True, 'program_policy_version': 1, 'tools': ['curl', 'nmap'], 'max_timeout': 300}
 
     @app.post('/jobs', dependencies=[Depends(authenticate)])

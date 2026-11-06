@@ -2,6 +2,7 @@
 import base64
 import copy
 import json
+import uuid
 from contextlib import ExitStack
 from datetime import timedelta
 from types import SimpleNamespace
@@ -233,3 +234,62 @@ class ApplicationMapping(OfflineCase):
         self.assertEqual(result['left']['mode'],'bytes')
         result=compare_responses(response(b'{"number":NaN}'),response(b'{ "number":NaN }'),[])
         self.assertFalse(result['equivalent'])
+
+    async def test_specialty_request_binds_controlled_object_and_revalidates_before_execution(self):
+        from cryptography.fernet import Fernet
+        from config.settings import settings
+        from worker.http_profile import decode
+        identity = await self.identity()
+        original = source()
+        original['url'] = 'http://192.0.2.1/objects'
+        original['request_b64'] = base64.b64encode(
+            b'GET /objects HTTP/1.1\r\nHost: 192.0.2.1\r\nAuthorization: Bearer account-a-secret\r\n\r\n').decode()
+        self.rows['object-baseline'] = ChatLog(id='object-baseline', session_id='engagement', msg_type='burp_evidence',
+            data={'protected_original': evidence_cipher().encrypt(json.dumps(original).encode()).decode()})
+        baseline = await self.change('captures', CaptureInput, identity_id=identity, evidence_id='object-baseline')
+        obj = await self.change('objects', ObjectInput, label='Controlled object', owner_identity_id=identity,
+                                evidence_ids=['object-baseline'])
+        self.session.scope.update(web_authenticated_replay=True, web_specialist_profiles=True)
+        for profile, method, url, extra in [
+            ('integer_query', 'GET', 'http://192.0.2.1/objects?count=-1', {}),
+            ('controlled_json_put', 'PUT', 'http://192.0.2.1/objects', {'json_body': {'count': 1}})]:
+            with self.subTest(profile=profile):
+                draft = await self.change('requests', RequestInput, identity_id=identity, method=method, url=url,
+                    profile=profile, object_id=obj, action_authorized=True, invariant='Count remains valid', **extra)
+                with patch.object(settings, 'HTTP_REPLAY_KEY', Fernet.generate_key().decode()):
+                    command, token = await self.store.replay_material('engagement', 'owner', identity, draft)
+                    spec = decode(token, command, settings.HTTP_REPLAY_KEY)
+                    self.assertEqual(spec['specialty']['object_id'], obj)
+                    self.assertEqual(spec['method'], method)
+                    with patch('memory.worker_jobs.worker_jobs.client.capabilities', AsyncMock(return_value={'specialist_http_version': 1})), \
+                         patch('memory.execution_authorization.execution_authorization.propose', AsyncMock(return_value=SimpleNamespace(id='action', status='pending'))) as propose:
+                        proposal = await self.store.replay_proposal('engagement', 'owner', identity, draft)
+                        self.assertEqual(proposal['reviewed_request']['method'], method)
+                        self.assertEqual(proposal['reviewed_request']['specialty']['object_id'], obj)
+                        self.assertEqual(proposal['reviewed_request']['body'], spec['body'])
+                        self.assertNotIn('account-a-secret', str(proposal))
+                        self.assertTrue(propose.await_args.kwargs['require_approval'])
+                    self.assertNotIn('account-a-secret', command)
+                    self.session.scope['web_specialist_profiles'] = False
+                    with self.assertRaises(HTTPException):
+                        await self.store.replay_material('engagement', 'owner', identity, draft)
+                    self.session.scope['web_specialist_profiles'] = True
+        # A later correction to object evidence invalidates the pending action.
+        key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:engagement'))
+        state = unseal(self.rows[key].metadata_['sealed'])
+        state['captures'][baseline]['expired'] = True
+        state['captures'][baseline].pop('original')
+        self.rows[key].metadata_['sealed'] = seal(state)
+        with self.assertRaises(HTTPException):
+            await self.store.replay_material('engagement', 'owner', identity, draft)
+
+    async def test_specialty_review_routes_are_owner_bound_and_hide_invalid_input(self):
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        body = dict(object_id='foreign', baseline_capture_id='x', test_capture_id='y', invariant='Count is valid',
+                    action_authorized=True, boundary_result='unknown', rationale='Reviewed fixture')
+        response = await self.client.post('/api/application-map/foreign/input-validation-review', json=body)
+        self.assertEqual(response.status_code, 404)
+        response = await self.client.post('/api/application-map/engagement/input-validation-review',
+                                          json={**body, 'action_authorized': False, 'rationale': 'secret-invalid-input'})
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn('secret-invalid-input', response.text)

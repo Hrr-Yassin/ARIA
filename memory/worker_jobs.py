@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import shlex
 import time
 import uuid
 
@@ -334,15 +335,34 @@ class WorkerJobs:
             job['http_identity'] = args[1]
             job['http_capture'] = args[2]
             from worker.http_profile import cipher
-            job['private_expires_at'] = json.loads(cipher(settings.HTTP_REPLAY_KEY).decrypt(token.encode()))['expires_at']
+            spec = json.loads(cipher(settings.HTTP_REPLAY_KEY).decrypt(token.encode()))
+            from worker.http_profile import capability_for
+            job['http_capability'] = capability_for(spec)
+            job['private_expires_at'] = spec['expires_at']
         await self.store.create(job)  # failure denies dispatch
         try:
-            if settings.KALI_WORKER_PROTOCOL != 'legacy-execute':
+            if settings.KALI_WORKER_PROTOCOL == 'legacy-execute':
+                # Legacy transports must still explicitly advertise executable tools.
+                caps = await self.client.request('GET', '/capabilities')
+            else:
                 caps = await self.client.capabilities()
-                if job.get('protected_http') and caps.get('authenticated_http_version') != 1:
+            if not isinstance(caps, dict):
+                raise HTTPException(409, 'Worker capability information is unavailable')
+            if job.get('protected_http'):
+                version = caps.get(job.get('http_capability', 'authenticated_http_version'))
+                if type(version) is not int or version != 1:
                     raise HTTPException(409, 'Worker authenticated HTTP capability is unavailable')
-                if job['scope'].get('program_policy') and caps.get('program_policy_version') != 1:
-                    raise HTTPException(409, 'Worker must be upgraded for reviewed program policies')
+            else:
+                tools = caps.get('tools')
+                try:
+                    tool = shlex.split(command)[0]
+                except (ValueError, IndexError):
+                    raise HTTPException(409, 'Worker command capability cannot be determined') from None
+                if not isinstance(tools, list) or tool not in tools:
+                    raise HTTPException(409, 'Worker does not advertise the requested tool')
+            version = caps.get('program_policy_version')
+            if job['scope'].get('program_policy') and (type(version) is not int or version != 1):
+                raise HTTPException(409, 'Worker must be upgraded for reviewed program policies')
             if authorization_check is not None:
                 await authorization_check()
             job = await self.store.update(job_id, {'state': 'dispatching'}, expected={'prepared'})

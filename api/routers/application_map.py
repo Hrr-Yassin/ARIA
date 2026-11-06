@@ -6,7 +6,7 @@ from starlette.responses import JSONResponse
 from api.auth import TokenData, get_current_user
 from memory.application_map import (
     application_map, Strict, Change, IdentityInput, RequestInput, CaptureInput, ObjectInput,
-    WorkflowInput, PermissionInput, DataPolicy, ComparisonInput,
+    WorkflowInput, PermissionInput, DataPolicy, ComparisonInput, AuthorizationReview, AuthenticationReview, ExposureReview, BusinessLogicReview, InputValidationReview,
 )
 
 class PrivateRoute(APIRoute):
@@ -64,6 +64,26 @@ async def data_policy(session_id: str, body: DataPolicy, user: TokenData = Depen
     return await application_map.change(session_id, user.user_id, 'policy', body)
 
 
+@router.post('/{session_id}/authorization-review')
+async def authorization_review(session_id: str, body: AuthorizationReview, user: TokenData = Depends(get_current_user)):
+    return await application_map.review_authorization(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/authentication-review')
+async def authentication_review(session_id: str, body: AuthenticationReview, user: TokenData = Depends(get_current_user)):
+    return await application_map.review_authentication(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/exposure-review')
+async def exposure_review(session_id: str, body: ExposureReview, user: TokenData = Depends(get_current_user)):
+    return await application_map.review_exposure(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/business-logic-review')
+async def business_logic_review(session_id: str, body: BusinessLogicReview, user: TokenData = Depends(get_current_user)):
+    return await application_map.review_business_logic(session_id, user.user_id, body)
+
+
 @router.post('/{session_id}/compare')
 async def compare(session_id: str, body: ComparisonInput, user: TokenData = Depends(get_current_user)):
     return await application_map.compare(session_id, user.user_id, body)
@@ -102,3 +122,8 @@ async def catalog_replay(session_id: str, job_id: str, user: TokenData = Depends
 @router.post('/{session_id}/requests')
 async def planned_request(session_id: str, body: RequestInput, user: TokenData = Depends(get_current_user)):
     return await application_map.change(session_id, user.user_id, 'requests', body)
+
+
+@router.post('/{session_id}/input-validation-review')
+async def input_validation_review(session_id: str, body: InputValidationReview, user: TokenData = Depends(get_current_user)):
+    return await application_map.review_input_validation(session_id, user.user_id, body)

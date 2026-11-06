@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phases 4–8 remain proposed backlog.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phases 5–8 remain proposed backlog.
 
 ## Objective
 
@@ -117,17 +117,32 @@ and every replay is scoped, attributable, bounded, and cancellable.
 
 Dependencies: Phases 2–3.
 
-- [ ] SPEC-01: Define investigation contracts: hypothesis, prerequisites, minimum test, normal result, abnormal result, stop conditions, and disconfirming evidence.
-- [ ] SPEC-02: Implement authorization comparison workflows using only researcher-controlled accounts and objects.
-- [ ] SPEC-03: Implement authentication/session assessment workflows with explicit account and action prerequisites.
-- [ ] SPEC-04: Implement sensitive-exposure analysis that distinguishes public/expected information from demonstrated unauthorized disclosure.
-- [ ] SPEC-05: Add selected input-validation checks through reviewed, bounded profiles; avoid arbitrary shell execution.
-- [ ] SPEC-06: Add human-assisted business logic workflows with expected invariants and controlled state changes.
-- [ ] SPEC-07: Make planners consume actual worker capabilities and return blocked reasons for unsupported tests.
-- [ ] SPEC-08: Replace tool-count completion with tested security questions and evidence-based task completion.
-- [ ] SPEC-09: Add secure, vulnerable, misleading-response, and missing-prerequisite fixtures for each specialty.
+Implemented by Codex on 2026-11-06 in the working tree; no PR created.
+See [implementation and offline acceptance](phase4-investigations-status.md).
+All five specialties have saved-evidence reviews and explicit offline secure,
+vulnerable, misleading-response and missing-prerequisite controls. A selected
+private JSON content comparison distinguishes candidate exposure from generic
+HTTP success. Optional integer-query and single-field JSON PUT lab profiles are
+bound to a controlled object, current scope, exact worker capabilities and human
+approval; they remain disabled by default. Specialist tasks require evidence-linked
+security questions and owner-reviewed completion. Plans and reviews never confirm
+findings. New-profile live/container deployment acceptance was not performed;
+no services, databases or deployments were changed. Broad inputs, automatic account
+lifecycle actions and authenticated public-program execution remain unsupported.
 
-Gate: each enabled specialty passes positive and negative controls. Version matches,
+- [x] SPEC-01: Define investigation contracts: hypothesis, prerequisites, minimum test, normal result, abnormal result, stop conditions, and disconfirming evidence.
+- [x] SPEC-02: Implement authorization comparison workflows using only researcher-controlled accounts and objects.
+- [x] SPEC-03: Implement authentication/session assessment workflows with explicit account and action prerequisites.
+- [x] SPEC-04: Implement sensitive-exposure analysis that distinguishes public/expected information from demonstrated unauthorized disclosure.
+- [x] SPEC-05: Add selected input-validation checks through reviewed, bounded profiles; avoid arbitrary shell execution.
+- [x] SPEC-06: Add human-assisted business logic workflows with expected invariants and controlled state changes.
+- [x] SPEC-07: Make planners consume actual worker capabilities and return blocked reasons for unsupported tests.
+- [x] SPEC-08: Replace tool-count completion with tested security questions and evidence-based task completion.
+- [x] SPEC-09: Add secure, vulnerable, misleading-response, and missing-prerequisite fixtures for each specialty.
+
+Gate: passed for the bounded offline specialty controls described in the status
+document; new-profile deployment acceptance remains unverified. Each enabled
+specialty passes positive and negative controls. Version matches,
 HTTP success codes, model confidence, and scanner labels alone cannot confirm findings.
 
 ## Phase 5: independent verification (about 2 weeks)

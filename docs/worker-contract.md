@@ -110,3 +110,23 @@ leaves synchronization pending; no immediate remote deletion is claimed.
 
 See [Phase 3 acceptance](phase3-mapping-status.md) for setup, private snapshot
 format limits, API workflow and executed two-account/browser controls.
+
+
+## Optional Phase 4 specialist HTTP extension
+
+The Phase 3 extension retains bodyless GET/HEAD without queries. Separately,
+`HTTP_SPECIALIST_PROFILES_ENABLED=true` on a configured updated worker advertises
+exact integer `specialist_http_version: 1`; its default is 0. It requires a reviewed
+matching container image, jobs-v1, the shared replay key, explicit lab flags
+`web_authenticated_replay` and `web_specialist_profiles`, and one-use red-risk
+approval. No running worker or engagement was enabled by this source update.
+
+The same encrypted transport/digest additionally binds one canonical integer GET
+query or one bounded scalar JSON PUT body, controlled object, invariant and human
+attestations. The worker rejects unsupported shapes before container creation.
+The API rechecks active controlled ownership, exact resource evidence, scope and
+exact capabilities before dispatch. Existing independent network/port ceilings,
+budgets, overload stops, timeout, private evidence and cancellation remain in force.
+There are no arbitrary methods, shell, bodies, redirect following or retries.
+See [Phase 4 status](phase4-investigations-status.md) for exact bounds, owner API
+fields and offline validation; live acceptance of the new profiles is unperformed.

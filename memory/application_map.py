@@ -56,9 +56,41 @@ class IdentityInput(Change):
 
 class RequestInput(Change):
     identity_id: Ref
-    method: Literal['GET', 'HEAD'] = 'GET'
+    method: Literal['GET', 'HEAD', 'PUT'] = 'GET'
     url: str = Field(min_length=1, max_length=3000)
+    profile: Literal['integer_query', 'controlled_json_put'] | None = None
+    object_id: Ref | None = None
+    action_authorized: Literal[True] | None = None
+    invariant: Text | None = None
+    json_body: dict[str, str | int | bool] | None = Field(default=None, min_length=1, max_length=1)
 
+    @model_validator(mode='after')
+    def reviewed_shape(self):
+        if self.profile is None:
+            if self.method == 'PUT' or any(v is not None for v in
+                    (self.object_id, self.action_authorized, self.invariant, self.json_body)):
+                raise ValueError('Specialty method or metadata requires a reviewed profile')
+        elif not self.object_id or self.action_authorized is not True or not self.invariant or not self.invariant.strip():
+            raise ValueError('Controlled object, authorization and invariant required')
+        return self
+
+
+
+def request_specialty(state, identity_id, object_id, url, review):
+    """Bind a reviewed action to this owner's recorded, unexpired object resource."""
+    require(state, 'objects', [object_id])
+    obj = state['objects'][object_id]
+    identity = state['identities'].get(identity_id, {})
+    if (obj['owner_identity_id'] != identity_id or identity.get('researcher_controlled') is not True
+            or not identity.get('active')):
+        raise HTTPException(409, 'An active controlled object owner is required')
+    resource = urlsplit(url)._replace(query='').geturl()
+    supporting = [c for c in state['captures'].values() if c['evidence_id'] in obj['evidence_ids']
+                  and c['identity_id'] == identity_id and not c.get('expired')
+                  and c.get('original', {}).get('url') == resource]
+    if not supporting:
+        raise HTTPException(409, 'The exact controlled object resource needs unexpired owner evidence')
+    return review
 
 class CaptureInput(Change):
     identity_id: Ref
@@ -99,6 +131,296 @@ class ComparisonInput(Strict):
     right: Ref
     # Explicit opt-in removal only; ignored fields remain visible in the result.
     ignore_json_keys: list[Text] = Field(default_factory=list, max_length=20)
+
+
+
+class AuthorizationReview(Strict):
+    object_id: Ref
+    owner_capture_id: Ref
+    other_capture_id: Ref
+    operation: Text
+
+
+def authorization_review(state: dict, body: AuthorizationReview) -> dict:
+    """Compare selected observations; recorded ownership and permissions are assertions."""
+    require(state, 'objects', [body.object_id])
+    require(state, 'captures', [body.owner_capture_id, body.other_capture_id])
+    obj = state['objects'][body.object_id]
+    left, right = (state['captures'][body.owner_capture_id], state['captures'][body.other_capture_id])
+    identities = state['identities']
+    owner_id, other_id = obj['owner_identity_id'], right['identity_id']
+    if (left['identity_id'] != owner_id or owner_id == other_id or
+            not identities.get(owner_id, {}).get('active') or not identities.get(other_id, {}).get('active') or
+            identities.get(owner_id, {}).get('researcher_controlled') is not True or
+            identities.get(other_id, {}).get('researcher_controlled') is not True):
+        raise HTTPException(409, 'Two active, distinct controlled identities including the recorded owner are required')
+    if left['evidence_id'] not in obj['evidence_ids']:
+        raise HTTPException(409, 'Owner observation must support the recorded object')
+    if left.get('expired') or right.get('expired'):
+        raise HTTPException(410, 'Original capture expired or was revoked')
+    if any(left.get(k) != right.get(k) for k in ('method', 'origin', 'route')):
+        raise HTTPException(409, 'Observations must use the same method and resource')
+    permissions = [p for p in state['permissions'].values() if
+                   p['object_id'] == body.object_id and p['identity_id'] == other_id and p['operation'] == body.operation]
+    if not permissions or permissions[-1]['expected'] == 'unknown':
+        raise HTTPException(409, 'A current expected permission is required')
+    try:
+        urls = [c['original']['url'] for c in (left, right)]
+        if urls[0] != urls[1] or urlsplit(urls[0]).query or left['method'] not in {'GET', 'HEAD'}:
+            raise HTTPException(409, 'Only the same bodyless GET or HEAD resource without a query is supported')
+        for capture in (left, right):
+            request = base64.b64decode(capture['original']['request_b64'], validate=True)
+            if not request.partition(b'\r\n\r\n')[1] or request.partition(b'\r\n\r\n')[2]:
+                raise HTTPException(409, 'Request bodies are unsupported')
+        raw = [base64.b64decode(c['original']['response_b64'], validate=True) for c in (left, right)]
+        comparison = compare_responses(*raw, [])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(409, 'Original responses are unavailable') from None
+    return {'object_id': body.object_id, 'capture_ids': [body.owner_capture_id, body.other_capture_id],
+            'evidence_ids': [left['evidence_id'], right['evidence_id']],
+            'expected_permission': permissions[-1]['expected'], 'permission_id': permissions[-1]['id'],
+            'comparison': comparison, 'status': 'observation',
+            'limitations': ['Ownership and permission are human assertions; inspect meaningful content and public or shared access before drawing a conclusion.',
+                            'Response equality and HTTP status do not establish authorization or confirm a finding.']}
+
+
+
+class AuthenticationReview(Strict):
+    authenticated_capture_id: Ref
+    unauthenticated_capture_id: Ref
+    expected_authentication_required: Literal[True]
+    action_authorized: Literal[True]
+    session_state: Literal['absent', 'logged_out', 'expired'] = 'absent'
+
+
+def authentication_review(state: dict, body: AuthenticationReview) -> dict:
+    """Review saved resource observations; this does not exercise session actions."""
+    require(state, 'captures', [body.authenticated_capture_id, body.unauthenticated_capture_id])
+    left, right = (state['captures'][body.authenticated_capture_id], state['captures'][body.unauthenticated_capture_id])
+    identities = state['identities']
+    a, b = identities.get(left['identity_id'], {}), identities.get(right['identity_id'], {})
+    if (left['identity_id'] == right['identity_id'] or
+            any(not i.get('active') or i.get('researcher_controlled') is not True for i in (a, b)) or
+            not a.get('credentials') or (body.session_state == 'absent' and b.get('credentials')) or
+            (body.session_state != 'absent' and not b.get('credentials'))):
+        raise HTTPException(409, 'Active controlled identities with the selected session credentials are required')
+    if left.get('expired') or right.get('expired'):
+        raise HTTPException(410, 'Original capture expired or was revoked')
+    try:
+        urls = [c['original']['url'] for c in (left, right)]
+        if (urls[0] != urls[1] or urlsplit(urls[0]).query or
+                left['method'] not in {'GET', 'HEAD'} or left['method'] != right['method']):
+            raise HTTPException(409, 'The same bodyless GET or HEAD resource without a query is required')
+        requests = [base64.b64decode(c['original']['request_b64'], validate=True) for c in (left, right)]
+        if any(not request.partition(b'\r\n\r\n')[1] or request.partition(b'\r\n\r\n')[2] for request in requests):
+            raise HTTPException(409, 'Request bodies are unsupported')
+        # Captures are bound to identity credentials on import; check again here.
+        def auth_headers(request):
+            result = {}
+            for line in request.partition(b'\r\n\r\n')[0].decode('iso-8859-1').split('\r\n')[1:]:
+                name, separator, value = line.partition(':')
+                if separator and name.lower() in {'authorization', 'cookie', 'x-api-key'}:
+                    if name.lower() in result:
+                        raise ValueError('duplicate header')
+                    result[name.lower()] = value.strip()
+            return result
+        if auth_headers(requests[0]) != a['credentials'] or auth_headers(requests[1]) != b.get('credentials', {}):
+            raise HTTPException(409, 'Capture authentication does not match the selected identities')
+        raw = [base64.b64decode(c['original']['response_b64'], validate=True) for c in (left, right)]
+        comparison = compare_responses(*raw, [])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(409, 'Original observations are unavailable or invalid') from None
+    return {'capture_ids': [body.authenticated_capture_id, body.unauthenticated_capture_id],
+            'evidence_ids': [left['evidence_id'], right['evidence_id']], 'comparison': comparison,
+            'status': 'observation', 'session_state': body.session_state, 'limitations': [
+                'Logout/expiry and the intended authentication requirement are researcher assertions; no lifecycle action is executed.',
+                'The permission and expected authentication requirement are researcher assertions.',
+                'The credential-free request can still carry other authentication mechanisms; review the original request.',
+                'Status and response equality do not establish access to meaningful protected content.']}
+
+
+
+class ExposureReview(Strict):
+    capture_id: Ref
+    inspection_authorized: Literal[True]
+    intended_visibility: Literal['public', 'recipient', 'restricted', 'unknown']
+    observed_audience: Literal['intended', 'outside', 'unknown']
+    meaningful_private_content: Literal['present', 'absent', 'unknown']
+    rationale: Text
+    object_id: Ref | None = None
+    owner_capture_id: Ref | None = None
+    private_json_key: Text | None = None
+
+    @model_validator(mode='after')
+    def content_control(self):
+        selected = (self.object_id, self.owner_capture_id, self.private_json_key)
+        if any(value is not None for value in selected) and not all(selected):
+            raise ValueError('Private-content comparison requires object, owner capture and JSON key')
+        return self
+
+
+def exposure_review(state: dict, body: ExposureReview) -> dict:
+    """Structure human review of saved evidence without classifying a vulnerability."""
+    require(state, 'captures', [body.capture_id])
+    capture = state['captures'][body.capture_id]
+    identity = state['identities'].get(capture['identity_id'], {})
+    if not identity.get('active') or identity.get('researcher_controlled') is not True:
+        raise HTTPException(409, 'An active controlled observation identity is required')
+    if capture.get('expired') or not capture.get('original', {}).get('response_b64'):
+        raise HTTPException(410, 'Original capture expired or unavailable')
+    try:
+        raw = base64.b64decode(capture['original']['response_b64'], validate=True)
+        compare_responses(raw, raw, [])
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(409, 'Original observation is unavailable or invalid') from None
+    if not body.rationale.strip():
+        raise HTTPException(422, 'A review rationale is required')
+    if body.observed_audience == 'intended' or (body.intended_visibility == 'public' and body.meaningful_private_content != 'present'):
+        assessment = 'expected_or_public'
+    elif (body.intended_visibility in {'restricted', 'recipient'} and body.observed_audience == 'outside' and
+          body.meaningful_private_content == 'present'):
+        assessment = 'possible_unauthorized_disclosure'
+    elif body.meaningful_private_content == 'absent':
+        assessment = 'no_private_content_identified'
+    else:
+        assessment = 'inconclusive'
+    control = {}
+    status = 'human_assertion'
+    if body.object_id:
+        comparison = authorization_review(state, AuthorizationReview(object_id=body.object_id,
+            owner_capture_id=body.owner_capture_id, other_capture_id=body.capture_id, operation='read'))
+        try:
+            def selected_value(item):
+                raw = base64.b64decode(item['original']['response_b64'], validate=True)
+                metadata = compare_responses(raw, raw, [])['left']
+                if metadata['mode'] != 'json':
+                    return None
+                payload = json.loads(raw.partition(b'\r\n\r\n')[2])
+                value = payload.get(body.private_json_key) if isinstance(payload, dict) else None
+                return value if isinstance(value, str) and 8 <= len(value) <= 2048 else None
+            expected = selected_value(state['captures'][body.owner_capture_id])
+            observed = selected_value(capture)
+        except (ValueError, KeyError, TypeError):
+            raise HTTPException(409, 'Private JSON content control is unavailable') from None
+        if expected is None:
+            raise HTTPException(409, 'Owner evidence needs a meaningful selected private JSON string')
+        matched = expected == observed
+        control = {'evidence_ids': comparison['evidence_ids'], 'private_content_match': matched,
+                   'owner_content_sha256': hashlib.sha256(expected.encode()).hexdigest()}
+        if comparison['expected_permission'] == 'allow' or body.intended_visibility == 'public' or body.observed_audience == 'intended':
+            assessment = 'expected_or_public'
+        elif body.intended_visibility in {'restricted', 'recipient'} and body.observed_audience == 'outside' and body.meaningful_private_content == 'present' and matched:
+            assessment = 'candidate_unauthorized_disclosure'
+        else:
+            assessment = 'inconclusive'
+        status = 'observation'
+    return {'capture_id': body.capture_id, 'evidence_id': capture['evidence_id'], **control,
+            'assessment': assessment, 'status': status,
+            'rationale': sanitize(body.rationale, known_secrets(state)),
+            'limitations': ['Visibility, audience and content are researcher assertions, not independently verified facts.',
+                            'A status code, scanner label, or response similarity does not establish disclosure.']}
+
+
+
+class BusinessLogicReview(Strict):
+    workflow_id: Ref
+    object_id: Ref
+    invariant: Text
+    expected_after: Text
+    action_authorized: Literal[True]
+    controlled_state_change: Literal[True]
+    invariant_result: Literal['satisfied', 'violated', 'unknown']
+    rationale: Text
+
+
+def business_logic_review(state: dict, body: BusinessLogicReview) -> dict:
+    """Review recorded before/after evidence, without dispatching a state change."""
+    require(state, 'workflows', [body.workflow_id])
+    require(state, 'objects', [body.object_id])
+    workflow, obj = state['workflows'][body.workflow_id], state['objects'][body.object_id]
+    identity = state['identities'].get(obj['owner_identity_id'], {})
+    if not identity.get('active') or identity.get('researcher_controlled') is not True:
+        raise HTTPException(409, 'Active researcher-controlled object owner required')
+    if not all(value.strip() for value in (body.invariant, body.expected_after, body.rationale)):
+        raise HTTPException(422, 'Invariant, expected state and rationale are required')
+    captures = {capture['evidence_id']: capture for capture in state['captures'].values()}
+    evidence = workflow['evidence_ids']
+    if len(set(evidence)) < 2 or any(ref not in captures or captures[ref].get('expired') for ref in evidence):
+        raise HTTPException(409, 'At least two unexpired before/after observations are required')
+    if not set(obj['evidence_ids']).intersection(evidence):
+        raise HTTPException(409, 'Workflow evidence must include supporting evidence for the controlled object')
+    if any(captures[ref]['identity_id'] != obj['owner_identity_id'] for ref in evidence):
+        raise HTTPException(409, 'Workflow observations must be attributed to the controlled object owner')
+    try:
+        selected = [captures[ref] for ref in evidence]
+        if len({c['original']['url'] for c in selected}) != 1:
+            raise HTTPException(409, 'Workflow controls must observe the same controlled resource')
+        comparisons = [compare_responses(base64.b64decode(selected[0]['original']['response_b64'], validate=True),
+                                        base64.b64decode(c['original']['response_b64'], validate=True), [])
+                       for c in selected[1:]]
+    except (ValueError, KeyError, TypeError):
+        raise HTTPException(409, 'Original workflow observations are unavailable or invalid') from None
+    secrets = known_secrets(state)
+    return {'workflow_id': body.workflow_id, 'object_id': body.object_id, 'evidence_ids': evidence,
+            'invariant': sanitize(body.invariant, secrets), 'expected_after': sanitize(body.expected_after, secrets),
+            'recorded_before': workflow['before'], 'recorded_after': workflow['after'],
+            'invariant_result': body.invariant_result, 'comparisons': comparisons, 'rationale': sanitize(body.rationale, secrets),
+            'status': 'human_assertion', 'limitations': [
+                'The authorization, controlled state change, invariant and result are human assertions.',
+                'Saved observations do not prove causation or independently verify a business invariant.']}
+
+
+class InputValidationReview(Strict):
+    object_id: Ref
+    baseline_capture_id: Ref
+    test_capture_id: Ref
+    invariant: Text
+    action_authorized: Literal[True]
+    boundary_result: Literal['satisfied', 'violated', 'unknown']
+    rationale: Text
+
+
+def input_validation_review(state: dict, body: InputValidationReview) -> dict:
+    """Review one saved integer-query control; execution uses a separate approval."""
+    require(state, 'captures', [body.baseline_capture_id, body.test_capture_id])
+    baseline, tested = (state['captures'][body.baseline_capture_id], state['captures'][body.test_capture_id])
+    if body.baseline_capture_id == body.test_capture_id:
+        raise HTTPException(409, 'Distinct baseline and test observations required')
+    for capture in (baseline, tested):
+        if capture.get('expired'):
+            raise HTTPException(410, 'Original capture expired')
+    if baseline['identity_id'] != tested['identity_id']:
+        raise HTTPException(409, 'Input controls require the same controlled object owner')
+    from worker.http_profile import specialty_shape
+    review = {'profile': 'integer_query', 'object_id': body.object_id,
+              'authorized': body.action_authorized, 'invariant': body.invariant}
+    try:
+        url = tested['original']['url']
+        request_specialty(state, baseline['identity_id'], body.object_id, url, review)
+        if baseline['evidence_id'] not in state['objects'][body.object_id]['evidence_ids']:
+            raise HTTPException(409, 'Baseline must support the recorded controlled object')
+        if baseline['original']['url'] != urlsplit(url)._replace(query='').geturl():
+            raise HTTPException(409, 'Baseline must be the same resource without query')
+        specialty_shape({'method': tested['method'], 'url': url, 'body': '', 'specialty': review})
+        for capture in (baseline, tested):
+            raw = base64.b64decode(capture['original']['request_b64'], validate=True)
+            parsed = capture_metadata(capture['original'], {'targets': [urlsplit(url).hostname],
+                'ports': [urlsplit(url).port or (443 if urlsplit(url).scheme == 'https' else 80)]})
+            if parsed['method'] != 'GET' or not raw.partition(b'\r\n\r\n')[1] or raw.partition(b'\r\n\r\n')[2]:
+                raise HTTPException(409, 'Only bodyless GET controls are supported')
+        comparison = compare_responses(*[base64.b64decode(c['original']['response_b64'], validate=True)
+                                         for c in (baseline, tested)], [])
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise HTTPException(409, 'Invalid bounded input observations') from None
+    if not body.rationale.strip():
+        raise HTTPException(422, 'Review rationale required')
+    return {'object_id': body.object_id, 'capture_ids': [body.baseline_capture_id, body.test_capture_id],
+            'evidence_ids': [baseline['evidence_id'], tested['evidence_id']], 'comparison': comparison,
+            'boundary_result': body.boundary_result, 'status': 'human_assertion',
+            'invariant': sanitize(body.invariant, known_secrets(state)),
+            'rationale': sanitize(body.rationale, known_secrets(state)),
+            'limitations': ['The invariant and observed boundary result are human assertions.',
+                            'Error codes, reflected input and scanner labels do not confirm a finding.']}
 
 
 def fresh() -> dict:
@@ -404,18 +726,33 @@ class ApplicationMap:
                 from worker.http_profile import command_for, validate
                 spec = {'method': body.method, 'url': body.url, 'headers': identity['credentials'],
                         'expires_at': min(expires, identity['expires_at'])}
+                if body.profile:
+                    spec['specialty'] = request_specialty(state, body.identity_id, body.object_id, body.url, {
+                        'profile': body.profile, 'object_id': body.object_id,
+                        'authorized': body.action_authorized, 'invariant': body.invariant})
+                    spec['body'] = json.dumps(body.json_body, sort_keys=True, separators=(',', ':')) if body.json_body is not None else ''
+                    from worker.http_profile import specialty_shape
+                    try:
+                        specialty_shape(spec)
+                    except (ValueError, TypeError, AttributeError):
+                        raise HTTPException(422, 'Request exceeds the bounded specialty profile') from None
+                    if (session.scope or {}).get('web_specialist_profiles') is not True:
+                        raise HTTPException(409, 'Specialty profiles require explicit lab scope opt-in')
                 try:
                     validate(command_for(body.identity_id, key, spec), session.scope or {})
                     if any(secret and secret in body.url for secret in known_secrets(state)):
                         raise ValueError('Credential in URL')
                     parts = urlsplit(body.url)
-                    raw = (body.method + ' ' + (parts.path or '/') + ' HTTP/1.1\r\nHost: ' + parts.netloc + '\r\n' +
-                           ''.join(name + ': ' + value + '\r\n' for name, value in identity['credentials'].items()) + '\r\n').encode('ascii')
+                    raw = (body.method + ' ' + (parts.path or '/') + ('?' + parts.query if parts.query else '') + ' HTTP/1.1\r\nHost: ' + parts.netloc + '\r\n' +
+                           ''.join(name + ': ' + value + '\r\n' for name, value in identity['credentials'].items()) +
+                           ('Content-Type: application/json\r\nContent-Length: ' + str(len(spec['body'])) + '\r\n' if body.method == 'PUT' else '') +
+                           '\r\n' + spec.get('body', '')).encode('ascii')
                 except (ValueError, TypeError, UnicodeError):
                     raise HTTPException(422, 'Request URL or method is outside the reviewed HTTP profile') from None
                 data = {'identity_id': body.identity_id, 'method': body.method, 'route': parts.path or '/',
                         'origin': parts.scheme + '://' + parts.netloc, 'status': 'planned_request',
-                        'original': {'url': body.url, 'request_b64': base64.b64encode(raw).decode(), 'response_b64': ''},
+                        'original': {'url': body.url, 'request_b64': base64.b64encode(raw).decode(), 'response_b64': '',
+                                     **({'specialty': spec['specialty'], 'body': spec['body']} if body.profile else {})},
                         'expired': False, 'expires_at': min(expires, identity['expires_at'])}
             elif kind == 'captures':
                 require(state, 'identities', [body.identity_id])
@@ -526,10 +863,16 @@ class ApplicationMap:
             raw = base64.b64decode(original['request_b64'])
             head, _, body = raw.partition(b'\r\n\r\n')
             method = head.split(b' ', 1)[0].decode('ascii')
-            if method not in {'GET', 'HEAD'} or body:
+            if 'specialty' not in original and (method not in {'GET', 'HEAD'} or body):
                 raise HTTPException(409, 'Authenticated worker supports bodyless GET/HEAD only')
             spec = {'method': method, 'url': original['url'], 'headers': identity['credentials'],
                     'expires_at': min(identity['expires_at'], capture['expires_at'])}
+            if 'specialty' in original:
+                review = original['specialty']
+                request_specialty(state, identity_id, review['object_id'], spec['url'], review)
+                if (session.scope or {}).get('web_specialist_profiles') is not True:
+                    raise HTTPException(409, 'Specialty profile lab permission was revoked')
+                spec.update(specialty=review, body=original['body'])
             command = command_for(identity_id, capture_id, spec)
             try:
                 validate(command, session.scope or {})
@@ -543,14 +886,33 @@ class ApplicationMap:
 
     async def replay_proposal(self, sid: str, owner: str, identity_id: str, capture_id: str) -> dict:
         from memory.execution_authorization import execution_authorization
-        command, _ = await self.replay_material(sid, owner, identity_id, capture_id)
+        command, token = await self.replay_material(sid, owner, identity_id, capture_id)
+        from config.settings import settings
+        from worker.http_profile import decode
+        approved_spec = decode(token, command, settings.HTTP_REPLAY_KEY)
         from memory.worker_jobs import worker_jobs
+        if settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
+            raise HTTPException(409, 'Authenticated HTTP requires the jobs-v1 worker profile')
+        try:
+            async with asyncio.timeout(3):
+                caps = await worker_jobs.client.capabilities()
+            from worker.http_profile import parse
+            args = parse(command)
+            capability = 'specialist_http_version' if args[4] == 'PUT' or urlsplit(args[5]).query else 'authenticated_http_version'
+            version = caps.get(capability) if isinstance(caps, dict) else None
+            if type(version) is not int or version != 1:
+                raise ValueError('Unsupported profile')
+        except Exception:
+            raise HTTPException(409, 'Worker authenticated HTTP capability is unavailable') from None
         await worker_jobs.resume_session(owner, sid)
         proposal = await execution_authorization.propose(owner, sid, command, 'aria-http',
             require_approval=True, turn_id=capture_id)
         return {'action_id': proposal.id, 'command': command, 'status': proposal.status,
                 'identity_id': identity_id, 'capture_id': capture_id,
-                'limitation': 'Replays the captured method and URL with identity authentication headers only; other captured headers are omitted. No redirects or retries.'}
+                'reviewed_request': {'method': approved_spec['method'], 'url': approved_spec['url'],
+                    **({'specialty': redact(approved_spec['specialty']), 'body': redact(approved_spec['body'])}
+                       if 'specialty' in approved_spec else {})},
+                'limitation': 'Executes only the approval-bound reviewed method, URL and bounded body with identity authentication. No redirects or retries; specialty actions require controlled-object lab opt-in.'}
 
     async def catalog_replay(self, sid: str, owner: str, job_id: str) -> dict:
         from config.settings import settings
@@ -621,6 +983,36 @@ class ApplicationMap:
             return {**compare_responses(base64.b64decode(baseline['original']['response_b64']),
                                        base64.b64decode(raw['response_b64']), []),
                     'job_id': job_id, 'identity_id': job['http_identity'], 'capture_id': capture_id}
+
+    async def review_authorization(self, sid: str, owner: str, body: AuthorizationReview) -> dict:
+        async with async_session() as db:
+            _, row, state = await self._load(db, sid, owner)
+            await self._save(db, row, state)
+            return authorization_review(state, body)
+
+    async def review_authentication(self, sid: str, owner: str, body: AuthenticationReview) -> dict:
+        async with async_session() as db:
+            _, row, state = await self._load(db, sid, owner)
+            await self._save(db, row, state)
+            return authentication_review(state, body)
+
+    async def review_exposure(self, sid: str, owner: str, body: ExposureReview) -> dict:
+        async with async_session() as db:
+            _, row, state = await self._load(db, sid, owner)
+            await self._save(db, row, state)
+            return exposure_review(state, body)
+
+    async def review_input_validation(self, sid: str, owner: str, body: InputValidationReview) -> dict:
+        async with async_session() as db:
+            _, row, state = await self._load(db, sid, owner)
+            await self._save(db, row, state)
+            return input_validation_review(state, body)
+
+    async def review_business_logic(self, sid: str, owner: str, body: BusinessLogicReview) -> dict:
+        async with async_session() as db:
+            _, row, state = await self._load(db, sid, owner)
+            await self._save(db, row, state)
+            return business_logic_review(state, body)
 
     async def compare(self, sid: str, owner: str, body: ComparisonInput) -> dict:
         async with async_session() as db:

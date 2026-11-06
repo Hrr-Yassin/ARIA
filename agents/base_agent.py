@@ -4,6 +4,7 @@ Abstract base class for all specialized agents.
 Handles skill-level adaptation, shared memory, LLM interaction, and v10's
 task-based tiered LLM routing.
 """
+import asyncio
 import json
 import re
 import uuid
@@ -73,8 +74,10 @@ class BaseAgent(ABC):
                             for entry in input_data.get('team_evidence', [])]
             from memory.worker_jobs import worker_jobs
             try:
-                capabilities = await worker_jobs.client.capabilities()
-                tools = set(capabilities.get('tools', [])) if isinstance(capabilities, dict) else set()
+                async with asyncio.timeout(3):
+                    capabilities = await worker_jobs.client.capabilities()
+                advertised = capabilities.get('tools') if isinstance(capabilities, dict) else None
+                tools = {tool for tool in advertised if isinstance(tool, str)} if isinstance(advertised, list) else set()
             except Exception:
                 tools = set()
             trusted = {'objective':input_data.get('user_input',''), 'scope':scope,
@@ -110,6 +113,14 @@ class BaseAgent(ABC):
                 result['suggested_reply']='Blocked: '+ '; '.join(r['detail'] for r in contract.rejections)
             result['agent_result'] = contract.model_dump()
             if 'primary_path' in result: result['primary_path']=contract.proposed_actions
+            if 'fallback_paths' in result:
+                # Free-form fallback steps cannot be capability or scope checked.
+                # Keep the response field for clients, with an explicit blocked reason.
+                result['fallback_paths'] = []
+                result['fallback_blocked_reason'] = 'Fallback steps require a separately validated plan and worker capability check.'
+            if contract.status == 'blocked' and 'readiness' in result:
+                result['readiness'] = 'blocked'
+                result['readiness_reason'] = '; '.join(r['detail'] for r in contract.rejections)
             result=self._public_fields(result)
             if 'commands' in result or self.agent_name == 'post':
                 result['commands'] = contract.proposed_actions

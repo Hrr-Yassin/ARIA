@@ -94,5 +94,6 @@ async def update_phase(session_id: str, body: dict, user: TokenData = Depends(ge
     await get_accessible_session(session_id, user)
     phase = body.get("phase", "")
     if phase:
-        await session_manager.update_phase(session_id, phase)
+        from memory.team_tasks import team_store
+        await team_store.update_phase(session_id, user.user_id, phase)
     return {"status": "ok"}

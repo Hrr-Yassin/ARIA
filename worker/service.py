@@ -39,6 +39,8 @@ class WorkerService:
                 raise HTTPException(409, 'Engagement cancellation is unresolved')
             if len(active) >= self.max_jobs:
                 raise HTTPException(429, 'Worker capacity reached; job was not admitted')
+            if request['command'].startswith('aria-http ') and request.get('scope', {}).get('program_policy'):
+                raise HTTPException(403, 'Authenticated and specialty profiles are restricted to explicit lab scope')
             if request.get('scope', {}).get('program_policy'):
                 from orchestrator.program_scope import ExecutionRules
                 rules = ExecutionRules.model_validate(request['scope']['program_policy']['rules'])
