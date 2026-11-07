@@ -16,4 +16,6 @@ async def get_accessible_session(session_id: str, user: TokenData) -> dict:
     if not isinstance(owner_id, str) or not owner_id or (user.role != "admin" and owner_id != user.user_id):
         raise HTTPException(403, "Session access denied")
 
+    from llm.engagement_budget import engagement_context
+    engagement_context.set({'session_id': session_id, 'owner': user.user_id})
     return session

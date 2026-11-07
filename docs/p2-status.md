@@ -1,5 +1,9 @@
 # P2 implementation and verification
 
+Historical validation checkpoint: counts and deployment statements below apply to
+that recorded stage. See [the Phase 0 baseline](phase0-baseline.md) for the current
+source inventory, schema head `0003`, and new validation results.
+
 Worker follow-up: an initial curl/Nmap container worker is now included. See
 [worker setup](worker-setup.md) and [executed validation](worker-validation.md).
 Worker-absence statements below describe the earlier remediation checkpoint.

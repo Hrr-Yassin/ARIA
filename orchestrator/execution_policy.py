@@ -84,6 +84,12 @@ def allowed_target(target, scope):
 
 
 def validate_command(command, scope, claimed_tool=''):
+    if isinstance(scope, dict) and 'program_policy' in scope:
+        from orchestrator.program_scope import validate_program_command
+        checked = validate_program_command(command, scope)
+        if claimed_tool and claimed_tool != checked.tool:
+            raise PolicyError('Tool does not match command')
+        return checked
     if not isinstance(scope, dict) or not isinstance(scope.get('targets'), list) or not scope['targets']:
         raise PolicyError('An explicit nonempty engagement scope is required')
     if not isinstance(scope.get('exclusions', []), list):
@@ -106,6 +112,9 @@ def validate_command(command, scope, claimed_tool=''):
     tool = argv[0]
     if claimed_tool and claimed_tool != tool:
         raise PolicyError('Tool does not match the command executable')
+    if tool == 'aria-http':
+        from worker.http_profile import validate
+        return validate(command, scope)
     if tool not in FLAGS and tool != 'msfconsole':
         raise PolicyError('No reviewed adapter exists for this tool')
     if scope.get('mode') == 'bug_bounty' and tool in {'hydra', 'sqlmap', 'msfconsole'}:

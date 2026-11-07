@@ -670,15 +670,15 @@ Respond as JSON:
                 port, svc, ver = int(m.group(1)), m.group(2), m.group(3).strip()
                 ports_data.append({"port": port, "service": svc, "version": ver})
                 services.append(f"{svc}:{port}" + (f" {ver[:30]}" if ver else ""))
+                # An open port or matching version is an observation, not proof
+                # of a vulnerability. Verification needs separate evidence.
                 sev = "info"
-                if port in {21, 23, 4444, 5900}: sev = "high"
-                elif port in {80, 443, 445, 3306, 5432, 8080}: sev = "medium"
-                if "vsftpd 2.3.4" in ver: sev = "critical"
-                if "unreal" in ver.lower(): sev = "critical"
                 findings.append({
                     "title": f"{svc.upper()} port {port}" + (f" ({ver[:40]})" if ver else ""),
                     "severity": sev,
-                    "description": f"Port {port}/{svc} open." + (f" Version: {ver}" if ver else ""),
+                    "description": (f"Port {port}/{svc} open." + (f" Version: {ver}" if ver else "")
+                                    + " Service observation only; vulnerability status is unverified."),
+                    "vulnerability_type": "service_observation",
                     "evidence": line.strip(),
                     "cve_ids": [],
                     "recommendation": f"Investigate {svc} at port {port}.",
@@ -692,7 +692,7 @@ Respond as JSON:
             if any(s in sevs for s in ("critical", "high")):
                 msg += f"\n\n⚠️ **{risk} risk** — critical/high severity services detected."
             else:
-                msg += f"\n\nRisk level: **{risk}**. Proceed to vulnerability scanning."
+                msg += "\n\nService observations only; no vulnerability has been verified."
         elif findings:
             msg = f"**{len(findings)} finding(s)** from `{command.split()[0]}` on `{target}`. Risk: **{risk}**."
         else:

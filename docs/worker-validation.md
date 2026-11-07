@@ -1,5 +1,9 @@
 # Worker validation — 2026-11-04
 
+Historical validation checkpoint: counts and deployment statements below apply to
+that recorded stage. See [the Phase 0 baseline](phase0-baseline.md) for the current
+source inventory, schema head `0003`, and new validation results.
+
 Implemented in `worker/`, with ARIA scope delivery in
 `memory/execution_authorization.py` and `memory/worker_jobs.py`.
 See [setup](worker-setup.md) and [protocol](worker-contract.md).

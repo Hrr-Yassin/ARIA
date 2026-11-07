@@ -232,6 +232,8 @@ class ExecutionTests(OfflineCase):
         requests = []
         def handler(request):
             requests.append(request)
+            if request.method == 'GET':
+                return httpx.Response(200, json={'tools': ['nmap']})
             return httpx.Response(200, json={'stdout': 'mock output', 'stderr': '', 'exit_code': 0})
         def client_factory(**kwargs):
             kwargs.pop("transport", None)
@@ -243,7 +245,7 @@ class ExecutionTests(OfflineCase):
              patch('memory.execution_authorization.settings.KALI_AGENT_URL', 'http://worker.invalid'), \
              patch('memory.execution_authorization.httpx.AsyncClient', side_effect=client_factory):
             await self.service.execute('owner', 'engagement', 'nmap 192.0.2.1')
-        self.assertEqual(len(requests), 1)
-        self.assertEqual(requests[0].headers['Authorization'], 'Bearer ' + settings.KALI_AGENT_TOKEN)
-        self.assertNotIn('token', json.loads(requests[0].content))
-        self.assertEqual(json.loads(requests[0].content)['session_id'], 'engagement')
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request.headers['Authorization'] == 'Bearer ' + settings.KALI_AGENT_TOKEN for request in requests))
+        self.assertNotIn('token', json.loads(requests[1].content))
+        self.assertEqual(json.loads(requests[1].content)['session_id'], 'engagement')

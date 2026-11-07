@@ -24,6 +24,7 @@ const state = {
   token:     localStorage.getItem('pentestai_token') || '',
   skill:     localStorage.getItem('skill') || 'intermediate',
   autoActive: false,
+  autoRunStatus: '',
   autoStarting: false,
   booting: true,
   runGeneration: 0,
@@ -117,6 +118,7 @@ async function api(path, opts = {}) {
     state.authExpired = true;
     state.sessionId = "";
     state.autoActive = false;
+    state.autoRunStatus = '';
     if (state.ws && typeof state.ws.close === "function") state.ws.close();
     state.ws = null;
     state.token = "";
@@ -127,6 +129,7 @@ async function api(path, opts = {}) {
     window.location.href = '/login.html';
     return null;
   }
+  if (resp.ok && opts.responseType === 'blob') return await resp.blob();
   const ct = resp.headers.get('content-type') || '';
   const data = ct.includes('application/json')
     ? await resp.json().catch(() => ({}))
@@ -551,6 +554,9 @@ async function startAuto() {
       toast('success', 'AUTO mode active',
             `Goal: ${state.goalSelect || 'discovery'}`);
     } else {
+      state.autoActive = false;
+      state.autoRunStatus = res?.run_state || res?.status || '';
+      updateAutoUI();
       toast('warn', res?.run_state || 'Auto', res?.reason || res?.status || 'unknown');
     }
   } catch (exc) {
@@ -576,6 +582,7 @@ async function stopAuto() {
 }
 
 function updateAutoUI() {
+  el.autoCount.textContent = `step ${state.autoStep || 0} / ${state.autoMaxSteps}`;
   if (state.autoActive) {
     el.autoBtn.dataset.state = 'on';
     el.autoLabel.textContent = 'AUTONOMOUS — RUNNING';
@@ -583,7 +590,16 @@ function updateAutoUI() {
     el.autoRun.classList.remove('hidden');
   } else {
     el.autoBtn.dataset.state = 'off';
-    el.autoLabel.textContent = 'Auto mode';
+    const terminalLabels = {
+      blocked: 'AUTONOMOUS — BLOCKED',
+      failed: 'AUTONOMOUS — FAILED',
+      completed: 'AUTONOMOUS — COMPLETE',
+      cancelled: 'AUTONOMOUS — STOPPED',
+      stopped: 'AUTONOMOUS — STOPPED',
+    };
+    el.autoLabel.textContent = terminalLabels[state.autoRunStatus] || 'Auto mode';
+    if (state.autoRunStatus) el.autoLog.classList.remove('hidden');
+    else el.autoLog.classList.add('hidden');
     el.autoRun.classList.add('hidden');
   }
 }
@@ -655,12 +671,16 @@ function handleAutoEvent(ev) {
       renderAutoLine({...ev, type: 'auto_activity', status: ev.status || 'done',
                        action: ev.action || 'Autonomous cycle complete'});
       state.autoActive = false;
+      state.autoRunStatus = ev.status || 'completed';
       updateAutoUI();
       break;
 
     case 'auto_error':
       toast('danger', 'Auto error', ev.action || '');
       renderAutoLine({...ev, type: 'auto_activity', status: 'failed'});
+      state.autoRunStatus = 'failed';
+      state.autoActive = false;
+      updateAutoUI();
       break;
   }
 }
@@ -1271,12 +1291,15 @@ function switchSession(s) {
   Object.values(el.bodies).forEach(root=>root.textContent="");
   if (state.ws) { state.ws.close(); state.ws = null; }
   state.autoActive = false;
+  state.autoRunStatus = '';
   state.pendingApprovals = [];
   el.autoLines.textContent = '';
   state.autoStep = 0;
   toolsRun.clear();
   el.approvalBanner.classList.add('hidden');
   state.sessionId = s.session_id;
+  if (window.AriaTeam && window.AriaTeam.reset) window.AriaTeam.reset();
+  if (window.AriaReports && window.AriaReports.reset) window.AriaReports.reset();
   localStorage.setItem('current_session', s.session_id);
   el.sessionName.textContent = s.name || s.session_id.slice(0, 8);
   setTarget(s.target || '');
@@ -1300,7 +1323,11 @@ async function restoreRunStatus() {
     const status = await api(`/api/pentest/${sid}/autonomous/status`);
     if (state.sessionId !== sid || state.sessionEpoch !== epoch || state.runGeneration !== runGeneration || !status) return;
     state.autoActive = Boolean(status.active);
+    state.autoRunStatus = status.active ? '' : (status.run_state || '');
     state.autoMaxSteps = status.max_steps || 12;
+    state.autoStep = status.steps_taken || 0;
+    if (el.maxStepsInput) el.maxStepsInput.value = state.autoMaxSteps;
+    if (el.maxStepsValue) el.maxStepsValue.textContent = state.autoMaxSteps;
     updateAutoUI();
     if (status.active) connectAutoWS();
     else if (status.run_state) renderAutoLine({status: status.run_state, action: status.reason || status.run_state});
@@ -1331,11 +1358,30 @@ function openSettings() {
   el.settingsPanel.classList.remove('hidden');
   el.settingsPanel.setAttribute('aria-hidden','false');
   loadLLMKeys();
+  loadExecutionCapabilities();
   api('/api/profile').then(profile => {
     if (!profile?.skill_level) return;
     state.skill = profile.skill_level;
     document.querySelectorAll('input[name="skill"]').forEach(radio => radio.checked=radio.value===state.skill);
   }).catch(exc => toast('warn','Profile unavailable',exc.message));
+}
+async function loadExecutionCapabilities() {
+  const summary = $('execution-capabilities');
+  summary.textContent = 'Checking worker availability…';
+  try {
+    const result = await api('/api/capabilities');
+    if (!result?.worker) throw new Error('Capabilities unavailable');
+    const worker = result.worker;
+    if (worker.status === 'online') {
+      summary.textContent = `Worker online. Available supported tools: ${worker.available_tools.join(', ') || 'none'}.`;
+    } else {
+      summary.textContent = worker.status === 'not_configured'
+        ? 'Worker is not configured. Execution is unavailable.'
+        : 'Worker is unreachable. Execution availability could not be verified.';
+    }
+  } catch (_) {
+    summary.textContent = 'Capabilities could not be loaded. Reopen settings to retry.';
+  }
 }
 function closeSettings() {
   el.settingsPanel.classList.add('hidden');
@@ -1489,6 +1535,9 @@ async function boot() {
   state.booting = true;
   el.autoBtn.disabled = true;
   bindEvents();
+  if (window.AriaTeam) window.AriaTeam.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
+  if (window.AriaReports) window.AriaReports.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
+  if (window.AriaPrograms) window.AriaPrograms.init({api, getContext: () => ({sessionId:state.sessionId, epoch:state.sessionEpoch})});
   updatePhaseUI();
   await loadSessions();
   if (state.sessionId) {

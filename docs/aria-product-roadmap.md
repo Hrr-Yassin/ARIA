@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-05. Status: proposed backlog, not implemented capability.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phase 6 is implemented for signed Markdown/evidence reports and human-recorded outcomes with offline acceptance; Phase 7 has an offline benchmark implementation with comparison/live-pilot gates pending; Phase 8 remains proposed backlog.
 
 ## Objective
 
@@ -27,14 +27,18 @@ Estimates assume one experienced developer; acceptance gates take priority over 
 
 Dependencies: none.
 
-- [ ] BASE-01: Inventory existing routes, specialists, worker profiles, migrations, and feature flags; identify implemented, validated, and unavailable features separately.
-- [ ] BASE-02: Reconcile README and validation registers with the actual source revision; distinguish historical checkpoints from current results.
-- [ ] BASE-03: Document a staging configuration using disposable services and synthetic accounts, separate from owner data.
-- [ ] BASE-04: Run the offline Python and frontend suites; attach exact commands, revision, environment, and results.
-- [ ] BASE-05: Validate all pending migrations on an empty disposable database and a backed-up staging restore; document rollback through restore.
-- [ ] BASE-06: Trace one lab action through proposal, policy, approval, worker receipt, stored evidence, and report.
-- [ ] BASE-07: Verify restart reconciliation does not replay actions and preserves reviewable history.
-- [ ] BASE-08: Add a UI capability summary distinguishing supported tools from tools merely mentioned in prompts.
+Completed by Codex in the Phase 0 working tree. Evidence, commands, limitations,
+and the route inventory are in [the Phase 0 baseline](phase0-baseline.md).
+No owner deployment or schema was changed.
+
+- [x] BASE-01: Inventory existing routes, specialists, worker profiles, migrations, and feature flags; identify implemented, validated, and unavailable features separately.
+- [x] BASE-02: Reconcile README and validation registers with the actual source revision; distinguish historical checkpoints from current results.
+- [x] BASE-03: Document a staging configuration using disposable services and synthetic accounts, separate from owner data.
+- [x] BASE-04: Run the offline Python and frontend suites; attach exact commands, revision, environment, and results.
+- [x] BASE-05: Validate all pending migrations on an empty disposable database and a backed-up staging restore; document rollback through restore.
+- [x] BASE-06: Trace one lab action through proposal, policy, approval, worker receipt, stored evidence, and report.
+- [x] BASE-07: Verify restart reconciliation does not replay actions and preserves reviewable history.
+- [x] BASE-08: Add a UI capability summary distinguishing supported tools from tools merely mentioned in prompts.
 
 Gate: one complete lab assessment trace, consistent schema documentation, no
 unexplained regression failures, and preserved session/authorization isolation.
@@ -43,16 +47,21 @@ unexplained regression failures, and preserved session/authorization isolation.
 
 Dependencies: Phase 0; preserve the shared execution gate.
 
-- [ ] SCOPE-01: Define program and policy-snapshot models with source URL, retrieval time, content hash, and engagement owner.
-- [ ] SCOPE-02: Add official program-page import, with manual text import when authenticated pages cannot be fetched.
-- [ ] SCOPE-03: Extract included assets, exclusions, eligible issue classes, account requirements, and automation restrictions into a draft.
-- [ ] SCOPE-04: Link every extracted rule to source text; mark missing or ambiguous rules unknown.
-- [ ] SCOPE-05: Add human policy review and activation; model output alone cannot activate permission.
-- [ ] SCOPE-06: Enforce exact hostname/wildcard semantics, relevant paths, ports, redirects, and third-party exclusions server-side and at execution boundaries.
-- [ ] SCOPE-07: Store policy revisions; suspend affected pending actions when a policy changes until revalidated.
-- [ ] SCOPE-08: Add shared per-engagement request/concurrency budgets; honor documented limits and stop/back off on overload or throttling.
-- [ ] SCOPE-09: Rank candidate programs by technical fit, accessible accounts, eligible classes, automation compatibility, and research cost; unknown values remain visible.
-- [ ] SCOPE-10: Separate paid bounty programs from disclosure-only programs; display participation prerequisites without assuming eligibility.
+Work started by Codex on 2026-11-05. See [implementation status](phase1-policy-status.md)
+for the implementation, supported boundaries, and acceptance evidence.
+Phase 1 is complete for bounded curl GET/HEAD observations. Discovery/import alone
+cannot activate execution permission; unsupported profiles remain blocked.
+
+- [x] SCOPE-01: Define program and policy-snapshot models with source URL, retrieval time, content hash, and engagement owner.
+- [x] SCOPE-02: Add official program-page import, with manual text import when authenticated pages cannot be fetched.
+- [x] SCOPE-03: Extract included assets, exclusions, eligible issue classes, account requirements, and automation restrictions into a draft.
+- [x] SCOPE-04: Link every extracted rule to source text; mark missing or ambiguous rules unknown.
+- [x] SCOPE-05: Add human policy review and activation; model output alone cannot activate permission.
+- [x] SCOPE-06: Enforce exact hostname/wildcard semantics, relevant paths, ports, redirects, and third-party exclusions server-side and at execution boundaries.
+- [x] SCOPE-07: Store policy revisions; suspend affected pending actions when a policy changes until revalidated.
+- [x] SCOPE-08: Add shared per-engagement request/concurrency budgets; honor documented limits and stop/back off on overload or throttling.
+- [x] SCOPE-09: Rank candidate programs by technical fit, accessible accounts, eligible classes, automation compatibility, and research cost; unknown values remain visible.
+- [x] SCOPE-10: Separate paid bounty programs from disclosure-only programs; display participation prerequisites without assuming eligibility.
 
 Gate: a policy fixture set rejects excluded assets, prohibited actions, redirect
 escapes, ambiguous permission, and stale approvals. Program discovery never authorizes testing.
@@ -61,15 +70,20 @@ escapes, ambiguous permission, and stale approvals. Program discovery never auth
 
 Dependencies: Phases 0–1.
 
-- [ ] TEAM-01: Define task records: owner role, objective, dependencies, evidence inputs, budget, expected output, and completion criteria.
-- [ ] TEAM-02: Add task states: queued, running, awaiting_review, blocked, completed, cancelled, failed.
-- [ ] TEAM-03: Persist task transitions before publishing UI events; make duplicate delivery idempotent.
-- [ ] TEAM-04: Extend the coordinator to delegate and collect typed specialist results using existing result contracts.
-- [ ] TEAM-05: Add a coverage ledger tracking security questions, tested features, unresolved questions, and reasons for gaps.
-- [ ] TEAM-06: Add an evidence catalog with engagement ownership, job/capture references, timestamps, hashes, and redacted summaries.
-- [ ] TEAM-07: Link observations and hypotheses to evidence; preserve contradictory and rejected observations.
-- [ ] TEAM-08: Treat target pages, captures, retrieved text, and tool output as untrusted data; test prompt-injection attempts against action permissions.
-- [ ] TEAM-09: Add global model accounting for actual provider calls, retries, tokens, and cost, with enforced engagement limits.
+Implemented by Codex in the working tree based on `32f157c`. See
+[team implementation and acceptance](phase2-team-status.md) for boundaries,
+configuration requirements, tests, and retained evidence. Tasks delegate analysis;
+existing shared execution authorization still controls all tool traffic.
+
+- [x] TEAM-01: Define task records: owner role, objective, dependencies, evidence inputs, budget, expected output, and completion criteria.
+- [x] TEAM-02: Add task states: queued, running, awaiting_review, blocked, completed, cancelled, failed.
+- [x] TEAM-03: Persist task transitions before publishing UI events; make duplicate delivery idempotent.
+- [x] TEAM-04: Extend the coordinator to delegate and collect typed specialist results using existing result contracts.
+- [x] TEAM-05: Add a coverage ledger tracking security questions, tested features, unresolved questions, and reasons for gaps.
+- [x] TEAM-06: Add an evidence catalog with engagement ownership, job/capture references, timestamps, hashes, and redacted summaries.
+- [x] TEAM-07: Link observations and hypotheses to evidence; preserve contradictory and rejected observations.
+- [x] TEAM-08: Treat target pages, captures, retrieved text, and tool output as untrusted data; test prompt-injection attempts against action permissions.
+- [x] TEAM-09: Add global model accounting for actual provider calls, retries, tokens, and cost, with enforced engagement limits.
 
 Gate: a multi-task lab investigation survives restart without duplicate execution;
 every specialist conclusion has attributable evidence or explicit uncertainty.
@@ -78,15 +92,23 @@ every specialist conclusion has attributable evidence or explicit uncertainty.
 
 Dependencies: Phases 1–2.
 
-- [ ] WEB-01: Define researcher-controlled identities and object ownership records; store credentials encrypted behind opaque handles.
-- [ ] WEB-02: Add isolated browser contexts per identity and engagement; prevent cookie and storage leakage.
-- [ ] WEB-03: Complete real Burp Community capture and Repeater handoff validation before enabling its connector.
-- [ ] WEB-04: Build an endpoint catalog from selected captures and bounded browsing: method, route, parameters, role, and source evidence.
-- [ ] WEB-05: Map workflows and state changes, including sharing, invitations, exports, and account settings.
-- [ ] WEB-06: Record expected role/object permissions with human corrections.
-- [ ] WEB-07: Implement structured authenticated HTTP replay as a reviewed worker capability; bind identity, target, policy, and approval.
-- [ ] WEB-08: Add response normalization and semantic comparison; preserve original bounded evidence privately.
-- [ ] WEB-09: Enforce retention, redaction, and provider data-sharing settings; prevent raw credentials entering model context.
+Implemented and validated by Codex on 2026-11-06 in the working tree based on
+`d278f45`; no PR created. See [implementation and acceptance](phase3-mapping-status.md)
+for the realized capabilities, configuration, exact boundaries and lab evidence.
+The gate passed for bodyless GET/HEAD lab observations, with reviewed worker-fed
+Firefox rendering and real Community capture/Repeater validation. Query strings,
+mutations, automatic crawling and authenticated execution under reviewed program
+snapshots remain unsupported. No owner deployment was enabled.
+
+- [x] WEB-01: Define researcher-controlled identities and object ownership records; store credentials encrypted behind opaque handles.
+- [x] WEB-02: Add isolated browser contexts per identity and engagement; prevent cookie and storage leakage.
+- [x] WEB-03: Complete real Burp Community capture and Repeater handoff validation before enabling its connector.
+- [x] WEB-04: Build an endpoint catalog from selected captures and bounded browsing: method, route, parameters, role, and source evidence.
+- [x] WEB-05: Map workflows and state changes, including sharing, invitations, exports, and account settings.
+- [x] WEB-06: Record expected role/object permissions with human corrections.
+- [x] WEB-07: Implement structured authenticated HTTP replay as a reviewed worker capability; bind identity, target, policy, and approval.
+- [x] WEB-08: Add response normalization and semantic comparison; preserve original bounded evidence privately.
+- [x] WEB-09: Enforce retention, redaction, and provider data-sharing settings; prevent raw credentials entering model context.
 
 Gate: two lab accounts remain isolated; ARIA maps their objects and permissions,
 and every replay is scoped, attributable, bounded, and cancellable.
@@ -95,54 +117,93 @@ and every replay is scoped, attributable, bounded, and cancellable.
 
 Dependencies: Phases 2–3.
 
-- [ ] SPEC-01: Define investigation contracts: hypothesis, prerequisites, minimum test, normal result, abnormal result, stop conditions, and disconfirming evidence.
-- [ ] SPEC-02: Implement authorization comparison workflows using only researcher-controlled accounts and objects.
-- [ ] SPEC-03: Implement authentication/session assessment workflows with explicit account and action prerequisites.
-- [ ] SPEC-04: Implement sensitive-exposure analysis that distinguishes public/expected information from demonstrated unauthorized disclosure.
-- [ ] SPEC-05: Add selected input-validation checks through reviewed, bounded profiles; avoid arbitrary shell execution.
-- [ ] SPEC-06: Add human-assisted business logic workflows with expected invariants and controlled state changes.
-- [ ] SPEC-07: Make planners consume actual worker capabilities and return blocked reasons for unsupported tests.
-- [ ] SPEC-08: Replace tool-count completion with tested security questions and evidence-based task completion.
-- [ ] SPEC-09: Add secure, vulnerable, misleading-response, and missing-prerequisite fixtures for each specialty.
+Implemented by Codex on 2026-11-06 in the working tree; no PR created.
+See [implementation and offline acceptance](phase4-investigations-status.md).
+All five specialties have saved-evidence reviews and explicit offline secure,
+vulnerable, misleading-response and missing-prerequisite controls. A selected
+private JSON content comparison distinguishes candidate exposure from generic
+HTTP success. Optional integer-query and single-field JSON PUT lab profiles are
+bound to a controlled object, current scope, exact worker capabilities and human
+approval; they remain disabled by default. Specialist tasks require evidence-linked
+security questions and owner-reviewed completion. Plans and reviews never confirm
+findings. New-profile live/container deployment acceptance was not performed;
+no services, databases or deployments were changed. Broad inputs, automatic account
+lifecycle actions and authenticated public-program execution remain unsupported.
 
-Gate: each enabled specialty passes positive and negative controls. Version matches,
+- [x] SPEC-01: Define investigation contracts: hypothesis, prerequisites, minimum test, normal result, abnormal result, stop conditions, and disconfirming evidence.
+- [x] SPEC-02: Implement authorization comparison workflows using only researcher-controlled accounts and objects.
+- [x] SPEC-03: Implement authentication/session assessment workflows with explicit account and action prerequisites.
+- [x] SPEC-04: Implement sensitive-exposure analysis that distinguishes public/expected information from demonstrated unauthorized disclosure.
+- [x] SPEC-05: Add selected input-validation checks through reviewed, bounded profiles; avoid arbitrary shell execution.
+- [x] SPEC-06: Add human-assisted business logic workflows with expected invariants and controlled state changes.
+- [x] SPEC-07: Make planners consume actual worker capabilities and return blocked reasons for unsupported tests.
+- [x] SPEC-08: Replace tool-count completion with tested security questions and evidence-based task completion.
+- [x] SPEC-09: Add secure, vulnerable, misleading-response, and missing-prerequisite fixtures for each specialty.
+
+Gate: passed for the bounded offline specialty controls described in the status
+document; new-profile deployment acceptance remains unverified. Each enabled
+specialty passes positive and negative controls. Version matches,
 HTTP success codes, model confidence, and scanner labels alone cannot confirm findings.
 
 ## Phase 5: independent verification (about 2 weeks)
 
 Dependencies: Phase 4.
 
-- [ ] VERIFY-01: Add finding states: observation, hypothesis, tested, reproduced, reviewed, reportable, rejected, inconclusive, blocked.
-- [ ] VERIFY-02: Implement deterministic transition prerequisites and evidence requirements.
-- [ ] VERIFY-03: Add a reviewer role that can reject specialist conclusions and request the smallest missing validation.
-- [ ] VERIFY-04: Reproduce candidates from clean state and check negative controls.
-- [ ] VERIFY-05: Confirm account/object ownership, expected permissions, and meaningful response content.
-- [ ] VERIFY-06: Separate demonstrated impact from potential escalation; stop once sufficient proof exists.
-- [ ] VERIFY-07: Detect local duplicates by underlying cause and affected workflow, while acknowledging private program duplicates are unknown.
-- [ ] VERIFY-08: Require recorded human review before a finding becomes ready for external submission.
+Implemented on 2026-11-06; see [implementation and offline acceptance](phase5-verification-status.md).
+The owner acts as an independent human reviewer of specialist evidence. Clean-state
+reproduction is supervised and recorded, not automatically executed. Reviewed and
+reportable findings require original private-JSON positive/negative controls for
+both runs; unsupported classes remain below that gate. No live reproduction,
+deployment acceptance or external submission was performed.
 
-Gate: independently reproducible lab findings pass; misleading and unsupported
-claims are rejected or inconclusive. Agreement between models is not verification.
+- [x] VERIFY-01: Add finding states: observation, hypothesis, tested, reproduced, reviewed, reportable, rejected, inconclusive, blocked.
+- [x] VERIFY-02: Implement deterministic transition prerequisites and evidence requirements.
+- [x] VERIFY-03: Add a reviewer role that can reject specialist conclusions and request the smallest missing validation.
+- [x] VERIFY-04: Reproduce candidates from clean state and check negative controls.
+- [x] VERIFY-05: Confirm account/object ownership, expected permissions, and meaningful response content.
+- [x] VERIFY-06: Separate demonstrated impact from potential escalation; stop once sufficient proof exists.
+- [x] VERIFY-07: Detect local duplicates by underlying cause and affected workflow, while acknowledging private program duplicates are unknown.
+- [x] VERIFY-08: Require recorded human review before a finding becomes ready for external submission.
+
+Gate: passed for the bounded offline saved-evidence controls documented in the
+status file. Live independent lab reproduction remains unverified. Misleading and
+unsupported claims cannot become reportable; model agreement is not verification.
 
 ## Phase 6: professional reports and outcome tracking (1–2 weeks)
 
 Dependencies: Phase 5.
 
-- [ ] REPORT-01: Add a bug bounty template: title, asset, prerequisites, exact steps, expected/actual behavior, evidence, impact, and remediation.
-- [ ] REPORT-02: Add a pentest template: scope, coverage, limitations, findings, priorities, and retest status.
-- [ ] REPORT-03: Preserve complete reproduction evidence in attachments/manifests; do not rely on truncated PDF excerpts.
-- [ ] REPORT-04: Validate every report claim against finding status and evidence; keep observations separate from confirmed findings.
-- [ ] REPORT-05: Add report preview and human sign-off with immutable report revision and evidence references.
-- [ ] REPORT-06: Export a platform-ready draft; external submission remains an explicit human action.
-- [ ] REPORT-07: Track submitted, triaged, duplicate, informative, rejected, accepted, resolved, and paid outcomes separately.
-- [ ] REPORT-08: Draft triage answers from saved evidence and record retest results without silently retesting changed scope.
+Implemented on 2026-11-06; see [reporting implementation and acceptance](phase6-reporting-status.md).
+The owner can preview and sign immutable bug bounty/pentest drafts with full redacted
+retained evidence, export Markdown/JSON/evidence ZIPs, record platform outcomes and
+saved-evidence retests, and draft unsent triage answers. Demonstrated claims use the
+bounded Phase 5 private-JSON verifier; legacy reports remain observations. Offline
+engineering acceptance passed. Independent live reproduction from the exported
+report alone remains unverified; no submissions or deployment changes were made.
 
-Gate: an independent reviewer reproduces a finding from the report alone; secrets
-are redacted and unverified impact is not represented as demonstrated fact.
+- [x] REPORT-01: Add a bug bounty template: title, asset, prerequisites, exact steps, expected/actual behavior, evidence, impact, and remediation.
+- [x] REPORT-02: Add a pentest template: scope, coverage, limitations, findings, priorities, and retest status.
+- [x] REPORT-03: Preserve complete reproduction evidence in attachments/manifests; do not rely on truncated PDF excerpts.
+- [x] REPORT-04: Validate every report claim against finding status and evidence; keep observations separate from confirmed findings.
+- [x] REPORT-05: Add report preview and human sign-off with immutable report revision and evidence references.
+- [x] REPORT-06: Export a platform-ready draft; external submission remains an explicit human action.
+- [x] REPORT-07: Track submitted, triaged, duplicate, informative, rejected, accepted, resolved, and paid outcomes separately.
+- [x] REPORT-08: Draft triage answers from saved evidence and record retest results without silently retesting changed scope.
+
+Gate: engineering checks pass for complete redacted evidence, exact-revision
+sign-off, stale-source denial and bounded demonstrated claims. Independent human
+reproduction from the exported report alone is still a live acceptance requirement;
+it is not established by the offline synthetic controls.
 
 ## Phase 7: benchmark and supervised pilot (2–4 weeks)
 
 Dependencies: Phases 0–6.
+
+Work started by Codex on 2026-11-07; no PR created. See
+[benchmark implementation, baseline and remaining gates](phase7-benchmark-status.md)
+and [retained offline results](phase7-baseline.json). The six-case component baseline
+and seven resilience checks do not complete the three-arm comparison or live pilot.
+Checkboxes remain open where live or human evidence is still required.
 
 - [ ] EVAL-01: Freeze lab images, source revisions, model identifiers, prompts, tool versions, and budgets.
 - [ ] EVAL-02: Prepare a ground-truth set containing secure cases, vulnerable cases, and unfamiliar variants.

@@ -21,6 +21,8 @@ class NewSession(BaseModel):
 
 @router.post("/new")
 async def create_session(body: NewSession, user: TokenData = Depends(get_current_user)):
+    if body.scope and 'program_policy' in body.scope:
+        raise HTTPException(422, 'Program policy is server-owned; use policy import, review and activation')
     result = await session_manager.create_session(
         user.user_id, body.target, body.name, body.context_type,
         body.scope or {"targets": [body.target], "exclusions": []})
@@ -92,5 +94,6 @@ async def update_phase(session_id: str, body: dict, user: TokenData = Depends(ge
     await get_accessible_session(session_id, user)
     phase = body.get("phase", "")
     if phase:
-        await session_manager.update_phase(session_id, phase)
+        from memory.team_tasks import team_store
+        await team_store.update_phase(session_id, user.user_id, phase)
     return {"status": "ok"}

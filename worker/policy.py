@@ -64,9 +64,25 @@ async def prepare(command: str, scope: dict, ceiling: list[str], allowed_ports: 
     permitted_ports = ports(allowed_ports)
     if 'ports' in scope:
         permitted_ports = sorted(set(permitted_ports) & set(ports(scope['ports'])))
+    if scope.get('program_policy'):
+        from urllib.parse import urlsplit
+        requested_url = urlsplit(validated.targets[0])
+        requested_port = requested_url.port if requested_url.port is not None else (443 if requested_url.scheme == 'https' else 80)
+        permitted_ports = sorted(set(permitted_ports) & {requested_port})
     if not permitted_ports:
         raise PolicyError('No permitted TCP ports')
     excluded = []
+    if scope.get('program_policy'):
+        for asset in scope['program_policy']['rules']['exclusions'] + scope['program_policy']['rules']['third_party_exclusions']:
+            if '*' not in asset['host'] and asset['path'] == '/':
+                try:
+                    excluded.append(ipaddress.ip_network(asset['host']))
+                except ValueError:
+                    excluded.extend(ipaddress.ip_network(ip) for ip in await resolver(asset['host']))
+    if (scope.get('program_policy') or scope.get('web_authenticated_replay') is True) and validated.tool == 'curl':
+        # Config-free, no URL globbing/retries/redirects; include deterministic status evidence.
+        argv[1:1] = ['-q', '--globoff', '-i', '--proto', '=http,https', '--max-redirs', '0',
+                     '--write-out', '\nARIA_HTTP_STATUS:%{http_code}\n']
     for value in scope.get('exclusions', []):
         parsed = target_value(value)
         if isinstance(parsed, str):

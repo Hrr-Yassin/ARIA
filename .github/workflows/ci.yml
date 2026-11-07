@@ -74,3 +74,4 @@ jobs:
           docker build -f worker/Dockerfile -t aria-worker:test .
           export WORKER_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' aria-worker:test)"
           .venv/bin/python -m unittest integration.test_worker -v
+          ARIA_PHASE2=1 DEBUG=false .venv/bin/python -B -m integration.phase2_team

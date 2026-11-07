@@ -3,7 +3,7 @@ PentestAI v8 — OpenRouter Client
 """
 import time
 import httpx
-from llm.base_llm import BaseLLMClient
+from llm.base_llm import BaseLLMClient, usage_metrics
 
 
 class OpenRouterClient(BaseLLMClient):
@@ -43,8 +43,8 @@ class OpenRouterClient(BaseLLMClient):
 
                 data = r.json()
                 content = data["choices"][0]["message"]["content"]
-                tokens = data.get("usage", {}).get("total_tokens", 0)
-                return {"success": True, "content": content, "tokens_used": tokens, "latency_ms": latency}
+                metrics = usage_metrics(data.get("usage") or {})
+                return {"success": True, "content": content, **metrics, "latency_ms": latency}
         except httpx.HTTPStatusError as e:
             return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
         except Exception as e:

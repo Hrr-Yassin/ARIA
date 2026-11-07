@@ -1,0 +1,12 @@
+{
+  "headless": false,
+  "session_name": "Session 11/7/2026, 5:43:36 AM",
+  "checks": [
+    "saved blocked state is labeled in the toolbar",
+    "planner failure remains visible in activity log"
+  ],
+  "login_status": 200,
+  "screenshot": ".local-lab/aria-http-autonomy-benchmark/06-terminal-status-retest.png",
+  "toolbar_status": "AUTONOMOUS \u2014 BLOCKED",
+  "activity": "Autonomous activity\nstep 0 / 12\n\u2022\nPlanner could not produce a supported proposal after two corrective attempts: Expected a nonempty commands list; No execution proposal was accepted from an unavailable provider or malformed output; Expected a nonempty commands list"
+}

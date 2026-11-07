@@ -3,24 +3,25 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PentestAI v9 — Login</title>
+<title>ARIA — Sign in</title>
+<link rel="icon" type="image/svg+xml" href="/static/aria.svg">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles/login.css">
 </head>
 <body>
 <div class="login-card">
-  <div class="logo">Pentest<span>AI</span></div>
-  <div class="subtitle">v9 — Autonomous Penetration Testing</div>
+  <div class="logo">AR<span>IA</span></div>
+  <div class="subtitle">Evidence-driven security research</div>
   <div class="field">
-    <label>Username</label>
-    <input type="text" id="username" placeholder="Enter username" autofocus>
+    <label for="username">Username</label>
+    <input type="text" id="username" placeholder="Enter username" autocomplete="username" autofocus>
   </div>
   <div class="field">
-    <label>Password</label>
-    <input type="password" id="password" placeholder="Enter password" onkeydown="if(event.key==='Enter')doLogin()">
+    <label for="password">Password</label>
+    <input type="password" id="password" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
   </div>
   <button class="btn-login" id="login-btn" onclick="doLogin()">Sign In</button>
-  <div class="error" id="error-msg"></div>
+  <div class="error" id="error-msg" role="alert"></div>
   <div class="footer">Authorized personnel only</div>
 </div>
 <script src="/static/scripts/login.js"></script>

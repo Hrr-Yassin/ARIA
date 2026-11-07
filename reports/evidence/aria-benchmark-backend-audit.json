@@ -1,0 +1,118 @@
+{
+  "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+  "target": "192.168.77.20",
+  "scope": {
+    "targets": [
+      "192.168.77.20"
+    ],
+    "exclusions": []
+  },
+  "session_model_usage": {},
+  "autonomous_run_state": "blocked",
+  "autonomous_run_snapshot": {
+    "schema_version": 1,
+    "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+    "run_id": "5f0d90be-bd75-47c6-94cf-24fd13ae3b1b",
+    "turn_id": "5f0d90be-bd75-47c6-94cf-24fd13ae3b1b",
+    "run_state": "blocked",
+    "reason_code": "invalid_planner_output",
+    "reason": "Planner could not produce a supported proposal after two corrective attempts: Expected a nonempty commands list; No execution proposal was accepted from an unavailable provider or malformed output; Expected a nonempty commands list",
+    "successful_steps": 0,
+    "evidence_job_ids": [],
+    "completed_observations": [],
+    "required_observations": [
+      "port_discovery",
+      "http_response"
+    ],
+    "required_capabilities": [
+      "nmap",
+      "curl"
+    ],
+    "model_calls": 3,
+    "auto_risk_threshold": "green_only",
+    "active": false,
+    "steps_taken": 0,
+    "max_steps": 12,
+    "current_phase": "recon",
+    "goal": "discovery",
+    "target": "192.168.77.20",
+    "started_at": 1794030217.7247264,
+    "elapsed_seconds": 0,
+    "waiting_approval": false,
+    "pending_action_id": null,
+    "stop_requested": false,
+    "activity_tail": [
+      {
+        "type": "auto_complete",
+        "step": 0,
+        "action": "Planner could not produce a supported proposal after two corrective attempts: Expected a nonempty commands list; No execution proposal was accepted from an unavailable provider or malformed output; Expected a nonempty commands list",
+        "tool": "",
+        "risk_color": "green",
+        "status": "blocked",
+        "output_preview": "",
+        "kb_updates": [],
+        "timestamp": "2026-11-07T05:43:37.934554",
+        "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+        "run_id": "5f0d90be-bd75-47c6-94cf-24fd13ae3b1b",
+        "run_state": "blocked"
+      },
+      {
+        "type": "auto_complete",
+        "step": 0,
+        "action": "Planner could not produce a supported proposal after two corrective attempts: Expected a nonempty commands list; No execution proposal was accepted from an unavailable provider or malformed output; Expected a nonempty commands list",
+        "tool": "",
+        "risk_color": "green",
+        "status": "blocked",
+        "output_preview": "",
+        "kb_updates": [],
+        "timestamp": "2026-11-07T05:43:37.945695",
+        "reason_code": "invalid_planner_output",
+        "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+        "run_id": "5f0d90be-bd75-47c6-94cf-24fd13ae3b1b",
+        "run_state": "blocked"
+      }
+    ],
+    "transitions": [
+      {
+        "state": "planning",
+        "reason_code": "",
+        "timestamp": "2026-11-07T05:43:37.744001"
+      },
+      {
+        "state": "blocked",
+        "reason_code": "invalid_planner_output",
+        "timestamp": "2026-11-07T05:43:37.937586"
+      }
+    ]
+  },
+  "finding_count": 0,
+  "findings": [],
+  "decision_count": 2,
+  "decisions": [
+    {
+      "type": "autonomous_start",
+      "step": 0,
+      "agent": "autonomous_engine",
+      "action": "engine.start()",
+      "reasoning": "Autonomous cycle started toward goal: discovery",
+      "metadata": {
+        "goal": "discovery",
+        "target": "192.168.77.20"
+      }
+    },
+    {
+      "type": "autonomous_stop",
+      "step": 0,
+      "agent": "autonomous_engine",
+      "action": "engine._run_loop exit",
+      "reasoning": "Cycle ended after 0 steps",
+      "metadata": {
+        "goal": "discovery",
+        "target": "192.168.77.20"
+      }
+    }
+  ],
+  "model_attempt_records": 0,
+  "worker_job_records": 0,
+  "worker_receipts": []
+}

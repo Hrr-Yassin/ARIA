@@ -59,3 +59,23 @@ class JobStore:
         async with self.engine.connect() as conn:
             rows = await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'state' NOT IN ('succeeded','failed','cancelled')"))
             return [dict(row) for row in rows]
+
+
+    async def for_session(self, session_id: str) -> list[dict]:
+        async with self.engine.connect() as conn:
+            rows = await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'session_id' = :sid"),
+                                      {'sid': session_id})
+            return [dict(row) for row in rows]
+
+    async def expire_http(self) -> None:
+        from datetime import datetime, timezone
+        if self.owner is None or self.backend_pid != await self.owner.scalar(text('SELECT pg_backend_pid()')):
+            raise RuntimeError('Worker database ownership was lost')
+        await self.owner.execute(text("""UPDATE aria_worker_jobs SET record =
+            jsonb_set(record - 'protected_http', '{plan}',
+                COALESCE(record->'plan', '{}'::jsonb) - 'protected_http')
+                || jsonb_build_object('stdout', '', 'stderr', '', 'private_evidence_expired', true)
+            WHERE record->>'state' IN ('succeeded','failed','cancelled')
+              AND record->>'private_expires_at' <= :now"""),
+            {'now': datetime.now(timezone.utc).isoformat()})
+        await self.owner.commit()

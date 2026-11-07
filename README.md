@@ -1,108 +1,300 @@
-# ARIA — Human–AI Collaborative Penetration Testing
+<div align="center">
 
-ARIA (`pentest-ai`) is an academic proof of concept for a penetration tester working with specialized AI agents. It combines a browser interface, a FastAPI backend, shared investigation memory, external language models, and a separate isolated execution service.
+# ARIA
 
-The research question is whether specialized agents, structured tool evidence, and explicit human decisions improve an authorized assessment's quality, efficiency, and traceability.
+### An evidence-driven AI team for security research
 
-**Current status:** prototype under integration. P0 and prioritized P1 fixes have offline regression coverage, including private retrieval/report access, revocation, credential handling and durable worker cancellation state; broader integration and recovery work remains. It is not ready for an exposed or production deployment. See [docs/security-review.md](docs/security-review.md) for current remediation status and [technical_revow.md](technical_revow.md) for the baseline review. Features described as proposed below are evaluation targets, not verified guarantees of this release.
+**Choose the right program. Investigate with a team. Verify the evidence. Review every report.**
 
-## Current architecture
+A research platform for a human researcher working with specialized AI agents
+on authorized web applications and APIs.
+
+[Product roadmap](docs/aria-product-roadmap.md) · [Implementation status](docs/phase6-reporting-status.md) · [Local setup](#run-aria-locally) · [Documentation](#documentation)
+
+</div>
+
+---
+
+## The project we are building
+
+ARIA aims to bring the full security research workflow into one workspace:
+program selection, scope review, application mapping, specialist investigations,
+independent verification, and reproducible reports. A researcher directs the work,
+approves sensitive actions, and decides what is ready to submit.
+
+The first product focuses on **one researcher, web applications and APIs,
+researcher-controlled accounts, bounded execution, and human-reviewed submissions**.
+A separate contracted penetration-testing workflow is part of the longer-term plan.
+
+**Today:** Phases 0–3 provide the engineering baseline, reviewed program policies,
+durable team analysis, and supervised authenticated lab mapping. Phases 4–8 describe
+the product still to build. ARIA remains a research prototype; full autonomous vulnerability research
+and production readiness have not been established.
+
+## From program policy to a reviewed report
+
+The diagram shows the **planned end-to-end product workflow**. Authenticated lab
+mapping is implemented for bounded reviewed GET/HEAD observations. Focused
+investigation methods, independent finding verification and the complete submission
+lifecycle remain later roadmap work.
 
 ```mermaid
-flowchart TD
-    Human[Human penetration tester] --> UI[Browser: HTML / CSS / JavaScript]
-    UI -->|HTTP and WebSocket| API[FastAPI: auth, sessions, pentest, keys, reports, admin]
-    API --> Intent[Intent and workflow engines]
-    Intent --> Coordinator[Coordinator and orchestrator agents]
-    Coordinator --> Specialists[Recon / scan / vulnerability / planner / correlation / web intel / post exploitation / reporting]
-    Specialists --> Pool[Per-user LLM pool and task routing]
-    Pool --> Providers[Groq / Gemini / OpenRouter]
-    Specialists <--> Memory[Knowledge cache / attack KB / vector retrieval / playbooks]
-    API --> Auto[Autonomous engine and approval queue]
-    Auto --> Coordinator
-    API --> Gate[Shared execution authorization and durable approvals]
-    Auto --> Gate
-    Gate --> Kali[Isolated execution worker]
-    Kali --> Results[Tool output]
-    Results --> Parsers[Deterministic output parsers]
-    Parsers --> Memory
-    API --> SQL[(PostgreSQL)]
-    Memory --> SQL
-    Memory --> Redis[(Redis cache and optional vector persistence)]
-    Memory --> CVE[CVE enrichment: NVD / static fallback data]
+flowchart TB
+    subgraph DISCOVERY["01 · CHOOSE AND AUTHORIZE"]
+        direction LR
+        Programs["Discover programs<br/>Compare fit and prerequisites"]
+        Policy["Review policy<br/>Assets, exclusions and limits"]
+        Programs --> Policy
+    end
+
+    subgraph INVESTIGATION["02 · INVESTIGATE WITH EVIDENCE"]
+        direction LR
+        Mapping["Map the application<br/>Owned accounts and workflows"]
+        Team["Delegate to specialists<br/>Questions, tasks and budgets"]
+        Evidence["Collect evidence<br/>Observations and coverage gaps"]
+        Mapping --> Team --> Evidence
+    end
+
+    subgraph DELIVERY["03 · VERIFY AND REVIEW"]
+        direction LR
+        Verify["Verify independently<br/>Reproduction and controls"]
+        Report["Prepare the report<br/>Evidence, impact and remediation"]
+        Human["Human sign-off<br/>Submission and outcome tracking"]
+        Verify --> Report --> Human
+    end
+
+    Policy --> Mapping
+    Evidence --> Verify
+    Verify -. "Missing proof: investigate again" .-> Team
+
+    classDef discover fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px;
+    classDef research fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:2px;
+    classDef evidence fill:#ccfbf1,stroke:#0d9488,color:#134e4a,stroke-width:2px;
+    classDef review fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px;
+    class Programs,Policy discover;
+    class Mapping,Team research;
+    class Evidence,Verify evidence;
+    class Report,Human review;
 ```
 
-The diagram shows the implemented components and intended connections. Execution paths share a policy gate. Encrypted vector cache restores/flushes when Redis is available; full investigation-state recovery is not implemented; automatic playbook saving and the standalone ReAct loop are not connected to the main workflow.
+## What ARIA should help you do
 
-### Component responsibilities
-
-| Directory | Responsibility | Main entry points |
+| Research need | Product direction | Available today |
 | --- | --- | --- |
-| `api/` | HTTP/WebSocket API, JWT authentication, session access, administration, reports | `main.py`, `auth.py`, `session_access.py`, `routers/` |
-| `agents/` | Coordinate the investigation and specialize reasoning by task | `coordinator_agent.py`, `orchestrator_agent.py`, `autonomous_engine.py`, `base_agent.py` |
-| `orchestrator/` | Deterministic intent recognition, phase progression, risk heuristics | `intent_engine.py`, `workflow_engine.py`, `risk_scorer.py` |
-| `memory/` | SQL models, session persistence, evidence parsing, investigation state and retrieval | `database_models.py`, `session_manager.py`, `parsers.py`, `attack_knowledge_base.py` |
-| `llm/` | Provider adapters, encrypted API-key handling, task routing and failover | `pool_manager.py`, `groq_client.py`, `gemini_client.py`, `openrouter_client.py` |
-| `config/` | Environment settings, tool metadata and CVE enrichment | `settings.py`, `tools_registry.py`, `cve_enricher.py` |
-| `web/` | Login, tactical workspace and administrator interface | `index.html`, `login.html`, `admin.html`, `static/` |
+| Find suitable programs | Compare technical fit, accounts, eligible classes, automation rules and research cost | Private shortlist with visible unknowns and participation prerequisites |
+| Understand permission | Turn program policy into reviewed, versioned execution rules | Source-linked review, explicit activation, scope checks and HTTP traffic budgets |
+| Organize a research team | Give specialists clear questions, dependencies, evidence and completion criteria | Durable tasks, typed results, owner review and restart blocking without replay |
+| Understand the application | Map endpoints, identities, objects, permissions and workflows | Implemented for supervised bounded lab observations; see Phase 3 acceptance |
+| Investigate specific weaknesses | Focus on authorization, sessions, exposure, input handling and business logic | Five bounded specialist workflows with offline controls; deployment limits remain documented |
+| Separate a clue from a finding | Reproduce behavior, compare controls and reject unsupported conclusions | Phase 5 lifecycle with supervised reproduction records, original private-JSON controls and human review |
+| Produce useful reports | Preserve reproduction evidence, review claims and track triage outcomes | Immutable reviewed drafts, complete redacted evidence ZIPs, human sign-off and recorded outcomes |
 
-PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
+## How the team works
 
-An initial isolated execution service is included in `worker/`, running separately from the API. It supports curl and Nmap TCP scans with a PostgreSQL job ledger and per-job network policy. See [worker setup](docs/worker-setup.md), [worker contract](docs/worker-contract.md) and [executed validation](docs/worker-validation.md). Other Kali tools require additional reviewed worker profiles.
+The coordinator gives a specialist a bounded task and collects a structured result.
+The researcher can review that result, request more work, or record why a question
+remains unresolved. Completing an analysis task does not confirm a vulnerability.
 
-## Proposed architecture to evaluate
+| Role | Responsibility |
+| --- | --- |
+| **Coordinator and planner** | Turn an objective into tasks, choose specialists, and connect dependencies |
+| **Recon and scan** | Gather permitted application and service observations |
+| **Web intelligence** | Analyze HTTP evidence, endpoints and authentication clues |
+| **Vulnerability analysis** | Form hypotheses and identify missing validation |
+| **Correlation** | Compare observations, contradictions and coverage gaps |
+| **Reporting** | Assemble evidence and explain findings and limitations |
+| **Independent reviewer — planned** | Challenge conclusions and request the smallest missing proof |
+| **Human researcher** | Review policy, authorize actions, assess evidence and sign off on deliverables |
 
-Keep a modular application with a separate execution worker. Multiple microservices are unnecessary for the initial academic evaluation. Separate planning from authorization and execution through a single, explicit boundary:
+Specialist names describe responsibilities. Their presence does not establish
+expert-level investigation quality or enable every tool mentioned in a prompt.
+
+## Architecture: one workspace, a controlled execution boundary
+
+ARIA uses a modular FastAPI application and a separate execution worker. This
+schematic shows the current foundation. Broader browser/replay capabilities and
+an independent finding-verification service are future work.
+
+```mermaid
+flowchart TB
+    Researcher["Human researcher"] --> UI["Browser workspace<br/>Policies · Tasks · Evidence · Review"]
+    UI --> API["Authenticated FastAPI application<br/>Live identity and engagement ownership"]
+
+    subgraph REASONING["ANALYSIS AND COORDINATION"]
+        Coordinator["Coordinator<br/>Durable task delegation"]
+        Specialists["Specialist agents<br/>Typed results and explicit uncertainty"]
+        Models["Model pool and budgets<br/>Routing, reservations and usage accounting"]
+        Providers["Groq · Gemini · OpenRouter"]
+        Coordinator --> Specialists
+        Specialists --> Models --> Providers
+    end
+
+    subgraph EXECUTION["AUTHORIZED EXECUTION"]
+        Proposal["Command proposal"]
+        Gate{"Shared policy gate<br/>Scope · Approval · Limits"}
+        Worker["Isolated worker<br/>Independent network ceiling"]
+        Target["Authorized lab or target"]
+        Proposal --> Gate --> Worker --> Target
+    end
+
+    subgraph RECORDS["DURABLE EVIDENCE AND HISTORY"]
+        Evidence["Evidence catalog<br/>Source references, hashes and summaries"]
+        SQL[("PostgreSQL<br/>Tasks · Policies · Decisions · Receipts")]
+        Cache[("Optional Redis<br/>Cache and encrypted vector persistence")]
+        Evidence --> SQL
+        Cache -. "Cached access" .-> API
+    end
+
+    API --> Coordinator
+    API --> Proposal
+    Specialists -. "Proposals only" .-> Proposal
+    Researcher -. "Review required decisions" .-> Gate
+    Worker --> Evidence
+    Coordinator <--> SQL
+    API <--> SQL
+    SQL -. "Saved evidence" .-> Specialists
+
+    classDef interface fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px;
+    classDef reasoning fill:#ede9fe,stroke:#7c3aed,color:#4c1d95,stroke-width:2px;
+    classDef controlled fill:#fef3c7,stroke:#d97706,color:#78350f,stroke-width:2px;
+    classDef durable fill:#ccfbf1,stroke:#0d9488,color:#134e4a,stroke-width:2px;
+    class Researcher,UI,API interface;
+    class Coordinator,Specialists,Models,Providers reasoning;
+    class Proposal,Gate,Worker,Target controlled;
+    class Evidence,SQL,Cache durable;
+```
+
+**Task delegation performs analysis.** It does not automatically execute proposed
+commands. Execution uses the shared authorization path, and the worker independently
+checks its allowed destinations and ports. Policy import and model output cannot
+grant testing permission.
+
+**PostgreSQL holds authoritative records.** Task transitions commit before clients
+receive their events. Repeated task delivery does not repeat a specialist call;
+restart recovery blocks unfinished work for inspection. Full investigation-memory
+restoration and distributed scheduling remain outside the current implementation.
+
+## The evidence standard
+
+The Phase 5 verification lifecycle separates candidates from reportable findings.
+Phase 6 binds current verified evidence to immutable drafts, full redacted attachments
+and human report sign-off. Reportable claims currently use the bounded private-JSON
+disclosure verifier; independent live reproduction acceptance remains unverified.
 
 ```mermaid
 flowchart LR
-    H[Human tester] --> A[Authenticated API]
-    A --> P[Planner and specialized agents]
-    P --> C[Typed command proposal]
-    C --> G[Policy gate: owner, scope, risk, limits]
-    G -->|Approval required| D[Durable human decision]
-    D --> G
-    G -->|Authorized job only| Q[Durable job queue]
-    Q --> W[Isolated Kali worker]
-    W --> E[Structured evidence and parsers]
-    E --> S[(PostgreSQL evidence and event store)]
-    S --> P
-    S --> V[Authorized UI events and reports]
-    V --> H
+    Observation["Observation"] --> Hypothesis["Hypothesis"]
+    Hypothesis --> Tested["Tested"]
+    Tested --> Reproduced["Reproduced"]
+    Reproduced --> Reviewed["Human reviewed"]
+    Reviewed --> Reportable["Reportable"]
+    Tested -. "Insufficient proof" .-> Unresolved["Inconclusive or blocked"]
+    Tested -. "Disproved" .-> Rejected["Rejected · Evidence retained"]
+
+    classDef candidate fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef proof fill:#ccfbf1,stroke:#0d9488,color:#134e4a;
+    classDef review fill:#fef3c7,stroke:#d97706,color:#78350f;
+    classDef unresolved fill:#f1f5f9,stroke:#64748b,color:#334155;
+    class Observation,Hypothesis candidate;
+    class Tested,Reproduced proof;
+    class Reviewed,Reportable review;
+    class Unresolved,Rejected unresolved;
 ```
 
-1. **Authenticate and scope the engagement.** Resolve the current user from the database, verify session ownership, define explicit targets/exclusions, and assign an engagement policy.
-2. **Generate a typed proposal.** Agents propose a tool, structured arguments, target, evidence references, purpose, and risk rationale. Model text is untrusted input.
-3. **Apply one server-side policy gate.** Every manual, WebSocket, autonomous, modified, or replayed command passes the same owner, target, tool, risk, timeout, and concurrency checks. Unknown cases require approval or are rejected.
-4. **Record human authorization.** Bind approval to an immutable command digest, user, session, expiry, and policy revision. Modification invalidates the old approval and triggers validation again.
-5. **Execute in isolation.** An unprivileged worker accepts authenticated jobs, enforces network scope locally, and returns a job ID, exit status, bounded output, and evidence hashes. Cancellation must terminate the remote process.
-6. **Persist evidence and events.** Store findings, command outcomes, decisions, and state transitions before notifying clients. Redis accelerates access but is not the source of truth for authorization.
-7. **Replan and report.** Deterministic parsers update the evidence model; agents explain recommendations using that evidence. Human verification remains distinct from model confidence.
+A successful HTTP response, a matching version, a scanner label, or agreement
+between models is not sufficient proof of a vulnerability. Findings need attributable
+evidence, reproduction and review. External submission remains a human action.
 
-The API, execution worker, target network, database, and external model providers are separate trust boundaries. Redact passwords, tokens, and customer data before model calls. Retrieval must filter by engagement ownership; sharing playbooks across users requires explicit, sanitized publication.
+## Roadmap
 
-## Evaluation protocol
+The sequence follows acceptance gates rather than promised release dates.
+Read the [full roadmap](docs/aria-product-roadmap.md) for individual tasks and dependencies.
 
-Use only isolated, authorized targets with a resettable baseline and a known finding set. Freeze the source revision, target image, tool versions, model identifiers, prompts, and configuration for every experiment.
+```mermaid
+flowchart TB
+    subgraph FOUNDATION["IMPLEMENTED FOUNDATION · PHASES 0–3"]
+        direction LR
+        P0["0 · Baseline"] --> P1["1 · Program policy"] --> P2["2 · Durable team and evidence"] --> P3["3 · Authenticated mapping"]
+    end
+    subgraph RESEARCH["BOUNDED OFFLINE WORKFLOWS · PHASES 4–5"]
+        direction LR
+        P4["4 · Focused investigations"] --> P5["5 · Independent verification"]
+    end
+    subgraph PRODUCT["REPORTING AND REMAINING WORK · PHASES 6–8"]
+        direction LR
+        P6["6 · Reports and outcomes"] --> P7["7 · Benchmark and pilot"] --> P8["8 · Operational maturity"]
+    end
+    P3 --> P4
+    P5 --> P6
 
-Compare three conditions on the same scenarios: human with tools; human with a single AI assistant; human with ARIA's specialized agents. Repeat runs, record the number of trials and variability, and keep the time budget and starting evidence comparable. Report limitations caused by model nondeterminism and target selection.
+    classDef done fill:#ccfbf1,stroke:#0d9488,color:#134e4a,stroke-width:2px;
+    classDef next fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px;
+    classDef later fill:#f1f5f9,stroke:#64748b,color:#334155,stroke-width:2px;
+    class P0,P1,P2,P3 done;
+    class P4,P5,P6 done;
+    class P7,P8 later;
+```
 
-| Dimension | Measurement | Evidence / acceptance criterion |
+| Phase | Outcome | Status |
 | --- | --- | --- |
-| Finding quality | Precision = verified true positives / reported positives; recall = found ground-truth findings / all ground-truth findings | Findings mapped to independently verified ground truth; publish false positives and misses |
-| Efficiency | Wall-clock time to first verified finding and completion; tool calls; model tokens and cost | Timestamped command/model records; compare all three conditions |
-| Collaboration | Approval count, rejected/modified proposals, human intervention time | Decisions linked to the exact command and final outcome |
-| Scope enforcement | Attempts blocked across REST, WebSocket, autonomous execution and modified approvals | Zero out-of-scope executions in the test set; test enforcement at API and worker |
-| Approval enforcement | Critical actions executed without a valid, matching approval | Zero bypasses, including replay, concurrent requests and restart recovery |
-| Traceability | Executed jobs with a complete linked proposal, policy result, human decision if required, and outcome | 100% completeness in evaluation runs; missing events are failures |
-| Reliability | Recovery after API restart, worker failure, Redis loss, model timeout, and duplicate delivery | No duplicate execution; durable status and evidence remain consistent |
-| Report quality | Reproducible evidence, correct scope, severity justification and actionable remediation | Blind review with a declared rubric; distinguish confirmed from suspected issues |
+| **0 · Baseline** | Reproducible tests, migration/restore evidence, action-to-report trace and restart checks | Complete for the engineering baseline |
+| **1 · Program discovery and scope** | Human-reviewed program policy and bounded HTTP observations | Complete for unauthenticated curl GET/HEAD |
+| **2 · Durable team tasks and evidence** | Saved tasks, evidence/coverage ledgers, reviewed specialist results and shared model budgets | Implemented for supervised saved-evidence analysis |
+| **3 · Authenticated mapping** | Isolated identities, workflow maps and reviewed HTTP replay | Complete for supervised bounded GET/HEAD lab mapping |
+| **4 · Focused investigations** | Tested specialist methods with positive and negative controls | Implemented for bounded supervised workflows; offline specialty controls |
+| **5 · Independent verification** | Reproduction, evidence requirements and reviewer decisions | Implemented with a bounded private-JSON reportable gate; offline acceptance |
+| **6 · Reporting and outcomes** | Reviewed deliverables, reproduction attachments and triage tracking | Implemented for signed Markdown/evidence drafts and recorded outcomes; live independent reproduction remains unverified |
+| **7 · Benchmark and supervised pilot** | Measured quality, coverage, human effort and cost | Planned |
+| **8 · Operational maturity** | Recovery, retention, contracted pentesting and additional reviewed profiles | Planned |
 
-No benchmark results or security certification are claimed by this repository. Establish the integration and security acceptance tests before evaluating autonomous execution.
+## What works today
 
-## Local development
+The worker supports **curl and bounded Nmap TCP profiles**, plus an explicitly
+configured **identity-bound GET/HEAD lab profile**. Authenticated observations and
+Firefox previews require one-use shared approvals, an encrypted credential handle,
+and the worker's independent network ceiling. Reviewed program policies still
+permit only their existing **unauthenticated curl GET/HEAD observations**.
+Arbitrary shell commands, raw/UDP/NSE scans and post-access execution remain
+unavailable. Burp Community capture and Repeater staging passed real runtime
+validation; its deployment flag remains off by default.
 
-Use an isolated lab. **CPython 3.11 is the supported interpreter series**; setup and runtime reject other minor versions, including the host’s Python 3.14. The core hash-locked dependencies install and pass offline regressions on Linux x86_64 with Python 3.11. PostgreSQL is required; Redis is optional. PostgreSQL 16.6 and Redis 7.4.1 are configured in CI; live-service integration tests now pass on Fedora (see [P2 status](docs/p2-status.md)).
+Phase 3 acceptance records **199 passing offline Python tests**, real Firefox
+identity/storage isolation, **14 disposable SQL/worker/browser acceptance checks**,
+and **eight real Community runtime checks**. No live model calls were made and no
+owner database was used. These are engineering results, not a vulnerability
+benchmark or production certification. See [Phase 3 acceptance](docs/phase3-mapping-status.md)
+for configuration, exact commands, retained evidence and the bounded profile's
+limitations. Historical Phase 2 results remain in its own status document.
+
+Phase 6 adds Settings → **Reviewed reports and outcomes** for preview, exact-package
+human sign-off, full redacted Markdown/evidence ZIP downloads, and recorded outcomes,
+retests and triage drafts. No submission or new testing is performed by reporting.
+See [Phase 6 status](docs/phase6-reporting-status.md) for acceptance and limitations.
+
+## How success will be measured
+
+ARIA's research question is whether specialized agents, shared evidence and explicit
+human decisions improve an authorized assessment compared with manual work and a
+single AI assistant.
+
+| Measure | What it tells us |
+| --- | --- |
+| Verified precision and recall | How many reported findings are real, and which known issues were missed |
+| Coverage and unresolved questions | What was tested, what remains unknown, and why |
+| Independent reproduction | Whether a reviewer can reproduce the result from its evidence |
+| Time and human effort | Investigation time, review time and required interventions |
+| Requests, tokens and model cost | The resources used to reach a reviewed conclusion |
+| Scope and recovery behavior | Whether testing stays authorized and avoids duplicate execution |
+| Submission outcomes | Accepted, duplicate, informative, rejected and paid outcomes, tracked separately |
+
+A no-finding investigation can still produce useful coverage and pass engineering
+criteria. ARIA does not promise vulnerabilities, bounty acceptance or income.
+
+## Run ARIA locally
+
+Use an isolated, authorized lab. The supported core uses **Python 3.11**, **FastAPI**,
+**PostgreSQL**, an optional **Redis** cache, and an HTML/CSS/JavaScript browser UI.
+The execution worker runs separately with Docker or Podman.
 
 ```bash
 git clone git@github.com:Hrr-Yassin/ARIA.git
@@ -113,29 +305,50 @@ python -m pip install --require-hashes -r requirements.txt
 python -m pip check
 ```
 
-The supported dependency lock uses keyword retrieval and excludes heavy optional embedding packages. Experimental semantic retrieval requires separately provisioned `sentence-transformers`, NumPy and a local model directory selected by `ARIA_EMBEDDING_MODEL_PATH`. The loader uses `local_files_only=True`; request handling never downloads a model. That optional dependency/model combination has no supported lock or real-model benchmark yet. A single background inference slot admits no waiting queue; busy, oversized or timed-out requests fall back to keywords. See [P2 status](docs/p2-status.md) for bounds and limitations.
+Provision PostgreSQL and create a private, untracked `.env`. Keep signing and
+encryption keys persistent so saved credentials remain usable after restart.
 
-Provision a local PostgreSQL database and a dedicated database role. Create an untracked `.env` containing the following values, replacing all placeholders:
+<details>
+<summary><strong>Environment configuration</strong></summary>
+
+Replace every placeholder before starting the application:
 
 ```dotenv
 SECRET_KEY=<persistent-random-signing-secret>
 FERNET_KEY=<persistent-valid-fernet-key>
 DATABASE_URL=postgresql+asyncpg://<user>:<password>@127.0.0.1:5432/pentestai
 REDIS_URL=redis://127.0.0.1:6379/0
-KALI_AGENT_URL=http://<isolated-worker-address>:9000
+KALI_AGENT_TOKEN=<random-worker-authentication-secret>
 KALI_WORKER_PROTOCOL=jobs-v1
-KALI_AGENT_TOKEN=<worker-authentication-secret>
 REPORT_OUTPUT_DIR=./reports
 ALLOWED_ORIGINS=["http://127.0.0.1:7000"]
 AUTO_RISK_THRESHOLD=green_only
 AUTONOMOUS_MAX_STEPS=12
 AUTONOMOUS_STEP_TIMEOUT_SECONDS=120
-AUTONOMOUS_STEP_DELAY_SECONDS=1.5
 DECISION_LOG_ENABLED=true
 DEBUG=false
 ```
 
-Generate the signing secret with `python -c 'import secrets; print(secrets.token_hex(32))'` and the encryption key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Keep the encryption key persistent and protect it separately from database backups. Controlled rotation uses `FERNET_PREVIOUS_KEYS` and `python -m api.rotate_provider_keys`; retain previous keys until cached evidence is rewritten or expires. An optional `NVD_API_KEY` configures CVE enrichment.
+Generate a signing/worker secret with:
+
+```bash
+python -c 'import secrets; print(secrets.token_hex(32))'
+```
+
+Generate a persistent encryption key with:
+
+```bash
+python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+```
+
+`KALI_AGENT_URL` is configured separately when the worker is ready. Follow the
+[worker setup guide](docs/worker-setup.md) for its separate database, matching token,
+reviewed image and network/port ceiling. Redis is optional. Experimental semantic
+embeddings are separately provisioned and are outside the supported core lock.
+
+</details>
+
+For a **new, empty database**:
 
 ```bash
 python -m alembic upgrade head
@@ -143,56 +356,60 @@ python -m api.bootstrap_admin
 python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
 ```
 
-Visit `http://127.0.0.1:7000/login`. Startup verifies the schema revision and does not create tables or seed accounts. Apply migrations before starting; bootstrap an administrator interactively without default credentials. For an existing unversioned database, back up and restore to staging first, then follow [migration adoption](docs/p2-status.md). Do not run the initial upgrade over populated legacy tables.
+Open **http://127.0.0.1:7000/login**. Configure provider keys in the UI, then save
+an engagement model budget and conservative tariffs for the exact provider/model
+before requesting live analysis. Missing tariffs block model calls.
 
-`/api/health` is liveness. `/api/ready` checks database connectivity and schema revision with a three-second deadline; it does not certify worker/provider readiness. Redis is optional. Keep one API worker: planning state and subscribers remain local. Durable worker recovery reconciles/cancels jobs without resubmitting commands or resuming investigation loops.
+Use one API worker; parts of investigation state remain process-local. Schema head
+is `0003`. For an existing unversioned or populated installation, follow the
+[backup, staging and migration-adoption instructions](docs/p2-status.md) before
+changing its schema. Local checks do not establish readiness for an exposed deployment.
 
-`bash setup.sh` creates a checkout-local `.venv`, validates Python 3.11, installs the hash lock and checks dependency consistency. It refuses root, never invokes an OS package manager or changes services, and leaves infrastructure provisioning to the operator. [deploy/aria.service](deploy/aria.service) is an optional user-systemd unit for a checkout at `~/aria`; review its paths and environment before installing it with `systemctl --user`. It binds to loopback and uses one process. The installed Fedora user service passes local startup/readiness/login checks; TLS/reverse-proxy deployment remains unverified. See [Fedora manual lab](docs/fedora-lab.md).
+## Repository map
 
-## Backend route map
-
-These paths follow `api/main.py` router registration. The frontend uses these registered paths; unknown API routes return JSON 404.
-
-| Purpose | Backend route |
+| Directory | Purpose |
 | --- | --- |
-| Login / liveness / database readiness | `POST /api/login`, `GET /api/health`, `GET /api/ready` |
-| Create / list sessions | `POST /api/session/new`, `GET /api/session/list` |
-| User input / tool output | `POST /api/v8/input`, `POST /api/tool-results` |
-| Job diagnostics | `GET /api/jobs/{session_id}/{job_id}`, `GET /api/running/{session_id}` |
-| Command proposals / decisions | `POST /api/execution/proposals`, `POST /api/execution/{action_id}/decision` |
-| Manual execution / chat socket | `POST /api/kali/execute`, `WS /api/ws/chat` |
-| Autonomous lifecycle | `/api/pentest/{session_id}/autonomous/{start,stop,status,approvals,approve}` (method depends on action) |
-| Autonomous events | `WS /api/pentest/ws/{session_id}/auto` |
-| Investigation views | `/api/pentest/{session_id}/{kb-snapshot,decision-log,playbooks}` |
-| Provider keys / reports / administration | `/api/keys/`, `/api/report/`, `/api/admin/` |
+| `web/` | Research workspace, policy review and team controls |
+| `api/` | Authentication, engagements, tasks, evidence and review endpoints |
+| `agents/` | Coordinator, planner and specialist agents |
+| `orchestrator/` | Workflow, task delegation and execution policy |
+| `memory/` | SQL records, evidence, coverage, authorization and recovery |
+| `llm/` | Provider adapters, routing and shared model accounting |
+| `worker/` | Separate constrained execution service and job ledger |
+| `security/`, `config/` | Credentials, redaction, retrieval controls and settings |
+| `migrations/` | Versioned application schema |
+| `tests/`, `integration/` | Offline regressions, browser fixtures and disposable acceptance labs |
+| `docs/` | Product roadmap, status, validation and lab guides |
 
-## Repository maintenance
-
-The obsolete `apply_v10_overlay.sh` and `README_V10.md` were removed during review. They described patching a separate v9 tree, referenced an absent router-additions file, and did not describe this integrated checkout. Git history preserves them. Runtime modules and package initializers were retained; partially wired functionality should be repaired or deliberately retired, not deleted based on filename alone.
-
-Read [technical_revow.md](technical_revow.md) before planning fixes or claiming evaluation readiness. Current P0 fixes and offline test commands are recorded in [docs/security-review.md](docs/security-review.md); Remaining P1/P2 limitations and worker compatibility requirements are listed there. Old unregistered reports require verified operator import with `python -m api.import_report`; filenames alone never authorize downloads.
-
-## Offline regression checks
+## Development checks
 
 ```bash
-python -m unittest discover -s tests -t . -q
+DEBUG=false .venv/bin/python -B -m unittest discover -s tests -t . -q
 node tests/frontend_contracts.cjs
+git diff --check
 ```
 
-The offline Python tests block outbound sockets/DNS and mock workers/providers/storage. They cover
-two-user isolation, report authorization, credential rotation/revocation, forged
-results, concurrent dispatch/cancellation and restart recovery. No real security
-scans are run. Existing JWTs must be renewed after the credential-revision upgrade.
+Offline tests block outbound sockets/DNS and mock providers and workers. Service
+acceptance uses disposable resources; see the phase status documents before running
+integration commands. CI includes locked installation, offline/frontend regressions,
+service checks and container-worker/Phase 2 acceptance.
 
+## Documentation
 
-CI runs the locked Python installation, offline/Node regressions and separate disposable PostgreSQL/Redis integration tests. See [docs/p2-status.md](docs/p2-status.md) for commands, migration safety, dependency lock maintenance, executed results and remaining risks. Integration tests must not target an operational database.
+| Start here | Details |
+| --- | --- |
+| [Product roadmap](docs/aria-product-roadmap.md) | Complete backlog, dependencies and acceptance gates |
+| [Phase 0 baseline](docs/phase0-baseline.md) | Capability inventory, schema, migration/restore and trace evidence |
+| [Phase 1 policy status](docs/phase1-policy-status.md) | Program import, owner activation, scope semantics and traffic budgets |
+| [Phase 2 team status](docs/phase2-team-status.md) | Durable tasks, evidence, model budgets, setup and acceptance |
+| [Phase 3 mapping status](docs/phase3-mapping-status.md) | Controlled identities, reviewed browser/HTTP observations, retention and acceptance |
+| [Phase 4 investigations](docs/phase4-investigations-status.md) | Bounded specialist profiles and positive/negative offline controls |
+| [Phase 5 verification](docs/phase5-verification-status.md) | Independent saved-evidence lifecycle and human sign-off |
+| [Phase 6 reporting](docs/phase6-reporting-status.md) | Immutable reports, full redacted attachments, outcome histories and acceptance |
+| [Worker setup](docs/worker-setup.md) · [Contract](docs/worker-contract.md) | Execution deployment, limits and cancellation guarantees |
+| [Security status](docs/security-review.md) · [Original review](technical_revow.md) | Remediation history and remaining limitations |
+| [Fedora lab](docs/fedora-lab.md) | Recorded local lab configuration and operation |
+| [Browser validation](docs/browser-validation.md) · [Upgrade register](docs/aria-upgrade-validation.md) | Historical workflow checks and feature release gates |
 
-The scoped HTTP scan, output/history restoration and bounded autonomous HTTP check
-have a real Firefox test; see [browser validation](docs/browser-validation.md).
-
-
-Reliability, specialist-result contracts and the gated Burp Community connector are
-tracked in [the upgrade validation register](docs/aria-upgrade-validation.md).
-The new backend requires migration `0002`; the owner's deployment was not migrated.
-Burp remains disabled pending runtime/release checks. See
-[Community connector setup and limitations](burp-community/README.md).
+Historical security-remediation P0/P1/P2 labels are separate from the product
+roadmap's Phases 0–8. Use each document's stated revision and validation scope.

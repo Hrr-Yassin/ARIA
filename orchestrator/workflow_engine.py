@@ -51,64 +51,63 @@ MODE_SCAN_FLAGS = {
 class WorkflowEngine:
     """Tracks pentest phases and guides methodology adherence."""
 
-    def get_current_phase_info(self, phase: str, tools_run: list) -> dict:
+    @staticmethod
+    def evidence_readiness(phase: str, ledger: dict | None) -> dict:
+        """Count declared questions, while requiring reviewed tasks for readiness."""
+        if not isinstance(ledger, dict):
+            return {'state': 'unknown', 'questions_total': 0, 'questions_tested': 0, 'percent': 0}
+        tasks = [t for t in ledger.get('tasks', []) if t.get('phase') == phase and t.get('state') != 'cancelled']
+        if not tasks or any(not t.get('security_questions') for t in tasks):
+            return {'state': 'unknown', 'questions_total': 0, 'questions_tested': 0, 'percent': 0}
+        keys = {key for task in tasks for key in task['security_questions']}
+        coverage = {item.get('key'): item for item in ledger.get('coverage', [])}
+        evidence = {item.get('id') for item in ledger.get('evidence', [])}
+        def tested(key):
+            record = coverage.get(key, {})
+            refs = record.get('evidence_references') or []
+            return record.get('status') == 'tested' and bool(refs) and all(ref in evidence for ref in refs)
+        done = sum(tested(key) for key in keys)
+        def reviewed(task):
+            if task.get('state') != 'completed' or not task.get('reviewed_by'):
+                return False
+            snapshot = {item.get('key'): item for item in task.get('completion_review', [])}
+            for key in task['security_questions']:
+                saved, current = snapshot.get(key, {}), coverage.get(key, {})
+                if not saved.get('ready') or any(saved.get(field) != current.get(field)
+                    for field in ('question', 'feature', 'evidence_references')):
+                    return False
+            return True
+        ready = done == len(keys) and all(reviewed(t) for t in tasks)
+        return {'state': 'ready' if ready else 'not_ready', 'questions_total': len(keys),
+                'questions_tested': done, 'percent': round(100 * done / len(keys))}
+
+    def get_current_phase_info(self, phase: str, tools_run: list, ledger: dict | None = None) -> dict:
         idx = PENTEST_PHASES.index(phase) if phase in PENTEST_PHASES else 0
         phase_tools = PHASE_TOOLS.get(phase, [])
-        tools_done = [t for t in tools_run if t in phase_tools]
-        progress = (len(tools_done) / max(len(phase_tools), 1)) * 100 if phase_tools else 0
-
+        readiness = self.evidence_readiness(phase, ledger)
         return {
-            "current_phase":    phase,
-            "phase_index":      idx,
-            "total_phases":     len(PENTEST_PHASES),
-            "phase_progress":   round(progress),
-            "tools_expected":   phase_tools,
-            "tools_completed":  tools_done,
-            "tools_remaining":  [t for t in phase_tools if t not in tools_run],
-            "responsible_agent": PHASE_AGENTS.get(phase, "orchestrator"),
-            "next_phase":       PENTEST_PHASES[idx + 1] if idx + 1 < len(PENTEST_PHASES) else None,
+            'current_phase': phase, 'phase_index': idx, 'total_phases': len(PENTEST_PHASES),
+            'phase_progress': readiness['percent'], 'readiness': readiness,
+            'tools_expected': phase_tools, 'tools_completed': [t for t in tools_run if t in phase_tools],
+            'tools_remaining': [t for t in phase_tools if t not in tools_run],
+            'responsible_agent': PHASE_AGENTS.get(phase, 'orchestrator'),
+            'next_phase': PENTEST_PHASES[idx + 1] if idx + 1 < len(PENTEST_PHASES) else None,
         }
 
-    def get_overall_progress(self, phase: str, tools_run: list) -> dict:
-        total_tools = sum(len(v) for v in PHASE_TOOLS.values())
-        done_tools = len([t for t in tools_run if any(t in tv for tv in PHASE_TOOLS.values())])
-        phase_idx = PENTEST_PHASES.index(phase) if phase in PENTEST_PHASES else 0
-        phase_pct = round((phase_idx / max(len(PENTEST_PHASES) - 1, 1)) * 100)
-        tool_pct = round((done_tools / max(total_tools, 1)) * 100)
-        return {
-            "phase_pct":         phase_pct,
-            "tools_coverage_pct": tool_pct,
-            "overall_pct":       round((phase_pct + tool_pct) / 2),
-        }
+    def get_overall_progress(self, phase: str, tools_run: list, ledger: dict | None = None) -> dict:
+        readiness = self.evidence_readiness(phase, ledger)
+        # Legacy numeric keys remain present; their basis is now declared questions.
+        return {'phase_pct': readiness['percent'], 'tools_coverage_pct': readiness['percent'],
+                'overall_pct': readiness['percent'], 'basis': 'current_phase_security_questions',
+                'readiness': readiness}
 
     def suggest_next_phase(self, current_phase: str, tools_run: list,
                            has_shell: bool = False, has_findings: bool = False) -> Optional[str]:
-        """Suggest phase advancement based on state."""
-        idx = PENTEST_PHASES.index(current_phase) if current_phase in PENTEST_PHASES else 0
-        phase_tools = PHASE_TOOLS.get(current_phase, [])
-        done = [t for t in tools_run if t in phase_tools]
-
-        # Phase-specific advancement logic
-        if current_phase == "scanning" and len(done) >= 1:
-            return "vulnerability_analysis"
-        if current_phase == "vulnerability_analysis" and has_findings:
-            return "exploitation"
-        if current_phase == "exploitation" and has_shell:
-            return "post_exploitation"
-        if current_phase == "post_exploitation" and len(done) >= 2:
-            return "reporting"
-
-        # Generic: advance when most phase tools done
-        if phase_tools and len(done) >= max(len(phase_tools) // 2, 1):
-            next_idx = idx + 1
-            if next_idx < len(PENTEST_PHASES):
-                return PENTEST_PHASES[next_idx]
-
+        """Automatic advancement is disabled; a human reviews readiness."""
         return None
 
     def get_tool_phase_transition(self, tool: str) -> Optional[tuple]:
-        """Returns (from_phase, to_phase) if this tool triggers a phase change."""
-        return PHASE_TRANSITIONS.get(tool.lower())
+        return None
 
     def get_mode_scan_flags(self, attack_mode: str = "lab") -> dict:
         return MODE_SCAN_FLAGS.get(attack_mode, MODE_SCAN_FLAGS["lab"])

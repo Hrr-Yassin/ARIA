@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import unittest
 from unittest.mock import patch, AsyncMock
@@ -8,6 +9,17 @@ from api.main import app
 
 class OfflineCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        # Some sandbox runtimes do not promptly deliver the event loop's
+        # cross-thread self-pipe wakeups. Keep a bounded timer scheduled while
+        # ASGI sync dependencies and executor shutdown run on other threads.
+        # The timer lasts only until this test loop closes; network blocking
+        # below remains in force.
+        loop = asyncio.get_running_loop()
+        def wake_loop():
+            loop.call_later(0.05, wake_loop)
+        loop.call_later(0.05, wake_loop)
+        self.worker_manifest = patch('agents.report_agent.worker_evidence_manifest', AsyncMock(return_value=[]))
+        self.worker_manifest.start()
         # Run persistence is tested separately; these service fixtures remain offline.
         self.connector_owner=patch("config.settings.settings.BURP_CONNECTOR_USER_ID","owner")
         self.connector_owner.start()
@@ -28,6 +40,7 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver')
 
     async def asyncTearDown(self):
+        self.worker_manifest.stop()
         await self.client.aclose()
         self.embedder.stop()
         self.admission.stop()

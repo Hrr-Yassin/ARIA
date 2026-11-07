@@ -30,7 +30,7 @@ def redact(value, known_secrets=()):
 
 def deployment_secrets():
     from config.settings import settings
-    return [settings.SECRET_KEY, settings.FERNET_KEY, settings.KALI_AGENT_TOKEN, settings.BURP_CONNECTOR_TOKEN, settings.NVD_API_KEY,
+    return [settings.SECRET_KEY, settings.FERNET_KEY, settings.KALI_AGENT_TOKEN, settings.BURP_CONNECTOR_TOKEN, settings.NVD_API_KEY, settings.HTTP_REPLAY_KEY,
             *settings.FERNET_PREVIOUS_KEYS]
 
 

@@ -190,6 +190,12 @@ JSON:
             return {"agent": "vuln", "reason": "Vulnerability keywords in request"}
         return {"agent": "scan", "reason": "Default: scan to gather data"}
 
+    async def delegate_task(self, session_id: str, user_id: str, task_id: str,
+                            request_id: str, skill_level: str = 'intermediate') -> dict:
+        """Delegate a durable task and collect its typed reviewable result."""
+        from orchestrator.team_coordinator import team_coordinator
+        return await team_coordinator.run(session_id, user_id, task_id, request_id, skill_level)
+
     async def process(self, session_id: str, user_id: str, input_data: dict,
                       skill_level: str = "intermediate") -> dict:
         """Standard agent process interface."""

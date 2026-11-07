@@ -2,6 +2,7 @@
 PentestAI v8 — Reports Router
 """
 import re
+import uuid
 import hashlib
 import os
 import stat
@@ -16,6 +17,9 @@ from api.auth import get_current_user, TokenData
 from api.session_access import get_accessible_session
 from agents.report_agent import report_agent
 from config.settings import settings
+from memory.professional_reports import (
+    DraftInput, ReportSignoff, OutcomeInput, RetestInput, TriageInput, professional_reports,
+)
 
 router = APIRouter()
 
@@ -81,3 +85,49 @@ async def download_report(filename: str, user: TokenData = Depends(get_current_u
     return Response(content, media_type=types[Path(filename).suffix], headers={
         'Content-Disposition': f'attachment; filename="{filename}"', 'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff'})
+
+
+# Phase 6 drafts are independent of legacy observation report artifacts.
+
+
+@router.get('/{session_id}/drafts')
+async def list_drafts(session_id: str, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.list(session_id, user.user_id)
+
+
+@router.post('/{session_id}/drafts')
+async def create_draft(session_id: str, body: DraftInput, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.create(session_id, user.user_id, body)
+
+
+@router.get('/{session_id}/drafts/{report_id}/preview')
+async def preview_draft(session_id: str, report_id: str, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.preview(session_id, user.user_id, report_id)
+
+
+@router.post('/{session_id}/drafts/{report_id}/signoff')
+async def signoff_draft(session_id: str, report_id: str, body: ReportSignoff, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.signoff(session_id, user.user_id, report_id, body)
+
+
+@router.get('/{session_id}/drafts/{report_id}/export')
+async def export_draft(session_id: str, report_id: str, user: TokenData = Depends(get_current_user)):
+    package, fingerprint = await professional_reports.export(session_id, user.user_id, report_id)
+    return Response(package, media_type='application/zip', headers={
+        'Content-Disposition': f'attachment; filename="aria-report-{uuid.UUID(report_id)}.zip"',
+        'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Report-SHA256': fingerprint})
+
+
+@router.post('/{session_id}/drafts/{report_id}/outcomes')
+async def record_outcome(session_id: str, report_id: str, body: OutcomeInput, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.outcome(session_id, user.user_id, report_id, body)
+
+
+@router.post('/{session_id}/drafts/{report_id}/retests')
+async def record_retest(session_id: str, report_id: str, body: RetestInput, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.retest(session_id, user.user_id, report_id, body)
+
+
+@router.post('/{session_id}/drafts/{report_id}/triage-answer')
+async def draft_triage_answer(session_id: str, report_id: str, body: TriageInput, user: TokenData = Depends(get_current_user)):
+    return await professional_reports.triage(session_id, user.user_id, report_id, body)

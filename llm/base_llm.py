@@ -25,3 +25,18 @@ class BaseLLMClient(ABC):
 
     def is_configured(self) -> bool:
         return bool(self.api_key)
+
+
+def usage_metrics(usage: dict, token_field: str = 'total_tokens') -> dict:
+    """Preserve unknown provider usage; optional cost is reported USD, not a tariff."""
+    from decimal import Decimal, InvalidOperation, ROUND_CEILING
+    tokens = usage.get(token_field)
+    tokens = tokens if type(tokens) is int and tokens >= 0 else None
+    cost = None
+    try:
+        raw = Decimal(str(usage['cost']))
+        if raw.is_finite() and raw >= 0:
+            cost = int((raw * 1000000).to_integral_value(rounding=ROUND_CEILING))
+    except (KeyError, InvalidOperation, ValueError, TypeError):
+        pass
+    return {'tokens_used': tokens, 'cost_microusd': cost}

@@ -1,0 +1,148 @@
+{
+  "mode": "visible Chromium; actual ARIA UI; no route mocks",
+  "target": "192.168.77.20",
+  "paid_model_calls_authorized": false,
+  "events": [],
+  "network": [
+    {
+      "method": "GET",
+      "path": "/login",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/styles/login.css",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/scripts/login.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/aria.svg",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/login",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/styles/index.css",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/scripts/programs.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/scripts/team.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/scripts/reports.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/scripts/app.js",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/list",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/static/aria.svg",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/session/new",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/kb-snapshot",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/list",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/autonomous/status",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/session/23e93294-bf36-4360-aaa7-4a83807f547a/restore",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/profile",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/keys/",
+      "status": 200
+    },
+    {
+      "method": "GET",
+      "path": "/api/capabilities",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/autonomous/start",
+      "status": 200
+    }
+  ],
+  "console_errors": [],
+  "page_errors": [],
+  "screenshots": [
+    ".local-lab/aria-http-autonomy-benchmark/01-dashboard.png",
+    ".local-lab/aria-http-autonomy-benchmark/02-target-created.png",
+    ".local-lab/aria-http-autonomy-benchmark/03-discovery-configured.png",
+    ".local-lab/aria-http-autonomy-benchmark/04-run-started.png",
+    ".local-lab/aria-http-autonomy-benchmark/05-final-ui.png"
+  ],
+  "login_status": 200,
+  "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+  "created_target": "192.168.77.20",
+  "timer_start_utc": "2026-11-07T05:43:37.690232+00:00",
+  "timer_start_monotonic": 5126.237616866,
+  "start_http_status": 200,
+  "start_response": {
+    "status": "started",
+    "session_id": "23e93294-bf36-4360-aaa7-4a83807f547a",
+    "goal": "discovery",
+    "target": "192.168.77.20",
+    "max_steps": 12
+  },
+  "timer_deadline_monotonic": 6026.237616866,
+  "elapsed_seconds_at_start_response": 0.15416376699977263,
+  "last_ui_status": "Auto mode",
+  "early_terminal_state": "Auto mode",
+  "timer_end_monotonic": 5131.630732745,
+  "elapsed_seconds": 5.393115879000106,
+  "deadline_reached": false,
+  "finished_utc": "2026-11-07T05:43:43.200810+00:00"
+}

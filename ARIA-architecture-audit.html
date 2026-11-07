@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARIA architecture audit</title>
+<style>
+:root{--bg:#f6f1e7;--card:#fffdf7;--ink:#1b1a17;--mut:#6b665c;--line:#d9d1bf;--ok:#2f6f4e;--warn:#b7791f;--bad:#b3361d;--info:#2b5b84}
+@media(prefers-color-scheme:dark){:root{--bg:#15140f;--card:#1e1c16;--ink:#ece6d6;--mut:#a39d8d;--line:#3a362b;--ok:#6fc08f;--warn:#e0a949;--bad:#ef7d63;--info:#7fb0dc}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+h1,h2{font-family:Georgia,'Iowan Old Style',serif;font-weight:700;letter-spacing:-.01em}
+header{padding:48px 24px 28px;max-width:1040px;margin:auto}h1{font-size:2.3rem;margin:0 0 6px}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);z-index:5;padding:8px 24px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px}
+nav a{color:var(--mut);text-decoration:none}nav a:hover{color:var(--ink)}
+main{max-width:1040px;margin:auto;padding:0 24px 64px}section{padding-top:36px}h2{font-size:1.5rem;margin:0 0 10px}
+code{font:12px ui-monospace,Menlo,monospace;background:var(--card);border:1px solid var(--line);border-radius:3px;padding:0 4px}
+.sub{color:var(--mut)}.verdict{border-left:4px solid var(--bad);padding:4px 16px;background:var(--card);margin:18px 0}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:16px 0}
+.stat{background:var(--card);border:1px solid var(--line);padding:10px 12px}.stat b{display:block;font:700 1.6rem Georgia,serif}.stat span{font-size:12px;color:var(--mut)}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:var(--bg);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;font-weight:700;color:#fff}
+.Implemented,.Low{background:var(--ok)}.Partial,.Medium{background:var(--warn)}.Missing,.Critical{background:var(--bad)}.High{background:#c2571a}.Unverified{background:var(--info)}
+.bar{display:flex;gap:8px;margin:5px 0;align-items:center;font-size:13px}.bar i{width:190px;font-style:normal}.bar div{flex:1;height:14px;background:var(--line);position:relative}.bar b{position:absolute;left:0;top:0;bottom:0;background:var(--info)}
+.f{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}button{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:3px 10px;cursor:pointer;border-radius:3px}button.on{background:var(--ink);color:var(--bg)}
+svg{width:100%;height:auto;background:var(--card);border:1px solid var(--line)}svg text{font:12px system-ui;fill:var(--ink);pointer-events:none}
+.n rect{stroke-width:1.5;cursor:pointer;fill:var(--card)}.n.ok rect{stroke:var(--ok)}.n.part rect{stroke:var(--warn)}.n.miss rect{stroke:var(--bad);stroke-dasharray:5 3}.n:hover rect{fill:var(--bg)}
+#panel,#rp{background:var(--card);border:1px solid var(--line);padding:10px 14px;margin-top:8px;min-height:64px}
+.ph{display:flex;gap:6px;flex-wrap:wrap}.ph button{flex:1;min-width:120px;text-align:left;padding:8px}.ph small{display:block;color:inherit;opacity:.7}
+ul{margin:6px 0;padding-left:20px}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px}.cols>div{background:var(--card);border:1px solid var(--line);padding:4px 14px}
+</style></head><body>
+<header><div class="sub">Static architecture &amp; production-readiness audit</div><h1>ARIA — evidence-driven-team</h1>
+<div class="sub">Repository <code>Hrr-Yassin/ARIA</code> · branch <code>evidence-driven-team</code> · commit <code>edbefe5</code> (“Implement Phase 6 reviewed reports and outcome tracking”) · reviewed 2026-11-06 · read-only</div></header>
+<nav><a href="#verdict">Verdict</a><a href="#arch">Architecture</a><a href="#matrix">Capabilities</a><a href="#gap">Goal gap</a><a href="#find">Findings</a><a href="#road">Roadmap</a><a href="#facts">Facts vs. assumptions</a><a href="#method">Method</a></nav>
+<main>
+<section id="verdict"><h2>Verdict</h2>
+<div class="verdict"><b>ARIA today is a well-guarded, human-supervised research workbench. It is not yet an autonomous, 24/7 vulnerability-finding platform.</b> Its safety plumbing (scope gate, single-use approvals, isolated worker, no-replay recovery) is real and unusually careful. What is missing is the part that finds and proves bugs on its own: the autonomous loop only establishes reachability, the bug-bounty execution envelope is <code>curl</code> GET/HEAD, verification is human-recorded and covers one bug class, and nothing schedules, resumes, scales or monitors work.</div>
+<div class="stats"><div class="stat"><b>12</b><span>max autonomous steps per run (default)</span></div><div class="stat"><b>2</b><span>tools runnable by the worker (curl, nmap -sT)</span></div><div class="stat"><b>1</b><span>vuln class able to reach “reportable”</span></div><div class="stat"><b>0</b><span>schedulers, queues, metrics, platform APIs</span></div><div class="stat"><b>287</b><span>test functions (static count; not run)</span></div></div>
+<p><b>What it does today.</b> An operator imports a program policy, reviews and activates it; an engagement may then run bounded HTTP observations through a shared authorization gate and a Docker worker. Specialist agents analyze <i>saved</i> evidence on demand (<code>orchestrator/team_coordinator.py:1</code>), a human records validation, and reports are drafted and signed off by a human. The README itself says full autonomous research and production readiness “have not been established” (<code>README.md:29-32</code>). This audit confirms that against the code.</p></section>
+
+<section id="arch"><h2>Architecture as implemented</h2><p class="sub">Click a node. Solid green = implemented, amber = partial, dashed red = missing.</p>
+<svg id="dg" viewBox="0 0 780 365" role="img" aria-label="ARIA architecture"></svg><div id="panel">Select a component.</div></section>
+
+<section id="matrix"><h2>Capability matrix</h2><div class="f" id="mf"></div><table><thead><tr><th>Capability</th><th>Status</th><th>Evidence</th><th>Note</th></tr></thead><tbody id="mt"></tbody></table>
+<p class="sub">* = documented and covered by tests, but the module was not line-reviewed in this audit.</p></section>
+
+<section id="gap"><h2>Goal vs. implementation</h2><p class="sub">Auditor’s judgment, 0–5 (5 = production-grade for the stated goal). This is an assessment, not a measurement.</p><div id="bars"></div></section>
+
+<section id="find"><h2>Findings</h2><div class="f" id="ff"></div><table><thead><tr><th>ID</th><th>Severity</th><th>Finding</th><th>Evidence</th><th>Basis</th></tr></thead><tbody id="ft"></tbody></table></section>
+
+<section id="road"><h2>Engineering roadmap</h2><p class="sub">Ordered by dependency. Durations are my estimates for one small team, not derived from the repo. Each phase ends at a gate; do not widen autonomy before it passes.</p><div class="ph" id="ph"></div><div id="rp"></div></section>
+
+<section id="facts"><h2>Facts, absences and assumptions</h2><div class="cols">
+<div><h3>Verified in code</h3><ul><li>Authorization is claimed (marked <i>consumed</i>) before the worker is contacted, so a timeout cannot replay a command (<code>memory/execution_authorization.py:188-191</code>).</li><li>Worker containers are read-only, cap-dropped, memory/pid-limited, with an nft egress allow-list and DNS pinned at creation (<code>worker/runtime.py:71-93</code>, <code>worker/policy.py:113-124</code>).</li><li>Restart cancels active jobs and blocks runs instead of resuming (<code>worker/service.py:197-201</code>, <code>memory/autonomous_runs.py:33-44</code>).</li><li>Evidence is hash-snapshotted; stale evidence blocks advancement (<code>memory/finding_verification.py:119-147</code>).</li></ul></div>
+<div><h3>Verified absences (searched)</h3><ul><li>No Prometheus/OpenTelemetry/Sentry/alerting code.</li><li>No Celery/ARQ/APScheduler/Temporal or any scheduler.</li><li>No HackerOne/Bugcrowd/Intigriti integration.</li><li>No lint, type-check, SAST, dependency-audit or image-scan step in <code>.github/workflows/ci.yml</code>.</li></ul></div>
+<div><h3>Unverified / assumptions</h3><ul><li>I did not run tests; I did not see CI results (the GitHub API rate-limited the lookup).</li><li>No live-model quality, precision/recall, cost or latency data exists in the repo (<code>docs/aria-product-roadmap.md:198-210</code>, Phase 7 unchecked).</li><li><code>memory/professional_reports.py</code>, <code>memory/parsers.py</code>, <code>config/cve_enricher.py</code>, <code>llm/engagement_budget.py</code>, the Burp Java extension and the web UI were skimmed or taken from docs/tests only.</li><li>Roadmap durations and the 0–5 scores are my judgment.</li></ul></div></div></section>
+
+<section id="method"><h2>Method and limits</h2><p>Shallow clone of the branch, then static reading only: no dependency installation, no code execution, no scans, no contact with any target. Read in depth: <code>orchestrator/*</code>, <code>worker/*</code>, <code>memory/{execution_authorization,finding_verification,autonomous_runs,program_policy,application_map(outline)}</code>, <code>agents/{autonomous_engine,vuln_agent,recon_agent}</code>, <code>api/main.py</code>, <code>api/routers/{team,programs}</code>, <code>security/program_fetch.py</code>, <code>llm/pool_manager.py</code>, CI, deploy unit and the README/roadmap/status docs. The repository’s own documents were treated as claims to check, not as evidence. Line numbers refer to commit <code>edbefe5</code>.</p></section>
+</main>
+<script>
+const $=s=>document.querySelector(s),E=(t,a={})=>Object.assign(document.createElementNS('http://www.w3.org/2000/svg',t),{}),A=(e,o)=>{for(const k in o)e.setAttribute(k,o[k]);return e};
+const W=130,H=46;
+const N=[['res',10,20,'Researcher','ok','Human operator. Reviews policy, approves red-risk actions, signs off reports. Everything important is gated on this person being present.'],
+['api',165,20,'Web UI / FastAPI','ok','Single process by design (<code>deploy/aria.service:11</code>, <code>--workers 1</code>). Health check is static (<code>api/main.py:195-197</code>); no metrics.'],
+['gate',320,20,'Authorization gate','ok','Scope + command-bound, single-use approval, 600 s expiry, claim-before-dispatch (<code>memory/execution_authorization.py:137,188-191</code>). Strong. Expiry makes unattended approval queues fail.'],
+['wk',475,20,'Docker worker','part','Isolated and idempotent, but only curl and nmap -sT (<code>worker/policy.py:41-45</code>), max 4 jobs (<code>worker/service.py:24</code>), one controller (<code>worker/store.py:19</code>).'],
+['tg',630,20,'Authorized target','ok','Reachable only via explicit IP/CIDR ceiling and ports (<code>worker/policy.py:10-18,102-103</code>) — impractical for CDN-hosted programs.'],
+['pol',10,120,'Program policy','part','Manual one-program import from a URL/text, human review and activation (<code>api/routers/programs.py:59-80</code>). No platform API, no scope-change watcher.'],
+['loop',165,120,'Autonomous loop','part','≤12 steps, 20 model calls, goals discovery/http_check only; “complete” = one port scan + one HTTP response (<code>agents/autonomous_engine.py:189,581-586,666</code>). State is in memory (<code>:153-157</code>).'],
+['team',320,120,'Specialist team','part','Analysis of saved evidence per manually triggered task; never dispatches tools; output marked unverified (<code>orchestrator/team_coordinator.py:1,51-52</code>, <code>api/routers/team.py:51-53</code>).'],
+['led',475,120,'Evidence ledger','ok','Hashed, scoped evidence in PostgreSQL; strong integrity checks (<code>memory/finding_verification.py:119-138</code>).'],
+['ver',475,210,'Verification','part','Human-recorded procedure (<code>:176</code>). Only private-JSON cross-identity disclosure can reach reviewed/reportable (<code>:42-73,181-184</code>).'],
+['rep',630,210,'Reports + sign-off','ok','Immutable reviewed drafts and outcome tracking per docs/phase6 and tests (not line-reviewed). Submission stays manual.'],
+['sch',10,300,'Scheduler / queue','miss','Absent. Nothing starts, resumes or prioritizes work without a human click.'],
+['plat',165,300,'Platform APIs','miss','Absent. No program/scope sync from bounty platforms.'],
+['disc',320,300,'Discovery engine','miss','Absent. No surface graph, detectors or fuzzing; vuln agent maps versions to CVEs from one LLM call (<code>agents/vuln_agent.py:36-124</code>).'],
+['obs',475,300,'Observability','miss','Absent. No metrics, tracing or alerting.'],
+['pool',630,300,'Worker pool / HA','miss','Absent by design: advisory lock + flock enforce a single controller (<code>worker/store.py:19</code>, <code>worker/ownership.py:20</code>).']];
+const Ed=[['res','api'],['api','gate'],['gate','wk'],['wk','tg'],['pol','gate'],['loop','gate'],['team','led'],['wk','led'],['led','ver'],['ver','rep']];
+const svg=$('#dg'),M=A(E('marker'),{id:'a',viewBox:'0 0 8 8',refX:7,refY:4,markerWidth:7,markerHeight:7,orient:'auto'});M.innerHTML='<path d="M0 0L8 4L0 8z" fill="#888"/>';
+const d=document.createElementNS(svg.namespaceURI,'defs');d.append(M);svg.append(d);const P={};N.forEach(n=>P[n[0]]=n);
+Ed.forEach(([a,b])=>{a=P[a];b=P[b];let x1,y1,x2,y2;if(Math.abs(a[2]-b[2])<10){x1=a[1]+W;y1=a[2]+H/2;x2=b[1];y2=y1}else if(b[2]>a[2]){x1=a[1]+W/2;y1=a[2]+H;x2=b[1]+W/2;y2=b[2]}else{x1=a[1]+W/2;y1=a[2];x2=b[1]+W/2;y2=b[2]+H}svg.append(A(E('line'),{x1,y1,x2,y2,stroke:'#888','stroke-width':1.4,'marker-end':'url(#a)'}))});
+N.forEach(n=>{const g=A(E('g'),{class:'n '+n[4],tabindex:0});g.append(A(E('rect'),{x:n[1],y:n[2],width:W,height:H,rx:4}));const t=A(E('text'),{x:n[1]+W/2,y:n[2]+H/2+4,'text-anchor':'middle'});t.textContent=n[3];g.append(t);const f=()=>{$('#panel').innerHTML='<b>'+n[3]+'</b> — '+({ok:'implemented',part:'partial',miss:'missing'})[n[4]]+'<br>'+n[5]};g.onclick=f;g.onkeydown=e=>e.key=='Enter'&&f();svg.append(g)});
+const C=[['Program policy import &amp; human activation','Implemented','api/routers/programs.py:59-80; orchestrator/program_scope.py:46-65','Manual, one program at a time.'],
+['Scope enforcement (host/path/port, exclusions, DNS pin)','Implemented','orchestrator/execution_policy.py:68-83; orchestrator/program_scope.py:77-91; worker/policy.py:56-110','Strict; rejects encoded paths (<code>program_scope.py:68-74</code>).'],
+['Command-bound single-use authorization','Implemented','memory/execution_authorization.py:164-205','Approvals expire after 600 s (<code>:137</code>).'],
+['Isolated execution worker','Partial','worker/runtime.py:71-79; worker/container_entry.py:19-24; worker/policy.py:41-45','Hardened, but curl + nmap -sT only.'],
+['Idempotent job ledger, cancel, no replay','Implemented','worker/service.py:30-36,102-130,197-201','Overload (429/5xx) permanently halts an engagement (<code>:53-54</code>).'],
+['Autonomous run loop','Partial','agents/autonomous_engine.py:148,189,581-586,666','Reachability check, not vulnerability discovery.'],
+['Multi-agent team tasks','Partial','orchestrator/team_coordinator.py:1,51-52; api/routers/team.py:51-53','Analysis only; manual trigger.'],
+['Specialist investigations','Partial','orchestrator/specialist_investigations.py:14-85','Static templates; execution lab-only (<code>:64-66</code>).'],
+['Application mapping / identities','Partial','worker/http_profile.py:110-111; orchestrator/browser_mapping.py:72-91','Explicit lab scope only; ≤20 requests/engagement (<code>worker/service.py:60-68</code>).'],
+['Authenticated testing on bug-bounty scope','Missing','worker/service.py:42-43; worker/http_profile.py:110-111','Explicitly refused for program policies.'],
+['Vulnerability discovery beyond reachability','Missing','worker/policy.py:41-42; worker/Dockerfile:4','No scanner, fuzzer, crawler or detector can run.'],
+['Independent reproduction','Partial','memory/finding_verification.py:176,215','Human-recorded; “no autonomous reproduction”.'],
+['Evidence ledger with hashes','Implemented','memory/finding_verification.py:119-147','Good integrity model.'],
+['Report drafting and human sign-off','Implemented','docs/phase6-reporting-status.md; tests/test_professional_reports.py','*'],
+['Program-level duplicate detection','Partial','memory/finding_verification.py:214,232','Local only; private program duplicates “unknown”.'],
+['24/7 scheduling and resume','Missing','memory/autonomous_runs.py:33-44; deploy/aria.service:11','Restart ⇒ blocked, single process.'],
+['Platform / scope-change integration','Missing','security/program_fetch.py:48-73','Operator-supplied URL only.'],
+['Observability and alerting','Missing','api/main.py:195-197','Static health response.'],
+['Horizontal scale / HA','Missing','worker/store.py:19; worker/ownership.py:20; worker/service.py:24','Single controller, max 4 jobs.'],
+['Live effectiveness benchmark','Unverified','tests/test_agent_quality.py:1-3; docs/aria-product-roadmap.md:198-210','Synthetic fixtures only.'],
+['Model routing and budgets','Implemented','llm/pool_manager.py:63-105; api/routers/team.py:71-78','*']];
+const MF=['All','Implemented','Partial','Missing','Unverified'];let mf='All';
+function rm(){$('#mf').innerHTML=MF.map(s=>`<button class="${s==mf?'on':''}" data-s="${s}">${s}</button>`).join('');$('#mt').innerHTML=C.filter(r=>mf=='All'||r[1]==mf).map(r=>`<tr><td>${r[0]}</td><td><span class="tag ${r[1]}">${r[1]}</span></td><td><code>${r[2]}</code></td><td>${r[3]}</td></tr>`).join('');document.querySelectorAll('#mf button').forEach(b=>b.onclick=()=>{mf=b.dataset.s;rm()})}rm();
+const B=[['Scope enforcement',4],['Execution isolation',4],['Evidence integrity',3],['Human approval workflow',3],['Autonomous loop',1],['Vulnerability discovery',1],['Automated verification',1],['Continuous operation',1],['Observability',0.5],['Scale / HA',1],['Platform integration',0]];
+$('#bars').innerHTML=B.map(([k,v])=>`<div class="bar"><i>${k}</i><div><b style="width:${v*20}%"></b></div><span>${v}/5</span></div>`).join('');
+const F=[['F1','Critical','Autonomous “goal achieved” means one port scan and one HTTP response, not a finding. Other goals are blocked, leaving dead branches.','agents/autonomous_engine.py:189,581-586,745-760','Verified'],
+['F2','Critical','Bug-bounty execution is curl GET/HEAD with no custom headers, cookies, other methods or bodies (only -I/-s/-S/-i/-m flags); authenticated profiles are refused for program scope.','orchestrator/program_scope.py:55,107-121; worker/service.py:42-43; worker/http_profile.py:110-111','Verified'],
+['F3','Critical','No automated discovery or verification: the team never runs tools, investigations are templates, and “tested/reproduced” are human-entered records. Only one class (private JSON disclosure) can become reportable.','orchestrator/team_coordinator.py:1; orchestrator/specialist_investigations.py:14-85; memory/finding_verification.py:42-73,176,181','Verified'],
+['F4','Critical','Nothing runs continuously: no scheduler or queue; runs end after ≤12 steps; restart marks runs blocked; KB and approvals live in process memory; one API worker is mandatory.','memory/autonomous_runs.py:33-44; agents/autonomous_engine.py:153-157; memory/attack_knowledge_base.py:121; deploy/aria.service:11','Verified + absence search'],
+['F5','High','Worker cannot scale or reach real targets: one controller, 4 jobs, an explicit IP/CIDR ceiling (poor fit for CDN/cloud hosts), and a single overload response stops the engagement for good.','worker/store.py:19; worker/ownership.py:20; worker/service.py:24,53-54; worker/policy.py:10-18,102-103','Verified'],
+['F6','High','Approval model does not fit 24/7: red actions block an in-process wait, approvals expire in 10 minutes, and there is no pre-approved action envelope or inbox.','memory/execution_authorization.py:137; agents/autonomous_engine.py:461-495','Verified'],
+['F7','High','No observability: static health endpoint, no metrics, tracing or alerting, so silent failures during unattended runs would go unseen.','api/main.py:195-197','Verified + absence search'],
+['F8','High','Agent prompts advertise tools the worker cannot run (nuclei, nikto, subfinder, amass, httpx); fallbacks emit nuclei commands that policy will reject.','agents/vuln_agent.py:11,118-121; agents/recon_agent.py:11; worker/policy.py:41-42','Verified'],
+['F9','High','Scope intake is manual and unmonitored: one URL per program, no platform sync, no scheduled re-check for policy changes.','api/routers/programs.py:59-72; security/program_fetch.py:48-73','Verified + absence search'],
+['F10','Medium','Scope grammar is stricter than real applications: percent-encoded paths and “//” are rejected; only a fixed flag list is allowed.','orchestrator/program_scope.py:68-74,113-121','Verified'],
+['F11','Medium','Effectiveness is unmeasured: agent tests use synthetic fixtures; Phase 7 benchmark and pilot are unchecked; no live-model data.','tests/test_agent_quality.py:1-3; docs/aria-product-roadmap.md:198-210','Verified'],
+['F12','Medium','Legacy surface remains: v8/v10 chat routes, a 1,439-line router, post-exploitation prompts containing persistence/reverse-shell examples, and a legacy tool allow-list (hydra, sqlmap, msfconsole) that the policy layer accepts outside bug-bounty mode and only the worker’s tool list stops.','api/routers/pentest.py:490-531; agents/post_exploitation_agent.py:288; orchestrator/execution_policy.py:24-39,124-157','Verified'],
+['F13','Medium','Delivery gaps: CI has no lint/type/SAST/dependency-audit/image scan; schema revision is hard-coded to “0003”; CI outcomes unseen.','.github/workflows/ci.yml:38-77; memory/database_models.py:300-306','Verified (CI results unverified)'],
+['F14','Low','Worker polls every 0.5 s under one lock; fine at 4 jobs but a ceiling for a pool.','worker/app.py:90-97; worker/service.py:28','Verified']];
+const FS=['All','Critical','High','Medium','Low'];let fs='All';
+function rf(){$('#ff').innerHTML=FS.map(s=>`<button class="${s==fs?'on':''}" data-s="${s}">${s}</button>`).join('');$('#ft').innerHTML=F.filter(r=>fs=='All'||r[1]==fs).map(r=>`<tr><td>${r[0]}</td><td><span class="tag ${r[1]}">${r[1]}</span></td><td>${r[2]}</td><td><code>${r[3]}</code></td><td>${r[4]}</td></tr>`).join('');document.querySelectorAll('#ff button').forEach(b=>b.onclick=()=>{fs=b.dataset.s;rf()})}rf();
+const R=[['R0','Truth &amp; safety net','2–3 wk','Build a benchmark harness before adding autonomy: Juice Shop/WebGoat-style labs with ground truth, secure and vulnerable cases. Add metrics, tracing and real health checks. Add lint, types, SAST, dependency and image scanning to CI. Retire legacy chat/post-exploitation routes.','Reproducible precision/recall baseline; every run observable; CI green on all checks.'],
+['R1','Durable orchestration','3–4 wk','PostgreSQL-backed run state machine with leases and heartbeats; persist the attack KB and approvals; resumable runs with idempotent steps; scheduler; allow several API processes.','Kill -9 any component mid-run and the run resumes without replay or scope drift.'],
+['R2','Execution envelope v2','4–6 wk','Policy-as-code per vulnerability class (methods, headers, params, rate, accounts) reviewed by a human once per policy version; program-permitted test accounts; worker pool with per-target egress and a CDN-aware ceiling; allow-listed tool profiles (httpx, nuclei with fixed templates).','Zero scope violations in an adversarial test set; worker survives 429/5xx with back-off instead of permanent halt.'],
+['R3','Discovery engine','6–8 wk','Surface graph (hosts, routes, params, identities) → hypotheses → test plans. Deterministic detectors per class (authz/IDOR, auth, exposure, reflected input, misconfiguration); LLM plans and triages but never certifies.','Detector recall on the benchmark meets a pre-agreed target at acceptable false-positive cost.'],
+['R4','Automated verification','4 wk','Per-class differential reproduction with positive and negative controls, fresh observations, and a verifier with separate context and tools; evidence bundles; duplicate and disclosed-report checks; severity/impact rules.','Independent reproduction of every machine-reported finding, human sampling confirms.'],
+['R5','Human-in-the-loop at scale','3–4 wk','Approval inbox with pre-approved envelopes, notifications, escalation, global and per-program kill switch, scope-change watcher with automatic suspension, platform sync.','Unattended 72 h soak: stops safely on policy change, approvals never silently expire into unsafe states.'],
+['R6','Supervised pilot → graduated autonomy','ongoing','One narrow program and feature area, fixed traffic/cost/time limits, SLOs, chaos tests, per-program ToS review; widen autonomy only on measured outcomes.','Pilot meets Phase-7 gates in the repo roadmap; no scope violations; findings accepted by triage.']];
+$('#ph').innerHTML=R.map((r,i)=>`<button data-i="${i}"><b>${r[0]}</b> ${r[1]}<small>${r[2]}</small></button>`).join('');
+function sr(i){const r=R[i];document.querySelectorAll('#ph button').forEach((b,j)=>b.classList.toggle('on',j==i));$('#rp').innerHTML=`<b>${r[0]} · ${r[1]}</b> (${r[2]})<p>${r[3]}</p><p><b>Exit gate:</b> ${r[4]}</p>`}
+document.querySelectorAll('#ph button').forEach(b=>b.onclick=()=>sr(+b.dataset.i));sr(0);
+</script></body></html>

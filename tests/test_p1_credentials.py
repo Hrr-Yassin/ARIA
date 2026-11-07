@@ -64,7 +64,7 @@ class CredentialTests(OfflineCase):
         client=SimpleNamespace(query=AsyncMock(return_value={'success':True,'content':'{}'}))
         with patch.object(manager,'refresh_user_keys',side_effect=refresh),patch.object(manager,'_reserve_key',AsyncMock(return_value=True)), \
              patch('memory.access_scope.owned_session_ids',AsyncMock(return_value=set())), \
-             patch.dict('llm.pool_manager.PROVIDER_CLIENTS',{'groq':MagicMock(return_value=client)}):
+             patch('llm.engagement_budget.model_accounting.reserve', AsyncMock(return_value={'id':'test-attempt'})), patch('llm.engagement_budget.model_accounting.settle', AsyncMock()), patch.dict('llm.pool_manager.PROVIDER_CLIENTS',{'groq':MagicMock(return_value=client)}):
             result=await manager.query_for_task('alice','output_analysis','password="never-send"; test-only-provider-secret')
             self.assertTrue(result['success'])
             prompt=client.query.await_args.args[0]
@@ -101,7 +101,7 @@ class CredentialTests(OfflineCase):
             if remaining==0:return False
             remaining-=1;return True
         client=SimpleNamespace(query=AsyncMock(return_value={'success':True,'content':'{}'}))
-        with patch.object(manager,'refresh_user_keys',side_effect=refresh),patch.object(manager,'_reserve_key',side_effect=reserve),patch('memory.access_scope.owned_session_ids',AsyncMock(return_value=set())),patch.dict('llm.pool_manager.PROVIDER_CLIENTS',{'groq':MagicMock(return_value=client)}):
+        with patch.object(manager,'refresh_user_keys',side_effect=refresh),patch.object(manager,'_reserve_key',side_effect=reserve),patch('memory.access_scope.owned_session_ids',AsyncMock(return_value=set())),patch('llm.engagement_budget.model_accounting.reserve', AsyncMock(return_value={'id':'test-attempt'})), patch('llm.engagement_budget.model_accounting.settle', AsyncMock()), patch.dict('llm.pool_manager.PROVIDER_CLIENTS',{'groq':MagicMock(return_value=client)}):
             results=await asyncio.gather(*(manager.query_for_task('alice','output_analysis','test') for _ in range(2)))
         self.assertEqual(sum(r['success'] for r in results),1);client.query.assert_awaited_once()
 

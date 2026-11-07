@@ -1,5 +1,18 @@
 # Browser flow implementation and validation
 
+The latest executed acceptance uses **visible Chromium** against the real running
+services. See [7 November Chromium acceptance](chromium-acceptance-2026-11-07.md)
+for screenshots, independent worker receipts, defects fixed and the explicitly
+blocked autonomous outcome with zero provider calls.
+
+For the 7 November 2026 live deployment review, worker retention fix, browser
+workflow matrix and remaining autonomous prerequisite, see the
+[real-user testing report](live-user-testing-2026-11-07.md).
+
+Historical validation checkpoint: counts and deployment statements below apply to
+that recorded stage. See [the Phase 0 baseline](phase0-baseline.md) for the current
+source inventory, schema head `0003`, and new validation results.
+
 Validated locally on 2026-11-04 against ARIA at `http://localhost:7000` and the
 existing isolated Metasploitable VM at `192.168.77.20`. Tests used real Playwright
 Firefox in a separate headless profile; the user's personal browser storage was

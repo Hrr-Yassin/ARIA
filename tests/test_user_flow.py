@@ -11,10 +11,28 @@ class UserFlowTests(OfflineCase):
         app.dependency_overrides.clear()
         await super().asyncTearDown()
 
+    async def test_worker_result_ingestion_uses_existing_workflow_interface(self):
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        manager = 'api.routers.pentest.session_manager.'
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), \
+             patch('api.routers.pentest.worker_jobs.verify_receipt', AsyncMock()) as verify, \
+             patch('api.routers.pentest.orchestrator_agent.analyze_output', AsyncMock(return_value={'findings':[], 'findings_count':0})), \
+             patch(manager+'add_tools_run', AsyncMock()), \
+             patch(manager+'get_session', AsyncMock(return_value={'phase':'scanning', 'tools_run':['nmap']})), \
+             patch(manager+'update_phase', AsyncMock()) as advance, \
+             patch(manager+'add_audit_log', AsyncMock()):
+            response = await self.client.post('/api/tool-results', json={
+                'session_id':'engagement', 'command':'nmap -p 80 192.0.2.1',
+                'target':'192.0.2.1', 'job_id':'job', 'stdout':'80/tcp open http', 'exit_code':0})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['analysis']['evidence_source'], 'worker_receipt')
+        verify.assert_awaited_once()
+        advance.assert_not_awaited()
+
     async def test_http_request_preserves_ports_and_history(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
         store = AsyncMock()
-        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), patch('api.routers.pentest.session_manager.add_chat_log', store), patch('api.routers.pentest.session_manager.get_chat_logs', AsyncMock(return_value=[])):
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=SESSION)), patch('api.routers.pentest.worker_jobs.client.capabilities', AsyncMock(return_value={'tools':['nmap']})), patch('api.routers.pentest.session_manager.add_chat_log', store), patch('api.routers.pentest.session_manager.get_chat_logs', AsyncMock(return_value=[])):
             response = await self.client.post('/api/v8/input', json={'session_id':'engagement','user_input':'scan http port'})
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -24,6 +42,21 @@ class UserFlowTests(OfflineCase):
         self.assertEqual(store.await_count, 2)
         self.assertEqual(store.await_args_list[0].args[1], 'user')
         self.assertEqual(store.await_args_list[1].args[4]['commands'], data['commands'])
+
+    async def test_url_target_service_scan_uses_host_and_requested_ports(self):
+        session = {**SESSION, 'target': 'https://192.0.2.1:8443/app',
+                   'scope': {'targets': ['https://192.0.2.1:8443/app'], 'ports': [80]}}
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=session)):
+            result = await _process_rest_input(UserInput(session_id='engagement', user_input='scan http port 80 only'), OWNER)
+        command = result['commands'][0]['command']
+        self.assertEqual(command, 'nmap -sT -sV -Pn -n -p 80 192.0.2.1')
+        validate_worker_command(command, session['scope'])
+
+    async def test_invalid_url_does_not_create_scan_proposal(self):
+        for target in ('http://192.0.2.1:bad', 'http://user:password@192.0.2.1', 'unknown://192.0.2.1'):
+            with self.subTest(target=target), patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value={**SESSION, 'target': target})):
+                result = await _process_rest_input(UserInput(session_id='engagement', user_input='scan http port'), OWNER)
+            self.assertEqual(result['commands'], [])
 
     async def test_scope_and_worker_features_rejected_before_display(self):
         for command in ['nmap -p- 192.0.2.1', 'nmap -sC -p 80 192.0.2.1', 'nmap -p 22 192.0.2.1', 'nmap -p 80 198.51.100.1']:

@@ -31,6 +31,7 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 import structlog
+from fastapi import HTTPException
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 
 from config.settings import settings
@@ -285,6 +286,8 @@ class LLMPoolManager:
                 prompt = '<untrusted_engagement_data>\n' + redact(prompt, secrets) + '\n</untrusted_engagement_data>'
                 system = redact(system, secrets)
                 return await self._query_for_task(user_id, task_type, prompt, system)
+            except HTTPException:
+                return {'success': False, 'content': '', 'error': 'model_budget_denied'}
             except Exception:
                 return {'success': False, 'content': '', 'error': 'provider_authorization_or_storage_unavailable'}
 
@@ -365,16 +368,22 @@ class LLMPoolManager:
                 budget = current_budget.get()
                 if budget is not None and not budget.reserve(prompt, system, 4096):
                     return {'success':False, 'content':'', 'error':'validation_budget_exhausted', 'provider':'none'}
+                from llm.engagement_budget import model_accounting
+                attempt = await model_accounting.reserve(user_id, key_state.provider, model, prompt, system)
+                result = {'success': False, 'content': '', 'error': 'provider_request_failed'}
                 try:
                     result = await client.query(prompt, system)
                     if budget is not None:
                         budget.record(result.get('tokens_used', 0))
-                except Exception as e:
-                    key_state.last_error = "provider_request_failed"
-                    log.warning("LLM exception",
-                                provider=key_state.provider,
-                                error="provider_request_failed")
-                    continue
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    key_state.last_error = 'provider_request_failed'
+                    log.warning('LLM exception', provider=key_state.provider, error='provider_request_failed')
+                finally:
+                    # A failed settlement denies further failover. The durable
+                    # reservation remains charged even if this coroutine dies.
+                    await model_accounting.settle(attempt, result)
 
                 if result.get("success"):
                     key_state.requests_used += 1

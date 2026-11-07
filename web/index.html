@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PentestAI v10 — Tactical Terminal</title>
+<title>ARIA — Research workspace</title>
+<link rel="icon" type="image/svg+xml" href="/static/aria.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -23,8 +24,8 @@
       </svg>
     </div>
     <div class="brand-text">
-      <div class="brand-name">PentestAI</div>
-      <div class="brand-tag">v10 · Tactical Terminal</div>
+      <div class="brand-name">ARIA</div>
+      <div class="brand-tag">Security research workspace</div>
     </div>
   </div>
 
@@ -204,6 +205,151 @@
   </div>
   <div class="settings-body">
     <section class="settings-section">
+      <h3>Execution capabilities</h3>
+      <p id="execution-capabilities" class="settings-note" role="status" aria-live="polite">Open settings to check worker availability.</p>
+      <p class="settings-note">Supported profiles: HTTP requests with curl and bounded Nmap TCP scans. Every action must pass engagement policy.</p>
+      <p class="settings-note">Tools mentioned by agents are proposals. Arbitrary shell commands, Nmap scripts, raw/UDP scans, post-access execution and Burp Scanner are unavailable in this release.</p>
+      <p class="settings-note">Live specialist expertise has not been established.</p>
+    </section>
+    <section class="settings-section" id="team-panel">
+      <h3>Team tasks and evidence</h3>
+      <p class="settings-note">Delegate analysis of saved evidence. Review every result. Tasks never run tools automatically.</p>
+      <button id="team-refresh" class="btn btn-ghost">Load saved team work</button>
+      <p id="team-status" role="status" aria-live="polite"></p>
+      <details><summary>Create a task</summary>
+        <label>Specialist<select id="team-role"><option>web_intel</option><option>recon</option><option>scan</option><option>vuln</option><option>correlation</option><option>report</option></select></label>
+        <label>Security question / objective<textarea id="team-objective" rows="2"></textarea></label>
+        <label>Expected output<input id="team-expected" value="Evidence-linked observations and remaining uncertainty"></label>
+        <label>Completion criteria (one per line)<textarea id="team-criteria" rows="2">Every conclusion cites evidence or states uncertainty</textarea></label>
+        <label>Dependency task IDs (comma separated)<input id="team-dependencies"></label>
+        <label>Catalog evidence IDs (comma separated)<input id="team-evidence-inputs"></label>
+        <button id="team-create" class="btn btn-ghost">Save queued task</button>
+      </details>
+      <div id="team-tasks"></div>
+      <details><summary>Evidence catalog</summary>
+        <label>Source<select id="team-source-kind"><option value="worker">Worker receipt</option><option value="chat">Saved tool output or capture</option></select></label>
+        <label>Saved source ID<input id="team-source-id"></label>
+        <button id="team-catalog" class="btn btn-ghost">Catalog evidence</button>
+        <div id="team-evidence"></div>
+      </details>
+      <details><summary>Observations and hypotheses</summary>
+        <label>Kind<select id="team-knowledge-kind"><option>observation</option><option>hypothesis</option></select></label>
+        <label>Statement<textarea id="team-knowledge-text" rows="2"></textarea></label>
+        <label>Evidence IDs<input id="team-knowledge-refs"></label>
+        <label>Uncertainty / missing evidence<textarea id="team-uncertainty" rows="2"></textarea></label>
+        <label>Disposition<select id="team-disposition"><option>open</option><option>rejected</option><option>inconclusive</option></select></label>
+        <label>Contradicting observation IDs<input id="team-contradicts"></label>
+        <button id="team-save-knowledge" class="btn btn-ghost">Save statement</button>
+        <div id="team-knowledge"></div>
+      </details>
+      <details><summary>Coverage and gaps</summary>
+        <label>Coverage key<input id="team-coverage-key"></label>
+        <label>Security question<textarea id="team-question" rows="2"></textarea></label>
+        <label>Application feature<input id="team-feature"></label>
+        <label>Status<select id="team-coverage-state"><option>untested</option><option>tested</option><option>unresolved</option><option>blocked</option></select></label>
+        <label>Gap reason<textarea id="team-gap" rows="2"></textarea></label>
+        <label>Evidence IDs<input id="team-coverage-refs"></label>
+        <button id="team-save-coverage" class="btn btn-ghost">Save coverage</button>
+        <div id="team-coverage"></div>
+      </details>
+      <details><summary>Shared model budget</summary>
+        <p class="settings-note">Calls require an owner-entered tariff for the exact provider and model. Use a conservative rate that covers both input and output tokens. Missing provider cost remains unknown. Counters never reset when limits change.</p>
+        <label>Maximum provider calls<input id="team-model-calls" type="number" min="0" max="10000"></label>
+        <label>Maximum reserved tokens<input id="team-model-tokens" type="number" min="0" max="100000000"></label>
+        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001"></label>
+        <label>Provider<select id="team-model-provider"><option>groq</option><option>gemini</option><option>openrouter</option></select></label>
+        <label>Exact configured model name<input id="team-model-name"></label>
+        <label>Conservative combined rate (USD per million tokens)<input id="team-model-rate" type="number" min="0" step="0.000001"></label>
+        <button id="team-save-budget" class="btn btn-ghost">Save model budget</button>
+        <pre id="team-model-usage"></pre>
+      </details>
+    </section>
+    <section class="settings-section" id="reports-panel">
+      <h3>Reviewed reports and outcomes</h3>
+      <p class="settings-note">Build a draft from verified findings. Inspect its complete redacted evidence, reproduce from the report, then sign the exact revision. Downloading never submits a report.</p>
+      <button id="reports-refresh" class="btn btn-ghost">Load findings and report drafts</button>
+      <p id="reports-status" role="status" aria-live="polite"></p>
+      <label>Report template<select id="reports-template"><option value="bug_bounty">Bug bounty (one verified finding)</option><option value="pentest">Pentest (findings, coverage and observations)</option></select></label>
+      <div id="reports-candidates"></div>
+      <label>Previous report ID (optional, for a new revision)<input id="reports-previous"></label>
+      <button id="reports-create" class="btn btn-ghost">Create immutable draft</button>
+      <div id="reports-drafts"></div>
+      <div id="reports-preview" class="report-preview"></div>
+      <div id="reports-actions" class="hidden">
+        <label><input id="reports-reviewed" type="checkbox"> I reviewed this exact report and all attachments</label>
+        <label><input id="reports-reproduced" type="checkbox"> I reproduced the finding from this report alone (or reviewed the no-finding report)</label>
+        <label><input id="reports-redacted" type="checkbox"> I checked credential redaction and the remaining evidence</label>
+        <label>Sign-off reason<textarea id="reports-reason" rows="2"></textarea></label>
+        <button id="reports-signoff" class="btn btn-primary">Sign reviewed report revision</button>
+      </div>
+      <div id="reports-signed-actions" class="hidden">
+        <button id="reports-export" class="btn btn-ghost">Download signed Markdown and evidence ZIP</button>
+        <details><summary>Record a platform outcome</summary>
+          <p class="settings-note">Record an action or response that actually happened outside ARIA.</p>
+          <label>Outcome<select id="reports-outcome-state"><option>submitted</option><option>triaged</option><option>duplicate</option><option>informative</option><option>rejected</option><option>accepted</option><option>resolved</option><option>paid</option></select></label>
+          <label>Platform reference<input id="reports-platform"></label>
+          <label>Note<textarea id="reports-outcome-note" rows="2"></textarea></label>
+          <label>Actual payment amount (paid outcomes only)<input id="reports-amount" type="number" min="0.01" step="0.01"></label>
+          <label>Payment currency (three letters, e.g. USD)<input id="reports-currency" maxlength="3"></label>
+          <button id="reports-outcome" class="btn btn-ghost">Save recorded outcome</button>
+        </details>
+        <label>Reported finding<select id="reports-finding"></select></label>
+        <details><summary>Record a reviewed retest from saved evidence</summary>
+          <p class="settings-note">Collect fresh evidence through the approved execution workflow first. This action only records your review and requires the report's scope to remain current.</p>
+          <label>Result<select id="reports-retest-result"><option>fixed</option><option>still_vulnerable</option><option>inconclusive</option></select></label>
+          <label>Fresh catalog evidence IDs<input id="reports-retest-refs"></label>
+          <label>Review rationale<textarea id="reports-retest-reason" rows="2"></textarea></label>
+          <button id="reports-retest" class="btn btn-ghost">Save reviewed retest result</button>
+        </details>
+        <details><summary>Draft a triage reply</summary>
+          <label>Topic<select id="reports-triage-topic"><option>reproduction</option><option>impact</option><option>scope</option><option>retest</option></select></label>
+          <button id="reports-triage" class="btn btn-ghost">Draft reply from saved evidence</button>
+          <pre id="reports-triage-preview"></pre>
+        </details>
+      </div>
+    </section>
+    <section class="settings-section" id="program-policy-panel">
+      <h3>Program discovery and policy</h3>
+      <p class="settings-note">Imports are research drafts. Only the engagement owner can activate reviewed HTTP observations. Unknown permission blocks testing.</p>
+      <button id="program-refresh" class="btn btn-ghost">Load policies and shortlist</button>
+      <p id="program-status" role="status" aria-live="polite"></p>
+      <div id="program-catalog"></div>
+      <details class="settings-details">
+        <summary>Import official program policy</summary>
+        <label>Program name<input id="program-name" maxlength="200"></label>
+        <label>Official HTTPS policy URL<input id="program-url" type="url" placeholder="https://example.com/security"></label>
+        <label>Program type<select id="program-type"><option value="unknown">Unknown</option><option value="paid_bounty">Paid bounty</option><option value="disclosure_only">Disclosure only</option></select></label>
+        <label>Policy text (manual fallback)<textarea id="program-text" rows="8" maxlength="200000"></textarea></label>
+        <div class="form-row"><button id="program-import-text" class="btn btn-ghost">Import text</button><button id="program-import-page" class="btn btn-ghost">Fetch public page</button></div>
+        <p class="settings-note">Page import uses public HTTPS only and does not follow redirects or sign in. Paste the policy if fetching fails.</p>
+      </details>
+      <details class="settings-details">
+        <summary>Review and activate current policy</summary>
+        <pre id="program-source" class="program-source"></pre>
+        <div id="program-rule-review"></div>
+        <p class="settings-note">Asset format: hostname | path | ports | schemes. One asset per line. *.example.com includes subdomains, but excludes example.com. Paths include their descendants.</p>
+        <label>Included assets<textarea id="program-assets" rows="3" placeholder="app.example.com | /api | 443 | https"></textarea></label>
+        <label>Excluded assets<textarea id="program-exclusions" rows="2"></textarea></label>
+        <label>Third-party exclusions<textarea id="program-third-party" rows="2"></textarea></label>
+        <label>Automation permission<select id="program-automation"><option value="unknown">Unknown</option><option value="prohibited">Prohibited</option><option value="allowed">Explicitly allowed</option></select></label>
+        <label>Total requests<input id="program-requests" type="number" min="1" max="1000" value="10"></label>
+        <label>Concurrent requests<input id="program-concurrency" type="number" min="1" max="5" value="1"></label>
+        <label>Minimum seconds between requests<input id="program-interval" type="number" min="1" max="86400" value="5"></label>
+        <label><input id="program-accounts" type="checkbox"> I meet the account requirements</label>
+        <label><input id="program-prerequisites" type="checkbox"> I meet the participation prerequisites</label>
+        <label><input id="program-permission" type="checkbox"> I reviewed the complete policy, including exclusions, and confirm permission for bounded GET/HEAD observations</label>
+        <label>Review note<textarea id="program-note" rows="2"></textarea></label>
+        <div class="form-row"><button id="program-review" class="btn btn-ghost">Save review</button><button id="program-reject" class="btn btn-ghost">Reject policy</button><button id="program-activate" class="btn btn-primary">Activate reviewed policy</button></div>
+        <p class="settings-note">Activation replaces this engagement's execution scope. Updating an activated policy suspends execution and cancels outstanding jobs. Request use never resets on revision. Throttling or overload stops further traffic.</p>
+      </details>
+      <details class="settings-details">
+        <summary>Assess program fit</summary>
+        <div id="program-fit-fields"></div>
+        <label>Assessment basis<textarea id="program-fit-basis" rows="2"></textarea></label>
+        <button id="program-fit-save" class="btn btn-ghost">Save fit assessment</button>
+      </details>
+    </section>
+    <section class="settings-section">
       <h3>LLM providers</h3>
       <div id="llm-keys-list"></div>
       <details class="settings-details">
@@ -259,6 +405,9 @@
   </div>
 </aside>
 
+<script src="/static/scripts/programs.js" defer></script>
+<script src="/static/scripts/team.js" defer></script>
+<script src="/static/scripts/reports.js" defer></script>
 <script src="/static/scripts/app.js" defer></script>
 </body>
 </html>

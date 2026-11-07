@@ -37,7 +37,7 @@ class MemoryJobs:
 class MockWorker:
     def __init__(self):
         self.started=asyncio.Event();self.release=asyncio.Event();self.submits=0;self.cancels=0;self.ack=True
-    async def capabilities(self):pass
+    async def capabilities(self):return {'tools':['inert']}
     async def submit(self,job,command,timeout):
         self.submits+=1;self.started.set()
         return {'job_id':job['job_id'],'session_id':job['session_id'],'state':'running'}
@@ -61,6 +61,27 @@ class WorkerTests(OfflineCase):
         self.jobs=WorkerJobs(self.store,self.worker,context)
     async def asyncTearDown(self):
         self.url.stop();await super().asyncTearDown()
+
+    async def test_unadvertised_tool_never_dispatches(self):
+        self.worker.capabilities = AsyncMock(return_value={'tools': ['curl']})
+        with self.assertRaises(HTTPException) as error:
+            await self.jobs.execute('job1', 'alice', 'a', 'inert mock command', 10)
+        self.assertEqual(error.exception.status_code, 409)
+        self.assertEqual(self.worker.submits, 0)
+
+    async def test_autonomous_goal_blocks_missing_or_malformed_capabilities(self):
+        engine = AutonomousEngine()
+        context = {'owner_id': 'alice', 'scope': {'targets': ['192.0.2.1']}, 'auth_revision': 0}
+        for caps, reason in [({'tools': ['curl']}, 'capability_unavailable'),
+                             ({'tools': 'curl,nmap'}, 'worker_unavailable')]:
+            with self.subTest(caps=caps), \
+                 patch('agents.autonomous_engine.execution_authorization._context', AsyncMock(return_value=context)), \
+                 patch('agents.autonomous_engine.worker_jobs.client.capabilities', AsyncMock(return_value=caps)), \
+                 patch.object(engine, '_run_loop', AsyncMock()) as run:
+                result = await engine.start('a', 'alice', goal='discovery')
+                self.assertEqual(result['reason_code'], reason)
+                run.assert_not_awaited()
+                engine._runs.pop('a', None)
 
     async def test_cancel_requires_owner_and_acknowledgement_under_race(self):
         task=asyncio.create_task(self.jobs.execute('job1','alice','a','inert mock command',10))
@@ -146,6 +167,24 @@ class WorkerTests(OfflineCase):
             self.assertEqual((await engine.start('a','alice'))['status'],'started')
             self.assertNotEqual(engine._runs['a'].run_id,old.run_id)
             await engine.shutdown()
+
+    async def test_stop_preserves_terminal_run_state_and_reason(self):
+        for terminal in ('completed', 'blocked', 'failed'):
+            with self.subTest(terminal=terminal):
+                engine = AutonomousEngine()
+                state = SessionRunState('a', 'alice', 'http_check', '192.0.2.1', 'expert')
+                state.active = False
+                state.run_state = terminal
+                state.reason_code = 'original_reason'
+                engine._runs['a'] = state
+                with patch('agents.autonomous_engine.execution_authorization._context', AsyncMock()), \
+                     patch('agents.autonomous_engine.worker_jobs.cancel_session', AsyncMock(return_value={'cancelled':0,'pending':0,'jobs':[]})), \
+                     patch.object(engine, '_persist', AsyncMock()) as persist:
+                    result = await engine.request_stop('a', 'alice')
+                self.assertEqual(result['status'], 'stopped')
+                self.assertEqual(state.run_state, terminal)
+                self.assertEqual(state.reason_code, 'original_reason')
+                persist.assert_awaited_once_with(state)
 
     async def test_revoking_one_principal_does_not_cancel_other_users_jobs(self):
         for uid,sid,jid in [('alice','a','one'),('bob','b','two')]:

@@ -5,7 +5,7 @@ PTES/OWASP standard reports: HTML (inline), Markdown, LaTeX, PDF (reportlab).
 import json
 import uuid
 import hashlib
-from memory.report_artifacts import register_report
+from memory.report_artifacts import register_report, worker_evidence_manifest
 import re
 from datetime import datetime
 from typing import Optional
@@ -77,8 +77,8 @@ class ReportAgent(BaseAgent):
         findings_data = await session_manager.get_findings_summary(session_id)
         findings = [dict(f) for f in findings_data.get("findings", [])]
         for finding in findings:
-            if not finding.get("human_verified"):
-                finding["description"] = finding.get("description", "") + "\nEvidence source: " + finding.get("evidence_source", "legacy_unverified") + ". Not human-verified."
+            finding["title"] = "Observation: " + finding.get("title", "Untitled")
+            finding["description"] = finding.get("description", "") + "\nEvidence source: " + finding.get("evidence_source", "legacy_unverified") + ". Legacy observation; not certified by the Phase 5 verification gate. Use a signed Phase 6 draft for submission."
         counts   = findings_data.get("counts",   {})
         total    = findings_data.get("total",    0)
 
@@ -95,6 +95,7 @@ class ReportAgent(BaseAgent):
             f"{entry.get('data',{}).get('summary',{}).get('method','')} "
             f"{entry.get('data',{}).get('summary',{}).get('url','')}"
             for entry in saved_logs if entry.get('type') in {'burp_evidence','burp_replay','burp_comparison'}]
+        evidence_manifest.extend(await worker_evidence_manifest(session_id))
         # Sort findings by severity
         sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
         findings.sort(key=lambda f: sev_order.get(f.get("severity", "info"), 5))
@@ -117,16 +118,16 @@ class ReportAgent(BaseAgent):
                 target, scope, findings, counts, total, tools_run)
 
         if evidence_manifest and content is not None:
-            limitations = "Selected captures are observations, not verified vulnerabilities. Manifest covers the most recent 200 saved HTTP evidence records."
+            limitations = "Execution receipts and selected captures are observations, not verified vulnerabilities. Manifest covers up to 200 recent HTTP captures and 200 worker ledger records."
             if fmt == "html":
-                appendix = "<h2>HTTP evidence provenance</h2><p>"+_esc_html(limitations)+"</p><pre>"+_esc_html("\n".join(evidence_manifest))+"</pre>"
+                appendix = "<h2>Evidence provenance</h2><p>"+_esc_html(limitations)+"</p><pre>"+_esc_html("\n".join(evidence_manifest))+"</pre>"
                 content = content.replace("</body>", appendix+"</body>")
             elif fmt != "latex":
-                content += "\n\n## HTTP evidence provenance\n\n"+limitations+"\n\n"+"\n".join(evidence_manifest)
+                content += "\n\n## Evidence provenance\n\n"+limitations+"\n\n"+"\n".join(evidence_manifest)
             else:
                 # Evidence IDs are UUIDs; source payloads never enter TeX.
                 refs = [entry.split(" | ",1)[0] for entry in evidence_manifest]
-                content = content.replace("\\end{document}", "\\section{HTTP evidence provenance}\nSelected captures are unverified observations. Evidence IDs: "+", ".join(refs)+"\n\\end{document}")
+                content = content.replace("\\end{document}", "\\section{Evidence provenance}\nReceipts and captures do not verify vulnerabilities. Evidence IDs: "+", ".join(refs)+"\n\\end{document}")
         # ── Ensure output dir exists ──
         report_dir = Path(settings.REPORT_OUTPUT_DIR)
         report_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -682,7 +683,7 @@ ol li{margin-bottom:4px;font-size:.9rem}
         ))
 
         if evidence_manifest:
-            story.append(Paragraph("HTTP evidence provenance (selected, unverified observations)", s_h1))
+            story.append(Paragraph("Evidence provenance (observations, not verified vulnerabilities)", s_h1))
             for reference in evidence_manifest:
                 story.append(Paragraph(_esc_html(reference), s_body))
         doc.build(story)
