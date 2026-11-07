@@ -1,0 +1,8 @@
+2026-11-07T05:43:36.433006+00:00 fedora python[72949]: INFO:     127.0.0.1:42134 - "GET /api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/kb-snapshot HTTP/1.1" 200 OK
+2026-11-07T05:43:36.438231+00:00 fedora python[72949]: INFO:     127.0.0.1:42136 - "GET /api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/autonomous/status HTTP/1.1" 200 OK
+2026-11-07T05:43:36.442260+00:00 fedora python[72949]: INFO:     127.0.0.1:42554 - "GET /api/session/23e93294-bf36-4360-aaa7-4a83807f547a/restore?offset=0 HTTP/1.1" 200 OK
+2026-11-07T05:43:37.750934+00:00 fedora python[72949]: 2026-11-07 05:43:37 [debug    ] replan_callback registered     request_id=8111911dd4724daeb9fb6024dd956809 session=23e93294-bf36-4360-aaa7-4a83807f547a
+2026-11-07T05:43:37.758207+00:00 fedora python[72949]: 2026-11-07 05:43:37 [info     ] autonomous cycle started       goal=discovery request_id=8111911dd4724daeb9fb6024dd956809 session=23e93294-bf36-4360-aaa7-4a83807f547a target=192.168.77.20
+2026-11-07T05:43:37.759522+00:00 fedora python[72949]: INFO:     127.0.0.1:42136 - "POST /api/pentest/23e93294-bf36-4360-aaa7-4a83807f547a/autonomous/start HTTP/1.1" 200 OK
+2026-11-07T05:43:37.767220+00:00 fedora python[72949]: INFO:     ('127.0.0.1', 42560) - "WebSocket /api/pentest/ws/23e93294-bf36-4360-aaa7-4a83807f547a/auto" [accepted]
+2026-11-07T05:43:37.965502+00:00 fedora python[72949]: 2026-11-07 05:43:37 [info     ] autonomous cycle ended         request_id=8111911dd4724daeb9fb6024dd956809 session=23e93294-bf36-4360-aaa7-4a83807f547a steps=0

@@ -35,7 +35,7 @@ const context = {
  }
 };
 let source=fs.readFileSync('web/static/scripts/app.js','utf8');
-source=source.replace("document.addEventListener('DOMContentLoaded', boot);",'globalThis.testHooks={loadSessions,createNewSession,loadLLMKeys,connectAutoWS,sendMessage,runCommand,api,state};');
+source=source.replace("document.addEventListener('DOMContentLoaded', boot);",'globalThis.testHooks={loadSessions,createNewSession,loadLLMKeys,connectAutoWS,sendMessage,runCommand,restoreRunStatus,updateAutoUI,handleAutoEvent,api,state};');
 vm.createContext(context);
 (async()=>{
  vm.runInContext(fs.readFileSync('web/static/scripts/login.js','utf8'),context);
@@ -65,6 +65,17 @@ vm.createContext(context);
  await h.runCommand({command,tool:'hydra',risk_color:'green'});
  assert.equal(requests.filter(r=>r.path==='/api/kali/execute').length,count,'Rejected command is not dispatched');
  h.connectAutoWS();assert(!h.state.ws.url.includes('token='));h.state.ws.onopen();assert.equal(h.state.ws.sent.token,'test-token');
+ h.state.autoStep=0;h.state.autoMaxSteps=2;h.updateAutoUI();
+ assert.equal(elements.get('auto-log-counter').textContent,'step 0 / 2','Zero-step run displays selected budget');
+ context.fetch=async()=>({status:200,ok:true,headers:{get(){return 'application/json';}},async json(){return {active:false,run_state:'blocked',max_steps:2,steps_taken:0};}});
+ h.state.autoStep=5;h.state.autoMaxSteps=12;
+ await h.restoreRunStatus();
+ assert.equal(elements.get('auto-log-counter').textContent,'step 0 / 2','Restored run displays saved budget and step');
+ assert.equal(elements.get('max-steps').value,2);
+ assert.equal(elements.get('max-steps-value').textContent,2);
+ assert.equal(elements.get('auto-label').textContent,'AUTONOMOUS — BLOCKED','Restored blocked run remains visibly labeled');
+ h.state.autoRunStatus='';h.state.autoActive=true;h.handleAutoEvent({type:'auto_complete',status:'completed',action:'done'});
+ assert.equal(elements.get('auto-label').textContent,'AUTONOMOUS — COMPLETE','Live completion remains visibly labeled');
  const archive={zip:true};
  context.fetch=async(path,opts)=>{requests.push({path,opts});return {status:200,ok:true,async blob(){return archive;}};};
  assert.equal(await h.api('/api/report/s1/drafts/r1/export',{responseType:'blob'}),archive);

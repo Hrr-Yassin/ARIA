@@ -168,6 +168,24 @@ class WorkerTests(OfflineCase):
             self.assertNotEqual(engine._runs['a'].run_id,old.run_id)
             await engine.shutdown()
 
+    async def test_stop_preserves_terminal_run_state_and_reason(self):
+        for terminal in ('completed', 'blocked', 'failed'):
+            with self.subTest(terminal=terminal):
+                engine = AutonomousEngine()
+                state = SessionRunState('a', 'alice', 'http_check', '192.0.2.1', 'expert')
+                state.active = False
+                state.run_state = terminal
+                state.reason_code = 'original_reason'
+                engine._runs['a'] = state
+                with patch('agents.autonomous_engine.execution_authorization._context', AsyncMock()), \
+                     patch('agents.autonomous_engine.worker_jobs.cancel_session', AsyncMock(return_value={'cancelled':0,'pending':0,'jobs':[]})), \
+                     patch.object(engine, '_persist', AsyncMock()) as persist:
+                    result = await engine.request_stop('a', 'alice')
+                self.assertEqual(result['status'], 'stopped')
+                self.assertEqual(state.run_state, terminal)
+                self.assertEqual(state.reason_code, 'original_reason')
+                persist.assert_awaited_once_with(state)
+
     async def test_revoking_one_principal_does_not_cancel_other_users_jobs(self):
         for uid,sid,jid in [('alice','a','one'),('bob','b','two')]:
             await self.store.create({'job_id':jid,'session_id':sid,'user_id':uid,'state':'running','endpoint':'http://worker.invalid','protocol':'jobs-v1','revision':0})

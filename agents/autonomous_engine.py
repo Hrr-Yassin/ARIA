@@ -241,7 +241,8 @@ class AutonomousEngine:
         state = self._runs.get(session_id)
         if state:
             state.stop_requested = True
-            state.run_state = "cancelling"
+            if state.run_state not in TERMINAL:
+                state.run_state = "cancelling"
             await self._persist(state)
         cancellation = await worker_jobs.cancel_session(user_id, session_id)
         task = self._tasks.get(session_id)

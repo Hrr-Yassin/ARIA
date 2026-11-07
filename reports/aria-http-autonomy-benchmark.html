@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARIA HTTP Autonomy Benchmark — 7 November 2026</title>
+<style>
+:root{color-scheme:light;--ink:#17212b;--muted:#526171;--line:#dbe2e8;--paper:#fff;--wash:#f3f6f8;--blue:#155eef;--red:#b42318;--amber:#9a6700;--green:#067647}*{box-sizing:border-box}body{margin:0;background:var(--wash);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}main{max-width:1120px;margin:28px auto;padding:0 20px 60px}.hero,.card{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:24px;margin-bottom:18px}.hero{border-top:5px solid var(--red)}h1{font-size:2rem;line-height:1.2;margin:0 0 10px}h2{font-size:1.3rem;margin:0 0 14px}h3{font-size:1rem;margin:18px 0 8px}.muted{color:var(--muted)}.status{display:inline-block;padding:4px 10px;border-radius:999px;background:#fee4e2;color:var(--red);font-weight:700;font-size:.85rem}.facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:18px}.fact{border:1px solid var(--line);border-radius:8px;padding:12px}.fact b{display:block;font-size:1.2rem}.fact span{color:var(--muted);font-size:.88rem}table{width:100%;border-collapse:collapse;font-size:.94rem}th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--line)}th{background:#f7f9fb}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em;background:#f2f4f7;padding:1px 4px;border-radius:4px}a{color:#1849a9}.callout{border-left:4px solid var(--amber);padding:12px 16px;background:#fffaeb;border-radius:4px;margin:12px 0}.bad{border-left-color:var(--red);background:#fff1f0}.good{border-left-color:var(--green);background:#ecfdf3}.chart{width:100%;height:auto;display:block;background:#fbfcfd;border:1px solid var(--line);border-radius:8px}figure{margin:14px 0}figcaption{font-size:.9rem;color:var(--muted);margin-top:6px}img.evidence{max-width:100%;height:auto;border:1px solid var(--line);border-radius:8px}ul{padding-left:22px}footer{color:var(--muted);font-size:.9rem;padding:4px 2px}@media(max-width:700px){main{padding:0 10px 30px}.hero,.card{padding:16px}.facts{grid-template-columns:repeat(2,minmax(0,1fr))}table{font-size:.86rem}th,td{padding:7px 6px}}
+</style>
+</head>
+<body><main>
+<header class="hero">
+  <span class="status">EVALUATION FAILED — AUTONOMOUS FLOW BLOCKED</span>
+  <h1>ARIA HTTP Autonomy Benchmark</h1>
+  <p class="muted">Black-box evaluation using visible Chromium and ARIA’s real local UI. Run date: 7 November 2026. The 900-second ceiling was not extended or restarted.</p>
+  <div class="facts">
+    <div class="fact"><b>0.247 s</b><span>ARIA run until backend terminal state</span></div>
+    <div class="fact"><b>0 / 900 s</b><span>time spent in active discovery</span></div>
+    <div class="fact"><b>0</b><span>target jobs / HTTP probes</span></div>
+    <div class="fact"><b>0</b><span>findings produced</span></div>
+  </div>
+</header>
+
+<section class="card">
+  <h2>Executive summary</h2>
+  <p>ARIA accepted a normal <code>discovery</code> run for the authorized local target, then stopped before its first step with <code>blocked / invalid_planner_output</code>. The backend recorded three logical planning attempts, no accepted proposal, no successful steps, no evidence job IDs, no worker jobs, and no findings. The planner error says it could not produce a nonempty command list after corrective attempts and that no proposal was accepted from an unavailable provider or malformed output.</p>
+  <p>The test honored the user’s instruction to make no paid model calls. The session had no model-usage/reservation record; the model-attempt decision count and worker-job count were both zero. The test therefore measures the real blocked flow, not successful model-driven vulnerability discovery.</p>
+  <div class="callout bad"><b>Acceptance result:</b> Failed as a vulnerability-discovery benchmark. The run did not investigate the target, so it cannot demonstrate reconnaissance, endpoint discovery, vulnerability tests, validation, evidence collection, or finding quality. The available Metasploitable documentation identifies an intentionally vulnerable training VM but does not give an exact, reproducible HTTP vulnerability set for this running image. Precision and recall are N/A.</div>
+  <p>No issue was found that required modifying Kali or Metasploitable. Neither VM nor its configuration was changed.</p>
+</section>
+
+<section class="card">
+  <h2>Environment and configuration</h2>
+  <table><tbody>
+    <tr><th>ARIA</th><td><code>http://localhost:7000</code>; host readiness returned HTTP 200; real local services, no mocked routes.</td></tr>
+    <tr><th>Browser</th><td>Playwright-controlled Chromium, <code>headless: false</code>, visible desktop window.</td></tr>
+    <tr><th>Target</th><td>Existing Metasploitable 2 VM at <code>192.168.77.20</code>, on the isolated <code>aria-lab</code> network. Existing lab documentation identifies the image as Metasploitable 2 and records 1 GiB RAM and one vCPU. No target changes were made.</td></tr>
+    <tr><th>Target ground truth</th><td>Incomplete for this benchmark. <a href="https://docs.rapid7.com/metasploit/metasploitable-2/">Rapid7’s Metasploitable 2 setup guide</a> documents an intentionally vulnerable test VM and setup, but does not enumerate the exact HTTP flaw set for this configured image. No vulnerabilities were manually investigated during this run.</td></tr>
+    <tr><th>Worker limits</th><td>Existing worker documentation lists curl and TCP Nmap, a one-CPU/256 MiB job limit, and an allowlist for <code>192.168.77.20/32</code> on TCP 21, 22, 80, 139 and 445. A basic GET to the worker root returned 404 (no root route); ARIA’s autonomous-start capability lookup succeeded. No worker job was created in this run.</td></tr>
+    <tr><th>Mode</th><td>Native autonomous <code>discovery</code>; 12-step ceiling; <code>green_only</code> risk threshold; target scope contains only <code>192.168.77.20</code>.</td></tr>
+    <tr><th>Provider cost</th><td>No paid calls authorized or made. ARIA session usage metadata was empty; no <code>model_attempt</code> decision record or provider reservation was present.</td></tr>
+    <tr><th>Resource measurement</th><td>Per-job resource limits are documented above. Actual host CPU and memory consumption were not sampled; N/A.</td></tr>
+  </tbody></table>
+  <p class="muted">Basic readiness relied on current HTTP readiness checks and prior retained local evidence for the ARIA-to-worker path. This benchmark emitted no target requests: the separate worker receipt query for this session returned an empty list. Target-side access logs were not sampled.</p>
+</section>
+
+<section class="card">
+  <h2>Methodology and autonomy</h2>
+  <p>The evaluator logged into ARIA through its UI, created a fresh target session through the native session dialog, selected the ordinary Discovery assessment goal, left automatic execution at the conservative green-only threshold, and clicked AUTO. The timer origin is the browser’s monotonic timestamp at the outgoing autonomous-start POST. No target hints, payloads, commands, source code, or findings were supplied.</p>
+  <p>During the run, the evaluator only observed the UI. The planner reached a terminal blocked state before an execution step or worker dispatch. The controller ended observation after confirming the early terminal UI state; the benchmark timer was not restarted. The backend’s durable transition gives the actual run duration.</p>
+  <table><thead><tr><th>Human / external involvement</th><th>Observed</th></tr></thead><tbody>
+    <tr><td>Human setup and start</td><td>One UI setup/start sequence (login, target creation, ordinary mode selection, start).</td></tr>
+    <tr><td>Discovery assistance during run</td><td>0 interventions; no payload, command, endpoint, or interpretation supplied.</td></tr>
+    <tr><td>Paid model calls</td><td>0, by user instruction and backend accounting.</td></tr>
+    <tr><td>ARIA-originated target requests</td><td>0 worker jobs; target request count inferred from the worker ledger. Target-side logs were not sampled.</td></tr>
+  </tbody></table>
+</section>
+
+<section class="card">
+  <h2>Evidence labels and limits</h2>
+  <table><thead><tr><th>Evidence type</th><th>What this report treats as evidence</th></tr></thead><tbody>
+    <tr><td>Observed UI facts</td><td>Captured visible-Chromium screenshots, DOM status, UI network responses, browser console and page-error records in <code>run.json</code>.</td></tr>
+    <tr><td>ARIA diagnostic</td><td>The text that no supported nonempty plan was produced after corrective attempts. This is ARIA’s explanation of its failure, corroborated by its persisted blocked state and zero-step activity record.</td></tr>
+    <tr><td>Independent backend verification</td><td>Read-only application database and separate worker-ledger queries: blocked terminal snapshot, zero findings, zero worker jobs/receipts, empty session usage and no model-attempt records.</td></tr>
+    <tr><td>Inference</td><td>ARIA-originated target request count is reported as zero because the worker ledger has no job for this session. Target-side access logs were not sampled.</td></tr>
+    <tr><td>Unverified / unknown</td><td>Exact HTTP vulnerability ground truth for the running target image; host CPU and memory during the 0.247-second run; target-side request logs.</td></tr>
+  </tbody></table>
+  <p>The durable autonomous snapshot’s <code>model_calls=3</code> counts logical planner attempts. It is not a provider-call count. Provider reservations and <code>model_attempt</code> audit records were both zero.</p>
+</section>
+
+<section class="card">
+  <h2>Timeline</h2>
+  <table><thead><tr><th>UTC</th><th>Elapsed</th><th>Event / evidence</th></tr></thead><tbody>
+    <tr><td>05:43:37.690232</td><td>0.000 s</td><td>Browser issued <code>POST /api/pentest/{session}/autonomous/start</code>. Timer began. The target session was already created through the UI.</td></tr>
+    <tr><td>05:43:37.744001</td><td>~0.054 s</td><td>Durable autonomous state entered <code>planning</code>.</td></tr>
+    <tr><td>05:43:37.934554</td><td>0.244 s</td><td>Backend emitted terminal <code>auto_complete</code> with the planner failure message.</td></tr>
+    <tr><td>05:43:37.937586</td><td>0.247 s</td><td>Durable state became <code>blocked / invalid_planner_output</code>; 0 successful steps, no evidence job IDs.</td></tr>
+    <tr><td>05:43:43.200810</td><td>5.393 s</td><td>Visible UI polling observed the terminal “Auto mode” state and captured final screenshot. The extra observation delay did not extend the autonomous run.</td></tr>
+  </tbody></table>
+  <figure>
+    <svg class="chart" viewBox="0 0 900 150" role="img" aria-label="Benchmark run stopped blocked at 0.247 seconds against a 900 second maximum">
+      <text x="28" y="30" font-size="16" fill="#17212b">Autonomous run duration (maximum 900 seconds)</text>
+      <rect x="28" y="58" width="844" height="28" rx="6" fill="#e7ecf0"/>
+      <rect x="28" y="58" width="1.1" height="28" rx="1" fill="#b42318"/>
+      <line x1="28" y1="96" x2="28" y2="108" stroke="#526171"/><line x1="872" y1="96" x2="872" y2="108" stroke="#526171"/>
+      <text x="28" y="130" font-size="13" fill="#526171">0 s — blocked at 0.247 s</text><text x="872" y="130" text-anchor="end" font-size="13" fill="#526171">900 s deadline</text>
+    </svg>
+    <figcaption>Durable run transition elapsed from the browser’s start request timestamp. The red bar is scaled to the 900-second ceiling.</figcaption>
+  </figure>
+  <figure>
+    <svg class="chart" viewBox="0 0 900 180" role="img" aria-label="Zero discoveries at start and at terminal block">
+      <text x="28" y="30" font-size="16" fill="#17212b">Unique confirmed discoveries over the run</text>
+      <line x1="100" y1="130" x2="820" y2="130" stroke="#9aa7b2"/><line x1="100" y1="55" x2="100" y2="130" stroke="#9aa7b2"/>
+      <text x="72" y="63" text-anchor="end" font-size="12" fill="#526171">1</text><text x="72" y="134" text-anchor="end" font-size="12" fill="#526171">0</text>
+      <circle cx="125" cy="130" r="7" fill="#b42318"/><circle cx="805" cy="130" r="7" fill="#b42318"/>
+      <line x1="125" y1="130" x2="805" y2="130" stroke="#b42318" stroke-width="3"/>
+      <text x="125" y="158" text-anchor="middle" font-size="12" fill="#526171">start</text><text x="805" y="158" text-anchor="middle" font-size="12" fill="#526171">blocked (0.247 s)</text>
+    </svg>
+    <figcaption>No candidates or discoveries were produced.</figcaption>
+  </figure>
+</section>
+
+<section class="card">
+  <h2>Findings and metrics</h2>
+  <table><thead><tr><th>Measure</th><th>Result</th><th>Basis</th></tr></thead><tbody>
+    <tr><td>Confirmed unique vulnerabilities</td><td><b>0</b></td><td>No findings were produced; ARIA never executed a target action.</td></tr>
+    <tr><td>False positives</td><td><b>0 reported</b></td><td>Nothing was reported to classify.</td></tr>
+    <tr><td>Precision</td><td><b>N/A</b></td><td>No reported candidates; denominator is zero.</td></tr>
+    <tr><td>Recall</td><td><b>N/A</b></td><td>The target’s exact, version-specific HTTP ground truth is not available in the local benchmark record.</td></tr>
+    <tr><td>Discovery rate</td><td><b>0 / 0.00412 min</b></td><td>0 confirmed findings divided by 0.247 seconds. Numerically 0; not evidence of useful throughput.</td></tr>
+    <tr><td>Unique endpoints</td><td><b>0</b></td><td>No crawler or HTTP request was launched.</td></tr>
+    <tr><td>Time to first confirmed discovery</td><td><b>None</b></td><td>No discovery occurred.</td></tr>
+    <tr><td>Worker tool failures</td><td><b>0</b></td><td>No worker job was submitted. Planner failure is counted separately.</td></tr>
+    <tr><td>Crashes / blocked states</td><td><b>1 blocked</b></td><td><code>invalid_planner_output</code>; application remained available.</td></tr>
+  </tbody></table>
+</section>
+
+<section class="card">
+  <h2>Autonomous execution evidence</h2>
+  <h3>Actual Chromium UI</h3>
+  <figure><a href="evidence/aria-blocked-before-fix.png"><img class="evidence" src="evidence/aria-blocked-before-fix.png" alt="ARIA screen showing step 0 of 12 and repeated planner output errors"></a><figcaption>After the run: step 0/12 and the planner error. In the original UI, the toolbar had reset to the generic “Auto mode” label.</figcaption></figure>
+  <figure><a href="evidence/aria-blocked-after-fix.png"><img class="evidence" src="evidence/aria-blocked-after-fix.png" alt="Retest showing persistent autonomous blocked status and visible planner error"></a><figcaption>Post-fix UI-only retest: “AUTONOMOUS — BLOCKED” and the planner explanation remain visible after reopening the saved session.</figcaption></figure>
+  <h3>Backend records</h3>
+  <ul>
+    <li><a href="evidence/aria-benchmark-run.json">Playwright run record</a>: UI requests, start timestamp, duration observation, screenshots, console and page errors.</li>
+    <li><a href="evidence/aria-benchmark-backend-audit.json">Read-only backend audit</a>: durable state, decision rows, session model usage, findings and separate worker receipts.</li>
+    <li><a href="evidence/aria-benchmark-service.log">Session-filtered ARIA service logs</a>: start and zero-step terminal-cycle lines for the run.</li>
+    <li><a href="evidence/aria-benchmark-ui-retest.json">UI regression retest record</a>.</li>
+  </ul>
+  <p>Backend snapshot: <code>run_state=blocked</code>, <code>reason_code=invalid_planner_output</code>, <code>steps_taken=0</code>, <code>successful_steps=0</code>, <code>evidence_job_ids=[]</code>, <code>completed_observations=[]</code>. The application SQL decision log contains the run start and stop records only. Its session model usage is empty. The separate worker ledger contains no receipt for this session.</p>
+</section>
+
+<section class="card">
+  <h2>Capabilities demonstrated and gaps</h2>
+  <table><thead><tr><th>Capability</th><th>Result</th></tr></thead><tbody>
+    <tr><td>Create authorized target session and persist scope</td><td>Demonstrated through the actual UI.</td></tr>
+    <tr><td>Configure standard discovery settings</td><td>Demonstrated: discovery goal, 12-step cap, green-only threshold.</td></tr>
+    <tr><td>Start an autonomous run and durably record its state</td><td>Demonstrated; API returned <code>started</code>, then persisted a blocked state.</td></tr>
+    <tr><td>Autonomous reconnaissance, crawling, tests, validation, evidence, findings</td><td>Not demonstrated; planner did not return an executable plan.</td></tr>
+    <tr><td>False-positive handling</td><td>Not measurable; no finding candidates were produced.</td></tr>
+  </tbody></table>
+  <h3>Observed architectural constraints</h3>
+  <ul>
+    <li>The autonomous planner requires a supported model-generated proposal; it terminated after malformed/unavailable planning output with no fallback discovery action.</li>
+    <li>The documented worker profile supports curl and TCP Nmap. That does not by itself provide JavaScript-aware crawling, endpoint enumeration, systematic test-input generation, or a web vulnerability verifier.</li>
+    <li>The UI initially presented a blocked terminal run as generic “Auto mode” and hid the detail log after session reload. This defect was fixed after the measured run; the benchmark outcome was not altered.</li>
+    <li>The configured target does not have an exact HTTP ground-truth manifest in the benchmark materials, preventing recall measurement even if findings had been produced.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>Confirmed ARIA defect fixed after the run</h2>
+  <p>Reopening the blocked session showed “Auto mode” and hid the planner error despite the durable backend state being blocked. The UI now retains explicit terminal labels (blocked, failed, complete, stopped), and it keeps the terminal activity log visible when restoring a saved session. No change was made to the target, worker scope, or autonomous run evidence.</p>
+  <p>Verification executed: <code>node tests/frontend_contracts.cjs</code> passed; <code>git diff --check</code> passed; visible Chromium retest reopened the same saved session and confirmed both the blocked label and malformed-output explanation.</p>
+</section>
+
+<section class="card">
+  <h2>Prioritized improvements and next benchmark setup</h2>
+  <ol>
+    <li>Before a paid run, obtain explicit model-call budget authorization and confirm the configured planner/model is available. Keep the user’s current no-paid-calls constraint until that authorization changes.</li>
+    <li>Stage a version-pinned OWASP Juice Shop instance on the isolated test network and preserve its exact release/challenge ground truth outside ARIA’s input. OWASP describes Juice Shop as an intentionally insecure test application used to evaluate security scanners; the project’s version-specific challenge catalogue can support a reproducible truth set. See the <a href="https://owasp.org/projects/juice-shop">official OWASP project page</a>.</li>
+    <li>Review and explicitly narrow the worker allowlist to that disposable target and TCP port 3000; preserve the current Kali and Metasploitable configurations.</li>
+    <li>Ensure ARIA can crawl and test HTTP endpoints with its own supported tools, then rerun a fresh 900-second benchmark and retain the exact target image digest, challenge set, model identifier, tool receipts, request count, and target-side logs.</li>
+  </ol>
+  <div class="callout"><b>Target-source caveat:</b> OWASP’s overview establishes Juice Shop’s suitability as an intentionally insecure scanner test application, but a future benchmark should pin the release and use its matching challenge catalogue as the actual ground truth. No Juice Shop target was installed or modified in this run.</div>
+</section>
+
+<footer>Generated from captured visible-browser and read-only backend evidence. Distinguish observed facts from architectural interpretation and source documentation as described above. No successful vulnerability discovery is claimed.</footer>
+</main></body></html>

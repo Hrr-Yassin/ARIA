@@ -43,6 +43,21 @@ class UserFlowTests(OfflineCase):
         self.assertEqual(store.await_args_list[0].args[1], 'user')
         self.assertEqual(store.await_args_list[1].args[4]['commands'], data['commands'])
 
+    async def test_url_target_service_scan_uses_host_and_requested_ports(self):
+        session = {**SESSION, 'target': 'https://192.0.2.1:8443/app',
+                   'scope': {'targets': ['https://192.0.2.1:8443/app'], 'ports': [80]}}
+        with patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value=session)):
+            result = await _process_rest_input(UserInput(session_id='engagement', user_input='scan http port 80 only'), OWNER)
+        command = result['commands'][0]['command']
+        self.assertEqual(command, 'nmap -sT -sV -Pn -n -p 80 192.0.2.1')
+        validate_worker_command(command, session['scope'])
+
+    async def test_invalid_url_does_not_create_scan_proposal(self):
+        for target in ('http://192.0.2.1:bad', 'http://user:password@192.0.2.1', 'unknown://192.0.2.1'):
+            with self.subTest(target=target), patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value={**SESSION, 'target': target})):
+                result = await _process_rest_input(UserInput(session_id='engagement', user_input='scan http port'), OWNER)
+            self.assertEqual(result['commands'], [])
+
     async def test_scope_and_worker_features_rejected_before_display(self):
         for command in ['nmap -p- 192.0.2.1', 'nmap -sC -p 80 192.0.2.1', 'nmap -p 22 192.0.2.1', 'nmap -p 80 198.51.100.1']:
             with self.assertRaises(ValueError):

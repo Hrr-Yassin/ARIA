@@ -1,6 +1,6 @@
 # ARIA: security research team roadmap
 
-Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phase 6 is implemented for signed Markdown/evidence reports and human-recorded outcomes with offline acceptance; Phases 7–8 remain proposed backlog.
+Updated: 2026-11-06. Status: Phase 0 completed on 2026-11-05; Phase 1 completed for bounded HTTP observations; Phase 2 implemented for supervised saved-evidence analysis; Phase 3 completed for supervised bounded lab mapping; Phase 4 is implemented with offline acceptance for bounded supervised lab workflows; Phase 5 is implemented for supervised saved-evidence verification with a bounded private-JSON reportable gate; Phase 6 is implemented for signed Markdown/evidence reports and human-recorded outcomes with offline acceptance; Phase 7 has an offline benchmark implementation with comparison/live-pilot gates pending; Phase 8 remains proposed backlog.
 
 ## Objective
 
@@ -198,6 +198,12 @@ it is not established by the offline synthetic controls.
 ## Phase 7: benchmark and supervised pilot (2–4 weeks)
 
 Dependencies: Phases 0–6.
+
+Work started by Codex on 2026-11-07; no PR created. See
+[benchmark implementation, baseline and remaining gates](phase7-benchmark-status.md)
+and [retained offline results](phase7-baseline.json). The six-case component baseline
+and seven resilience checks do not complete the three-arm comparison or live pilot.
+Checkboxes remain open where live or human evidence is still required.
 
 - [ ] EVAL-01: Freeze lab images, source revisions, model identifiers, prompts, tool versions, and budgets.
 - [ ] EVAL-02: Prepare a ground-truth set containing secure cases, vulnerable cases, and unfamiliar variants.

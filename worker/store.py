@@ -74,7 +74,7 @@ class JobStore:
         await self.owner.execute(text("""UPDATE aria_worker_jobs SET record =
             jsonb_set(record - 'protected_http', '{plan}',
                 COALESCE(record->'plan', '{}'::jsonb) - 'protected_http')
-                || '{"stdout":"","stderr":"","private_evidence_expired":true}'::jsonb
+                || jsonb_build_object('stdout', '', 'stderr', '', 'private_evidence_expired', true)
             WHERE record->>'state' IN ('succeeded','failed','cancelled')
               AND record->>'private_expires_at' <= :now"""),
             {'now': datetime.now(timezone.utc).isoformat()})
