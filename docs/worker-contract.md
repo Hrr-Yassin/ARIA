@@ -130,3 +130,11 @@ budgets, overload stops, timeout, private evidence and cancellation remain in fo
 There are no arbitrary methods, shell, bodies, redirect following or retries.
 See [Phase 4 status](phase4-investigations-status.md) for exact bounds, owner API
 fields and offline validation; live acceptance of the new profiles is unperformed.
+## Typed adapter extension
+
+The optional `aria-tool` command envelope uses the same jobs-v1 endpoints,
+authorization ledger, cancellation and output receipt verification. Ten bounded
+adapters are implemented and unavailable by default until worker-owned immutable
+profiles are configured. See [the adapter implementation and deployment record](tool-adapters.md)
+for schemas, per-tool offline validation, dependency definitions and owner approval
+requirements. Legacy curl/Nmap jobs retain their existing behavior.

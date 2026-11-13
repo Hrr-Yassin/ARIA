@@ -1,0 +1,25 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "subfinder",
+    "parameters": {
+      "domain": "example.test"
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "{\"host\": \"child.example.test\", \"source\": \"crtsh\"}"
+}

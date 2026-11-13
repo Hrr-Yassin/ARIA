@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "status": "dependency_targets_only_not_installed_or_runtime_validated",
+  "build": "offline vendor overlay; exact bytes locked by verify_bundle.py; base must be digest-pinned",
+  "common": ["Python 3.11", "nftables", "util-linux setpriv", "CA certificates", "worker/requirements.txt", "worker/adapters/python-contracts.txt"],
+  "tools": {
+    "nmap": {"version": "7.95", "source": "https://nmap.org/dist/nmap-7.95.tar.bz2", "path": "/usr/bin/nmap"},
+    "httpx": {"version": "1.7.1", "source": "https://github.com/projectdiscovery/httpx/tree/v1.7.1", "path": "/opt/tools/httpx", "note": "ProjectDiscovery Go binary, not Python httpx"},
+    "katana": {"version": "1.1.2", "source": "https://github.com/projectdiscovery/katana/tree/v1.1.2", "path": "/opt/tools/katana"},
+    "playwright": {"version": "1.56.0", "source": "https://pypi.org/project/playwright/1.56.0/", "path": "/usr/local/bin/python3.11", "additional": ["Matching playwright Python wheel and dependency wheelhouse", "Matching bundled Chromium revision under /opt/chromium", "Chromium shared libraries and sandbox support", "No --no-sandbox"]},
+    "nuclei": {"version": "3.4.10", "source": "https://github.com/projectdiscovery/nuclei/tree/v3.4.10", "path": "/opt/tools/nuclei", "assets": ["worker/assets/http-observation.yaml"], "note": "No community template pack or update access"},
+    "zap": {"version": "2.16.1", "source": "https://github.com/zaproxy/zaproxy/releases/tag/v2.16.1", "path": "/opt/zap/zap.sh", "additional": ["Java 17 or compatible pinned JRE", "Pinned automation, import/export, passive scanner, passive rules and report-generation add-ons"], "note": "No spider/active scan. -cmd -silent HAR import only."},
+    "ffuf": {"version": "2.1.0", "source": "https://github.com/ffuf/ffuf/tree/v2.1.0", "path": "/opt/tools/ffuf"},
+    "sqlmap": {"version": "1.9.11", "source": "https://github.com/sqlmapproject/sqlmap/tree/1.9.11", "path": "/opt/tools/sqlmap", "note": "Include pinned full Python package and a fixed launcher; boolean detection only"},
+    "semgrep": {"version": "1.99.0", "source": "https://pypi.org/project/semgrep/1.99.0/", "path": "/opt/semgrep/bin/semgrep", "assets": ["worker/assets/aria-python.yaml"], "additional": ["Complete pinned wheelhouse and semgrep-core", "Content-addressed read-only source tree under /opt/aria/source/<sha256>"]},
+    "subfinder": {"version": "2.9.0", "source": "https://github.com/projectdiscovery/subfinder/tree/v2.9.0", "path": "/opt/tools/subfinder", "note": "crtsh only; worker ceiling must explicitly admit resolved crt.sh TCP/443; returned names are not scan scope"}
+  }
+}

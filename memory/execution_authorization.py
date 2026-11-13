@@ -190,6 +190,13 @@ class ExecutionAuthorization:
             raise HTTPException(422, 'Timeout exceeds policy limit')
         if validated.tool == 'aria-http' and timeout > 10:
             raise HTTPException(422, 'Authenticated HTTP is bounded to ten seconds')
+        if validated.command.startswith('aria-tool '):
+            from security_tools.adapters import decode
+            adapter, _ = decode(validated.command)
+            if executor is not None or settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
+                raise HTTPException(403, 'Typed adapters require the isolated jobs-v1 worker')
+            if timeout > adapter.timeout:
+                raise HTTPException(422, 'Timeout exceeds adapter limit')
         claimed = replace(proposal, status='consumed', revision=proposal.revision + 1)
         if not await self._stored(self.store.transition, proposal, claimed):
             raise HTTPException(409, 'Authorization already consumed')

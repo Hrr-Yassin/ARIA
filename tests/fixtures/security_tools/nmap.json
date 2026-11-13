@@ -1,0 +1,28 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "nmap",
+    "parameters": {
+      "host": "192.0.2.1",
+      "ports": [
+        8080
+      ]
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "<nmaprun><host><address addr=\"192.0.2.1\" addrtype=\"ipv4\"/><ports><port protocol=\"tcp\" portid=\"8080\"><state state=\"open\"/></port></ports></host><runstats><finished exit=\"success\"/></runstats></nmaprun>"
+}

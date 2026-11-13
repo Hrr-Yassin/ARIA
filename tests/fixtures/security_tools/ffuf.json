@@ -1,0 +1,28 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "ffuf",
+    "parameters": {
+      "url": "http://192.0.2.1:8080/",
+      "words": [
+        "health"
+      ]
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "{\"url\": \"http://192.0.2.1:8080/health\", \"status\": 200, \"length\": 10}"
+}

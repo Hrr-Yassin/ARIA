@@ -1,5 +1,9 @@
 # ARIA security tool infrastructure — audit and registry phase
 
+This historical discovery-phase record is followed by the
+[ten-adapter offline implementation](tool-adapters.md), which documents the new
+typed jobs-v1 integration and the deployment steps that still require approval.
+
 Scope: local source audit and a read-only registry on branch
 'evidence-driven-team'. No additional tools, Kali changes, VM changes, production
 policy changes, external scans or model API calls are authorized in this phase.

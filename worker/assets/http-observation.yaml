@@ -1,0 +1,15 @@
+id: aria-http-observation
+info:
+  name: ARIA HTTP response observation
+  author: aria
+  severity: info
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}"
+    redirects: false
+    max-redirects: 0
+    matchers:
+      - type: status
+        status:
+          - 200

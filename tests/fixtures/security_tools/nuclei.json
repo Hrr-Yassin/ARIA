@@ -1,0 +1,25 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "nuclei",
+    "parameters": {
+      "url": "http://192.0.2.1:8080/"
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "{\"template-id\": \"aria-http-observation\", \"type\": \"http\", \"matched-at\": \"http://192.0.2.1:8080/\", \"info\": {\"name\": \"HTTP observation\", \"severity\": \"info\"}}"
+}

@@ -329,7 +329,15 @@ class Registry(ClosedModel):
                 for role in operation.agent_roles:
                     mapping[role].append(operation.capability)
             entries.append(entry)
+        from security_tools.adapters import catalog as adapter_catalog, contract_digest
+        typed_adapters = adapter_catalog(advertised)
+        for adapter in typed_adapters:
+            for role in adapter['agent_roles']:
+                if adapter['capability'] not in mapping[role]:
+                    mapping[role].append(adapter['capability'])
         return {
+            "typed_adapters": typed_adapters,
+            "typed_registry_sha256": contract_digest(),
             "schema": "aria.tool.registry.v1", "mode": self.mode,
             "registry_digest": self.digest, "tools": entries, "agent_capabilities": mapping,
             "input_schemas": {op.id + ".v1": INPUT_MODELS[(tool.name, op.id)].model_json_schema()

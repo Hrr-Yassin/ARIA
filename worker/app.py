@@ -80,7 +80,13 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
                 ownership.open()
                 await store.open()
                 await runtime.check()
-                app.state.service = WorkerService(store, runtime, ceiling, allowed_ports)
+                from security_tools.worker_profiles import load_profiles
+                profiles = load_profiles(os.environ.get('WORKER_ADAPTER_PROFILES'))
+                for profile in profiles.values():
+                    code, _, _ = await runtime.cli('image', 'inspect', profile.image_id)
+                    if code:
+                        raise RuntimeError('Configured adapter image is not installed')
+                app.state.service = WorkerService(store, runtime, ceiling, allowed_ports, profiles=profiles)
                 app.state.token = secret
                 await app.state.service.recover()
             except BaseException:
@@ -126,8 +132,12 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
         if not app.state.healthy:
             raise HTTPException(503, 'Worker reconciliation unavailable')
         from worker.http_profile import available, specialties_available
+        from security_tools.adapters import ADAPTERS
+        profiles = app.state.service.profiles
         return {'specialist_http_version': 1 if specialties_available() else 0, 'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
-                'network_scope': True, 'program_policy_version': 1, 'tools': ['curl', 'nmap'], 'max_timeout': 300}
+                'network_scope': True, 'program_policy_version': 1,
+                'tools': sorted({'curl', 'nmap', *profiles}), 'max_timeout': 300,
+                'typed_adapters': {ADAPTERS[name].capability: 1 for name in profiles}}
 
     @app.post('/jobs', dependencies=[Depends(authenticate)])
     async def submit(request: Request):

@@ -219,6 +219,14 @@ class WorkerJobs:
             values['exit_code'] = snapshot.get('exit_code', -1)
             values['output_hash'] = hashlib.sha256(snapshot.get('stdout', '').encode()).hexdigest()
             values['stderr_hash'] = hashlib.sha256(snapshot.get('stderr', '').encode()).hexdigest()
+            if job.get('adapter_request_sha256') and snapshot['state'] in {'succeeded', 'failed'}:
+                from security_tools.models import AdapterAttestation
+                attestation = AdapterAttestation.model_validate(snapshot.get('adapter_attestation'))
+                if (attestation.request_sha256 != job['adapter_request_sha256']
+                        or attestation.registry_sha256 != job['adapter_registry_sha256']
+                        or attestation.capability != job['adapter_capability']):
+                    raise ValueError('Typed worker receipt binding mismatch')
+                values['adapter_attestation'] = attestation.model_dump()
             if job.get('protected_http'):
                 from worker.http_profile import public_receipt
                 values['output_hash'] = hashlib.sha256(public_receipt(snapshot.get('stdout', '')).encode()).hexdigest()
@@ -335,6 +343,8 @@ class WorkerJobs:
         return [await self.cancel_job(j) for j in jobs if j['state'] not in TERMINAL]
 
     async def execute(self, job_id, user_id, session_id, command, timeout, authorization_check=None):
+        if command.startswith('aria-tool ') and authorization_check is None:
+            raise HTTPException(403, 'Typed adapters require command-bound authorization')
         if authorization_check is not None:
             context = await authorization_check()
         else:
@@ -343,6 +353,11 @@ class WorkerJobs:
                'created_at': time.time(), 'deadline': time.time() + timeout,
                'endpoint': settings.KALI_AGENT_URL, 'protocol': settings.KALI_WORKER_PROTOCOL,
                'cancel_requested': False, 'revision': 0, 'scope': (context or {}).get('scope', {})}
+        if command.startswith('aria-tool '):
+            from security_tools.adapters import decode, sha256, contract_digest
+            adapter, _ = decode(command)
+            job.update(adapter_request_sha256=sha256(command), adapter_registry_sha256=contract_digest(),
+                       adapter_capability=adapter.capability)
         if command.startswith('aria-http '):
             if settings.KALI_WORKER_PROTOCOL != 'jobs-v1':
                 raise HTTPException(403, 'Authenticated HTTP requires jobs-v1')
@@ -369,6 +384,14 @@ class WorkerJobs:
                 caps = await self.client.capabilities()
             if not isinstance(caps, dict):
                 raise HTTPException(409, 'Worker capability information is unavailable')
+            if command.startswith('aria-tool '):
+                from security_tools.adapters import decode
+                adapter, _ = decode(command)
+                advertised = caps.get('typed_adapters', {})
+                if (settings.KALI_WORKER_PROTOCOL != 'jobs-v1' or not isinstance(advertised, dict)
+                        or type(advertised.get(adapter.capability)) is not int
+                        or advertised.get(adapter.capability) != 1):
+                    raise HTTPException(409, 'Worker typed adapter capability is unavailable')
             if job.get('protected_http'):
                 version = caps.get(job.get('http_capability', 'authenticated_http_version'))
                 if type(version) is not int or version != 1:
@@ -377,6 +400,8 @@ class WorkerJobs:
                 tools = caps.get('tools')
                 try:
                     tool = shlex.split(command)[0]
+                    if tool == 'aria-tool':
+                        tool = adapter.name
                 except (ValueError, IndexError):
                     raise HTTPException(409, 'Worker command capability cannot be determined') from None
                 if not isinstance(tools, list) or tool not in tools:

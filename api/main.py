@@ -31,6 +31,7 @@ from api.routers import team as team_router
 from api.routers import programs as programs_router
 from api.routers import burp as burp_router
 from api.routers import tool_registry as tool_registry_router
+from api.routers import tool_operations as tool_operations_router
 from config.settings import settings
 from memory.database_models import init_db
 from memory.session_manager import session_manager
@@ -153,6 +154,7 @@ app.include_router(team_router.router, prefix="/api/team", tags=["team-tasks"])
 app.include_router(programs_router.router, prefix="/api/programs", tags=["program-policies"])
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
 app.include_router(tool_registry_router.router, prefix="/api", tags=["tool-registry"])
+app.include_router(tool_operations_router.router, prefix="/api", tags=["tool-operations"])
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])
 app.include_router(sessions_router.router, prefix="/api/session", tags=["sessions"])
 app.include_router(reports_router.router, prefix="/api/report", tags=["reports"])

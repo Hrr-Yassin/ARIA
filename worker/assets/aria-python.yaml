@@ -1,0 +1,6 @@
+rules:
+  - id: aria-python-eval
+    languages: [python]
+    message: Review dynamic evaluation of untrusted data
+    severity: WARNING
+    pattern: eval(...)

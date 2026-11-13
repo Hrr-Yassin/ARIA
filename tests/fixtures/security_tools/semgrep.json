@@ -1,0 +1,25 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "semgrep",
+    "parameters": {
+      "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "{\"results\": [{\"check_id\": \"aria-python-eval\", \"path\": \"/opt/aria/source/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/fixture.py\", \"start\": {\"line\": 1}, \"extra\": {\"message\": \"do not pass source text\"}}], \"errors\": [], \"paths\": {\"scanned\": [\"/opt/aria/source/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/fixture.py\"]}}"
+}

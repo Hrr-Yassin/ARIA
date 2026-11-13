@@ -84,6 +84,12 @@ def allowed_target(target, scope):
 
 
 def validate_command(command, scope, claimed_tool=''):
+    if isinstance(command, str) and command.startswith('aria-tool '):
+        from security_tools.adapters import validate
+        checked = validate(command, scope)
+        if claimed_tool and claimed_tool != checked.tool:
+            raise PolicyError('Tool does not match typed adapter')
+        return checked
     if isinstance(scope, dict) and 'program_policy' in scope:
         from orchestrator.program_scope import validate_program_command
         checked = validate_program_command(command, scope)

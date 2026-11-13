@@ -67,12 +67,18 @@ class DockerRuntime:
         return directory
 
     async def create(self, job: dict) -> None:
+        image = job['plan'].get('image_id', self.image)
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', image):
+            raise ValueError('Adapter image must be immutable')
+        large = job['plan'].get('adapter_name') in {'playwright', 'zap'}
         payload = base64.b64encode(json.dumps({**job['plan'], 'deadline': job['deadline']}).encode()).decode()
         args = ['create', '--pull=never', '--name', self.name(job),
             '--label', 'aria.worker=jobs-v1', '--restart=no', '--network', self.network,
-            '--read-only', '--cpus=1', '--memory=256m', '--memory-swap=256m',
-            '--pids-limit=64', '--ulimit', 'nofile=256:256', '--shm-size=8m',
-            '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777',
+            '--read-only', '--cpus=1', '--memory=1024m' if large else '--memory=256m',
+            '--memory-swap=1024m' if large else '--memory-swap=256m',
+            '--pids-limit=128' if large else '--pids-limit=64', '--ulimit', 'nofile=256:256',
+            '--shm-size=128m' if large else '--shm-size=8m',
+            '--tmpfs', '/tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777' if large else '/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777',
             '--cap-drop=ALL', '--cap-add=NET_ADMIN', '--cap-add=SETPCAP',
             '--cap-add=SETUID', '--cap-add=SETGID', '--security-opt=no-new-privileges=true',
             '--log-driver=json-file', '--log-opt=max-size=1m', '--log-opt=max-file=1',
@@ -91,7 +97,7 @@ class DockerRuntime:
         for host, addresses in job['plan']['hosts'].items():
             for address in addresses:
                 args.extend(['--add-host', f'{host}:{address}'])
-        code, _, _ = await self.cli(*args, self.image, payload)
+        code, _, _ = await self.cli(*args, image, payload)
         if code:
             raise RuntimeError('Container creation failed')
 

@@ -1,0 +1,26 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "sqlmap",
+    "parameters": {
+      "url": "http://192.0.2.1:8080/?id=1",
+      "parameter": "id"
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "[INFO] testing GET parameter 'id'\nParameter: id (GET)\n    Type: boolean-based blind\n    Title: fixture only\n[*] ending @ 12:00:00 /2000-01-01/"
+}

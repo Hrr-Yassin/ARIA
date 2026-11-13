@@ -1,0 +1,25 @@
+{
+  "request": {
+    "schema_version": 1,
+    "tool": "katana",
+    "parameters": {
+      "url": "http://192.0.2.1:8080/"
+    }
+  },
+  "scope": {
+    "targets": [
+      "192.0.2.1",
+      "example.test"
+    ],
+    "ports": [
+      8080
+    ],
+    "artifact_sha256": [
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "passive_sources": [
+      "crtsh"
+    ]
+  },
+  "stdout": "{\"request\": {\"method\": \"GET\", \"endpoint\": \"http://192.0.2.1:8080/child\"}}"
+}

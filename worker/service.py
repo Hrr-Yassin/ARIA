@@ -16,16 +16,20 @@ def fingerprint(request: dict) -> str:
 
 
 def snapshot(job: dict) -> dict:
-    return {key: job[key] for key in ('job_id', 'session_id', 'state', 'terminated',
+    result = {key: job[key] for key in ('job_id', 'session_id', 'state', 'terminated',
         'exit_code', 'stdout', 'stderr') if key in job}
+    if job.get('plan', {}).get('adapter_attestation') and job['state'] in TERMINAL:
+        result['adapter_attestation'] = job['plan']['adapter_attestation']
+    return result
 
 
 class WorkerService:
-    def __init__(self, store, runtime, ceiling: list[str], allowed_ports: list[int], max_jobs: int = 4, planner=prepare) -> None:
+    def __init__(self, store, runtime, ceiling: list[str], allowed_ports: list[int], max_jobs: int = 4, planner=prepare, profiles=None) -> None:
         self.store, self.runtime = store, runtime
         self.ceiling, self.allowed_ports = ceiling, allowed_ports
         self.max_jobs, self.planner = max_jobs, planner
         self.lock = asyncio.Lock()
+        self.profiles = profiles or {}
 
     async def submit(self, request: dict) -> dict:
         async with self.lock:
@@ -55,6 +59,21 @@ class WorkerService:
                 if admitted and time.time() < max(job.get('admitted_at', 0) for job in admitted) + rules.min_interval_seconds:
                     raise HTTPException(429, 'Worker engagement rate limit')
             is_http = request['command'].startswith('aria-http ')
+            is_adapter = request['command'].startswith('aria-tool ')
+            if is_adapter:
+                from security_tools.adapters import decode
+                try:
+                    adapter, _ = decode(request['command'])
+                    if request['timeout'] > adapter.timeout:
+                        raise ValueError()
+                except ValueError:
+                    raise HTTPException(403, 'Invalid adapter or timeout') from None
+                history = await self.store.for_session(request['session_id'])
+                typed_history = [job for job in history if job.get('command', '').startswith('aria-tool ')]
+                if (len(typed_history) >= 20
+                        or any(job['session_id'] == request['session_id'] for job in active)
+                        or typed_history and time.time() < max(job.get('admitted_at', 0) for job in typed_history) + 1):
+                    raise HTTPException(429, 'Adapter budget, concurrency or rate exhausted')
             if is_http and request['timeout'] > 10:
                 raise HTTPException(403, 'Authenticated HTTP timeout exceeds ten seconds')
             if is_http or request['scope'].get('web_authenticated_replay') is True:
@@ -69,7 +88,13 @@ class WorkerService:
                 if history and time.time() < max(job.get('admitted_at', 0) for job in history) + 1:
                     raise HTTPException(429, 'Authenticated HTTP rate limit')
             try:
-                if is_http:
+                if is_adapter:
+                    if request.get('protected_http'):
+                        raise ValueError('Unexpected encrypted request')
+                    from security_tools.worker_profiles import prepare_tool
+                    plan = await prepare_tool(request['command'], request['scope'], self.ceiling,
+                                              self.allowed_ports, self.profiles)
+                elif is_http:
                     from worker.http_profile import prepare_http
                     plan = await prepare_http(request['command'], request['scope'], self.ceiling,
                                               self.allowed_ports, request.get('protected_http', ''))

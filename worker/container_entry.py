@@ -30,9 +30,11 @@ def main() -> int:
             from worker.http_runner import run
             return run(plan)
         plan['argv'] = [sys.executable, '-m', 'worker.container_entry', sys.argv[1], 'http']
+    if plan.get('adapter_request'):
+        plan['argv'] = [sys.executable, '-m', 'security_tools.runner', sys.argv[1]]
     environment = {'PATH': '/usr/bin:/bin', 'HOME': '/tmp', 'LANG': 'C.UTF-8'}
     child = subprocess.Popen(plan['argv'], env=environment,
-                             cwd='/opt/aria' if plan.get('protected_http') else '/tmp',
+                             cwd='/opt/aria' if plan.get('protected_http') or plan.get('adapter_request') else '/tmp',
                              start_new_session=True)
     try:
         return child.wait(timeout=remaining)
