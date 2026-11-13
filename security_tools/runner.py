@@ -55,7 +55,7 @@ def setup(plan: dict) -> list[str]:
     if file_digest(executable) != profile.binary_sha256:
         raise ValueError('Tool binary digest mismatch')
     for name, expected in profile.assets.items():
-        if name not in {'http-observation.yaml', 'aria-python.yaml'} or file_digest(Path('/opt/aria/assets') / name) != expected:
+        if name not in {'http-observation.yaml', 'aria-python.yaml', 'subfinder-offline.jsonl'} or file_digest(Path('/opt/aria/assets') / name) != expected:
             raise ValueError('Tool asset digest mismatch')
     if adapter.name == 'semgrep':
         if parameters.artifact_sha256 not in profile.artifacts or tree_digest(Path('/opt/aria/source') / parameters.artifact_sha256) != parameters.artifact_sha256:
@@ -64,6 +64,10 @@ def setup(plan: dict) -> list[str]:
         Path('/tmp/aria-words').write_text('\n'.join(parameters.words) + '\n')
     if adapter.name == 'zap':
         prepare_zap(parameters.url)
+        # ZAP derives its profile directory from Java's user.home property,
+        # which otherwise remains /root even after the worker drops to nobody.
+        # Keep that writable state inside the job's bounded tmpfs.
+        Path('/tmp/aria-zap-home').mkdir(mode=0o700, parents=True, exist_ok=True)
     argv = adapter.argv(parameters)
     if adapter.name == 'nmap':
         argv[1:1] = ['-sT', '-Pn', '-n']  # Same constrained worker TCP profile.
@@ -120,7 +124,7 @@ async def supervise(argv: list[str], timeout: float, environment: dict) -> tuple
 
 
 async def main(plan: dict) -> int:
-    adapter, _ = decode(plan['adapter_request'])
+    adapter, parameters = decode(plan['adapter_request'])
     remaining = min(adapter.timeout, plan['deadline'] - time.time())
     if remaining <= 0:
         return 124
@@ -128,9 +132,13 @@ async def main(plan: dict) -> int:
     environment = {'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/tmp', 'LANG': 'C.UTF-8',
         'PYTHONPATH': '/opt/aria',
         'SEMGREP_SEND_METRICS': 'off', 'SEMGREP_ENABLE_VERSION_CHECK': '0',
-        'JAVA_TOOL_OPTIONS': '-Xmx512m -XX:ActiveProcessorCount=1', 'PLAYWRIGHT_BROWSERS_PATH': '/opt/chromium'}
+        'JAVA_TOOL_OPTIONS': '-Xmx512m -XX:ActiveProcessorCount=1 -Duser.home=/tmp/aria-zap-home',
+        'PLAYWRIGHT_BROWSERS_PATH': '/opt/chromium'}
     try:
         code, out, err = await supervise(argv, min(remaining, plan['deadline'] - time.time()), environment)
+        if adapter.name == 'subfinder' and parameters.source == 'offline' and code == 0:
+            out = Path('/opt/aria/assets/subfinder-offline.jsonl').read_text()
+            err = ''
         if adapter.name == 'zap' and code == 0:
             report = Path('/tmp/aria-report.json')
             if report.stat().st_size >= 100000:

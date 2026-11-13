@@ -68,7 +68,13 @@ class SemgrepInput(ClosedModel):
 
 class SubfinderInput(ClosedModel):
     domain: str = Field(min_length=3, max_length=253)
-    source: Literal['crtsh'] = 'crtsh'
+    source: Literal['crtsh', 'offline'] = 'crtsh'
+
+    @model_validator(mode='after')
+    def offline_domain(self):
+        if self.source == 'offline' and self.domain != 'aria-fixture.test':
+            raise ValueError('Offline enumeration uses only the reserved fixture domain')
+        return self
 
     @field_validator('domain')
     @classmethod

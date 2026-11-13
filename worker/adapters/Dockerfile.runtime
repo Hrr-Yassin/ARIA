@@ -1,0 +1,16 @@
+# Online dependency preparation runs only in this build container. The resulting
+# immutable image, dpkg inventory and Python wheel hashes are retained for replay.
+ARG PYTHON_BASE
+FROM ${PYTHON_BASE}
+ARG DEBIAN_SNAPSHOT=20261101T000000Z
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+    && printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/%s bookworm main\n' "$DEBIAN_SNAPSHOT" > /etc/apt/sources.list \
+    && apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends curl nmap nftables util-linux ca-certificates \
+    && dpkg-query -W > /usr/local/share/aria-dpkg.lock \
+    && rm -rf /var/lib/apt/lists/*
+COPY python-contracts.txt worker-requirements.txt /tmp/
+RUN pip install --no-cache-dir --require-hashes -r /tmp/python-contracts.txt -r /tmp/worker-requirements.txt \
+    && pip freeze --all > /usr/local/share/aria-python.lock
+WORKDIR /opt/aria
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/aria

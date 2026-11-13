@@ -83,6 +83,8 @@ class DockerRuntime:
             '--cap-add=SETUID', '--cap-add=SETGID', '--security-opt=no-new-privileges=true',
             '--log-driver=json-file', '--log-opt=max-size=1m', '--log-opt=max-file=1',
             '--dns=127.0.0.1', '--no-healthcheck']
+        if self.executable == 'podman':
+            args.extend(['--cgroupns=private', '--cgroups=enabled'])
         if job['plan'].get('protected_http'):
             # Private host directory; the mounted file is readable by the
             # unprivileged container, but never appears in argv/environment.

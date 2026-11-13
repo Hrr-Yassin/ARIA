@@ -1,10 +1,99 @@
-# Typed security adapters — offline implementation record
+# Typed security adapters — implementation and Kali deployment record
 
-Implemented on branch `autonoms_pentesters`. This record covers software and
-synthetic offline contracts, not certification of installed security tools or
-production deployment. No VM, network, service or deployed container was changed.
-No scanner ran against Kali, Metasploitable or another live target. No model or
-OpenRouter call was used.
+## Phase 2 deployment and laboratory validation — 13 November 2026
+
+The previous offline-only statement below describes the Phase 1 state. Phase 2
+deployed reviewed digest-pinned images to the existing rootless Podman worker on
+Kali `192.168.77.10` and used ARIA jobs-v1 against the authorized
+`192.168.77.20/32` lab target only. The isolated `aria-lab` network and the
+worker destination/port ceiling were rechecked before deployment. No Fedora,
+Metasploitable, VM/network, Kali network, SSH, firewall or unrelated service
+configuration was changed. The worker service and its private profile/source
+files were updated under the authorized worker tree. PostgreSQL ledger and
+authorization/evidence verification remained enabled.
+
+Images use Python 3.11 pinned to `docker.io/library/python@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39`, Debian bookworm snapshot `20261101T000000Z`, locked Python wheels, and vendored binaries/source. Kali image IDs, not mutable tags, are the runtime identities. The runtime base includes Nmap 7.93+dfsg. Tool releases are pinned as follows: httpx 1.7.1, Katana 1.1.2, Nuclei 3.4.10, ffuf 2.1.0, Subfinder 2.9.0, ZAP 2.16.1, Playwright 1.56.0 with Chromium 141.0.7390.37, SQLmap 1.9.11 at source commit `0599f7c1b6fe679106d18744b49f90fd1f340cff`, Semgrep 1.99.0, and Java 17.0.19. The resolved release lock and SHA-256 inventory were retained in the ignored local deployment workspace. Exact executable/image IDs are in the matrix. Images were transferred to Kali and executed there; no host command execution path was added to ARIA.
+
+| Tool | Image ID (Kali rootless Podman) | Capability enabled after validation | ARIA execution / receipt | Runtime result |
+| --- | --- | --- | --- | --- |
+| Nmap | `sha256:b8982e2e539f7503ee91e3cb038600322eae1c924bc9722305f04bea3a72f7e7` | yes | job `6f67dfc2-436c-4b9a-a5b6-593d3ae0a0a5`; receipt verified | TCP discovery of approved ports succeeded; five approved ports observed open. |
+| ProjectDiscovery httpx | `sha256:938b67c9ac2ff95a72af3d09fd0acfa93962f0acfd923738d0bcf871936d6693` | yes | job `90e6cb9c-6984-4966-9346-2dabf74ba4f6`; receipt verified | HTTP 200 and title observation succeeded. |
+| Katana | `sha256:aa9f30cf5c9d5ef4af2521804dd89bca9b19cb5304c3572d605e672e32cf7b87` | no | job `01cabcee-8eb6-4272-8256-3e1879ac86e3`; terminal receipt verified | Container exited 137 at the ordinary 256 MiB cgroup memory limit. Binary/version verified, crawl did not complete. Disabled pending measured resource approval or optimization. |
+| Playwright / Chromium | `sha256:778fd6be2ad8048abe133b04ff7f7b2d7db960b7b4c4883fd2437996aa2ed2d2` | no | job `db9c0ce0-fa1d-4b49-a5c8-9b13ed085f30`; terminal receipt verified | Chromium sandbox failed at `sys_chroot("/proc/self/fdinfo/")` under the existing container security policy. No sandbox bypass was introduced. Disabled pending a separately reviewed compatible isolation policy. |
+| Nuclei | `sha256:118601592a0d69199c1bbb4c9f058f68f6fc7612f98aa6f3f56fcca2e1b1f366` | yes | job `e97894e8-2945-4602-adf4-bc727d9f6e3c`; receipt verified | Supplied single informational HTTP observation template completed; no vulnerability claim. |
+| OWASP ZAP | `sha256:eb7f95db6bcde53612d14606cbbb4517f9f754c30d698bd320ffb3d4a4ca6d93` | no | no ARIA job | ZAP version probe completed, but consumed 131040 KiB of the 128 MiB `/tmp` envelope, leaving 32 KiB. Disabled; passive report job was not attempted. |
+| ffuf | `sha256:eaca8423a30b0adb87eba31d71ac95c0ade7c15d01a22123dc1b92fd154fa3b4` | yes | job `e00652ea-43d9-4dc9-b2d7-d1084714b851`; receipt verified | Four bounded dictionary observations completed. |
+| SQLmap | `sha256:62c64a47d3effbec7372d4eb2810f906729bb33d75210b9c1f703341a92be0b7` | no | job `5459e3e9-dee8-4e5c-a39d-c0aa172360ee`; terminal receipt verified | Pinned runtime/version probe passed. ARIA worker returned “could not start the isolated job” before command execution; no SQL probe ran. Disabled pending worker startup diagnosis. |
+| Semgrep | `sha256:134a95690847b7a53eb06f2b712517aa889f25bc5f4a63e2c5f5755042db07ee` | yes | job `ffcda00a-399e-4f2b-852d-466daaa06459`; receipt verified | Local disposable source fixture produced the expected `eval` candidate; finding remains unverified. |
+| Subfinder | `sha256:16bd43a00838d1898a874840a8f3673a65504490c2893a4c83c4d7b59b88381f` | yes, offline only | job `bd3b9f21-26c5-4851-9cc7-229e7999f2a7`; receipt verified | Offline fixture returned `child.aria-fixture.test`; no DNS/CT provider query or external disclosure occurred. |
+
+All ten adapter contracts are implemented and registered in code. All ten
+executables were present in the pinned worker images and their version/executable
+probes succeeded. Only the six tools marked enabled were in the final worker
+profile after the observed failures. Nmap, httpx, Nuclei, ffuf, Semgrep and
+offline Subfinder have authorized ARIA execution and verified evidence receipts.
+The three failed jobs have verified terminal receipts, which establish job
+origin and failure, not successful tool execution. ZAP has no ARIA job. Profile
+discovery after disabling the failed tools returned exactly the six enabled
+capabilities; an unauthenticated worker capability request returned HTTP 401.
+The worker's rootless cgroup enforcement had been directly probed at both the
+ordinary 256 MiB/64 PID/1 CPU envelope and the browser/ZAP 1024 MiB/128 PID/1 CPU
+envelope. No limit was raised during validation.
+
+The API autonomous investigation was also exercised using the configured local
+Ollama model (qwen3:4b-instruct), not OpenRouter. It ended `blocked` with
+`invalid_planner_output` after two corrective attempts and zero tool steps; run
+ID `ae66f2f9-6675-458c-9083-719fe0b96bea`, session
+`4b37be65-0256-489f-8a83-13c421e6635d`. The local model produced 967 prompt and
+146 completion tokens according to the API log. OpenRouter calls and spend:
+**0 calls, $0.00**. Thus autonomous agent-to-tool use is not accepted yet even
+though direct ARIA proposal/execute jobs for six adapters are verified.
+
+The original regression baseline and the post-deployment regression both pass:
+**618 Python tests passed** using
+`.venv/bin/python -B -m unittest discover -s tests -t . -q`; frontend contracts
+pass using `node tests/frontend_contracts.cjs`. The disposable HTTP fixture,
+adapter mocks and worker resource-enforcement tests remain offline. Live
+authorized jobs above used only the target's approved ports and bounded
+operations. Out-of-scope and unauthorized job denials remain covered by the
+existing contract/security tests; the worker's unauthenticated request was
+additionally checked live and denied with 401. No public target, provider query,
+destructive action, extraction or database dump was run.
+
+### Deployment changes and rollback
+
+The deployment changed only ARIA worker files under
+`/home/kali/.local/share/aria-worker/`, the rootless worker image store, the
+worker's private environment/profile, and the worker service's systemd drop-in
+needed for its existing per-user Podman cgroup delegation. Backups are private
+under `/home/kali/.local/share/aria-worker/phase2-backup-e1b4ae2/`; the original
+image ID was
+`sha256:bb5f48b3d9a9ca41d4375ff50627db0ed0caeeee2d50f8f355c39a2925839e33`.
+Rollback, using the existing authorized Kali guest maintenance channel:
+
+1. Stop `aria-kali-worker.service` and confirm no active jobs.
+2. Restore the backed-up original `worker.env` and application source tree from
+   `phase2-backup-e1b4ae2/` and restore its original worker image reference.
+3. Remove only the Phase 2 worker service drop-in created for the user-session
+   dependency. Preserve the underlying `user@1000.service` package/unit.
+4. Start/restart `aria-kali-worker.service`; check its health and authenticated
+   jobs-v1 capability response. Do not alter firewall, VM/network or target.
+5. Keep Phase 2 images and private backups until the owner confirms rollback;
+   remove them later only through a separately authorized cleanup.
+
+The following owner decisions are required before retrying blocked acceptance
+cases: (1) approve a larger `/tmp` limit for ZAP, suggested starting measurement
+at 256 MiB while keeping CPU 1, memory 1024 MiB and PIDs 128; (2) approve either
+a reviewed narrow Chromium sandbox compatibility change or accepting Playwright
+as unavailable under the current kernel/container policy (no `--no-sandbox` or
+privileged fallback); and (3) approve a measured Katana memory adjustment if
+runtime optimization at the current 256 MiB limit does not suffice. No such
+changes have been made. SQLmap also needs diagnosis of the worker's isolated-job
+startup failure before a bounded Boolean-only test can be accepted.
+
+Implemented on branch `autonoms_pentesters`. The current deployment status is
+recorded above; the Phase 1 statements below are retained as the offline
+implementation and pre-deployment test record.
 
 The saved `/tmp/aria-mission-baseline-tests.log` contained 475 tests with three
 failures and two errors. The affected model-routing, provider-credential/quota and
@@ -168,8 +257,10 @@ It executes no scanners. Container-runtime tests use mocks; these do not establi
 real firewall isolation, Chromium/JVM compatibility, tool CLI compatibility,
 throughput or hostile resource-exhaustion resistance.
 
-Owner approval is required before the following deployment changes or live lab
-validation; none were performed:
+The following items describe the pre-deployment Phase 1 approval checklist; the
+authorized Phase 2 work above supersedes its statement that deployment had not
+occurred. The outstanding owner approvals and blockers are listed in the Phase 2
+section:
 
 1. Assemble/review the vendor overlay, complete wheel/library/browser/add-on locks
    and SBOM; choose the digest-pinned base and build each selected worker image.

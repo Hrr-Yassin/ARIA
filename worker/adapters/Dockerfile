@@ -14,7 +14,7 @@ WORKDIR /opt/aria
 COPY security_tools/ ./security_tools/
 COPY config/__init__.py config/security_tool_registry.py ./config/
 COPY worker/__init__.py worker/policy.py worker/container_entry.py worker/http_profile.py worker/http_runner.py ./worker/
-COPY orchestrator/__init__.py orchestrator/execution_policy.py ./orchestrator/
+COPY orchestrator/__init__.py orchestrator/execution_policy.py orchestrator/program_scope.py ./orchestrator/
 COPY worker/assets/ ./assets/
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/aria
 ENTRYPOINT ["/usr/local/bin/python3.11", "-m", "worker.container_entry"]

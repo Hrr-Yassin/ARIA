@@ -77,7 +77,7 @@ class Adapter:
         if self.name == 'subfinder':
             allowed_target(parameters.domain, scope)
             # Third-party egress is separate from target scope; never infer approval.
-            if scope.get('passive_sources') != ['crtsh']:
+            if parameters.source != 'offline' and scope.get('passive_sources') != ['crtsh']:
                 raise AdapterError('Passive provider egress is not authorized')
             return (parameters.domain,)
         target = parameters.host if self.name == 'nmap' else parameters.url
@@ -117,6 +117,8 @@ class Adapter:
             return [exe, '-u', p.url, '-p', p.parameter, '--batch', '--level=1', '--risk=1', '--threads=1', '--technique=B', '--timeout=5', '--retries=0', '--delay=1', '--disable-coloring', '--skip-waf', '--skip-heuristics', '--ignore-redirects', '--answers=follow=N', '--output-dir=/tmp/sqlmap', '--flush-session']
         if self.name == 'semgrep':
             return [exe, 'scan', '--config=/opt/aria/assets/aria-python.yaml', '--json', '--metrics=off', '--disable-version-check', '--no-git-ignore', '--jobs=1', '--timeout=5', '--max-memory=128', '--max-target-bytes=65536', '/opt/aria/source/' + p.artifact_sha256]
+        if p.source == 'offline':
+            return [exe, '-version']
         return [exe, '-d', p.domain, '-s', 'crtsh', '-json', '-silent', '-rl', '1', '-timeout', '5', '-max-time', '1', '-duc']
 
     def normalize(self, raw: str, parameters, scope: dict, exit_code: int = 0, state: str = 'succeeded'):
@@ -248,7 +250,9 @@ class Adapter:
                     raise ValueError()
                 rows.append(('url', item['url'], f'HTTP {item["status"]}', 'info'))
             elif self.name == 'subfinder':
-                rows.append(('domain', item['host'], 'Passive name candidate; not authorized for scanning', 'info'))
+                summary = ('OFFLINE FIXTURE candidate; no provider query executed' if p.source == 'offline'
+                           else 'Passive name candidate; not authorized for scanning')
+                rows.append(('domain', item['host'], summary, 'info'))
         if self.name in {'httpx', 'playwright'} and len(rows) != 1:
             raise ValueError()
         return rows

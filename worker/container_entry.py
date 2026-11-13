@@ -6,8 +6,24 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from worker.policy import firewall
+
+
+def verify_limits(large: bool = False, root: Path = Path('/sys/fs/cgroup')) -> None:
+    """Fail closed when a runtime silently ignores requested resource limits."""
+    memory = (1024 if large else 256) * 1024 * 1024
+    pids = 128 if large else 64
+    try:
+        actual_memory = int((root / 'memory.max').read_text().strip())
+        actual_pids = int((root / 'pids.max').read_text().strip())
+        quota, period = map(int, (root / 'cpu.max').read_text().split())
+        if not (0 < actual_memory <= memory and 0 < actual_pids <= pids
+                and 0 < quota <= period):
+            raise ValueError()
+    except (OSError, ValueError):
+        raise RuntimeError('Required CPU/memory/PID enforcement is unavailable') from None
 
 
 def main() -> int:
@@ -16,6 +32,7 @@ def main() -> int:
         remaining = plan['deadline'] - time.time()
         if remaining <= 0:
             return 124
+        verify_limits(plan.get('adapter_name') in {'playwright', 'zap'})
         subprocess.run(['/usr/sbin/nft', '-f', '-'], input=firewall(plan).encode(),
                        check=True, timeout=min(5, remaining))
         # Clear bounding/inheritable/ambient caps before running submitted tools.

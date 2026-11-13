@@ -37,6 +37,8 @@ def load_profiles(path: str | None) -> dict[str, Profile]:
     result = {name: Profile.model_validate(value) for name, value in data.items()}
     for name, profile in result.items():
         expected = {'http-observation.yaml'} if name == 'nuclei' else {'aria-python.yaml'} if name == 'semgrep' else set()
+        if name == 'subfinder' and profile.assets:
+            expected = {'subfinder-offline.jsonl'}
         if set(profile.assets) != expected:
             raise AdapterError('Required asset pins do not match')
         if profile.artifacts and name != 'semgrep':
@@ -56,7 +58,11 @@ async def prepare_tool(command: str, scope: dict, ceiling: list[str], allowed_po
     if profile is None:
         raise AdapterError('Worker adapter profile is unavailable')
     profile = Profile.model_validate(profile)
-    if adapter.name == 'semgrep':
+    if adapter.name == 'subfinder' and parameters.source == 'offline':
+        if set(profile.assets) != {'subfinder-offline.jsonl'}:
+            raise AdapterError('Offline fixture is not installed and pinned')
+        plan = {'argv': [], 'networks': [], 'ports': [1], 'hosts': {}}
+    elif adapter.name == 'semgrep':
         if parameters.artifact_sha256 not in profile.artifacts:
             raise AdapterError('Source artifact is not installed in the worker image')
         plan = {'argv': [], 'networks': [], 'ports': [1], 'hosts': {}}

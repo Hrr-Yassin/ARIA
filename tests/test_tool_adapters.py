@@ -111,6 +111,27 @@ for name in ADAPTERS:
 
 
 class AdapterPolicyTests(OfflineCase):
+    async def test_subfinder_offline_fixture_never_builds_provider_egress(self):
+        request={'schema_version':1,'tool':'subfinder','parameters':
+            {'domain':'aria-fixture.test','source':'offline'}}
+        scope={'targets':['aria-fixture.test'],'ports':[1]}
+        command=encode(request)
+        pinned=Profile(image_id='sha256:'+'c'*64,tool_version='2.9.0',binary_sha256='b'*64,
+            assets={'subfinder-offline.jsonl':'d'*64})
+        resolver=AsyncMock(side_effect=AssertionError('offline mode must not resolve'))
+        plan=await prepare_tool(command,scope,['192.0.2.0/24'],[21,22,80],{'subfinder':pinned},resolver)
+        self.assertEqual(plan['networks'],[])
+        self.assertEqual(plan['ports'],[1])
+        self.assertEqual(plan['hosts'],{})
+        self.assertIn('security_tools.runner',plan['argv'])
+        output=ADAPTERS['subfinder'].normalize(
+            '{"host":"child.aria-fixture.test","source":"offline_fixture"}',
+            ADAPTERS['subfinder'].parameters(request['parameters']),scope)
+        self.assertEqual(output.error,'none')
+        self.assertIn('no provider query executed',output.observations[0].summary)
+        with self.assertRaises(AdapterError):
+            ADAPTERS['subfinder'].parameters({'domain':'example.test','source':'offline'})
+
     async def test_ceiling_exclusions_port_and_dns_pins(self):
         data=fixture('httpx');data['request']['parameters']['url']='http://lab.example:8080/'
         data['scope']['targets']=['lab.example']
