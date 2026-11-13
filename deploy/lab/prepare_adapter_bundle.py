@@ -22,6 +22,7 @@ RELEASES = {
     'subfinder': ('projectdiscovery/subfinder', 'v2.9.0', 'subfinder_2.9.0_linux_amd64.zip'),
     'zap': ('zaproxy/zaproxy', 'v2.16.1', 'ZAP_2.16.1_Linux.tar.gz'),
 }
+PINNED_RELEASE_LOCK = Path(__file__).resolve().parents[2] / 'worker/adapters/locks/security-tools.json'
 
 
 def get(url: str) -> bytes:
@@ -83,7 +84,11 @@ def main():
             except Exception as error:
                 records.append({'tool':futures[future],'error':str(error)})
                 print(futures[future],type(error).__name__,str(error),flush=True)
-    (root/'release-lock.json').write_text(json.dumps(sorted(records,key=lambda row:row['tool']),indent=2)+'\n')
+    records=sorted(records,key=lambda row:row['tool'])
+    pinned=json.loads(PINNED_RELEASE_LOCK.read_text())
+    if records != pinned:
+        raise SystemExit('Fetched release artifacts differ from the committed security-tools lock')
+    (root/'release-lock.json').write_text(json.dumps(records,indent=2)+'\n')
     if any('error' in row for row in records):raise SystemExit(1)
 
 

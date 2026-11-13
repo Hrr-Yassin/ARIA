@@ -1,0 +1,50 @@
+[
+  {
+    "tool": "ffuf",
+    "version": "2.1.0",
+    "url": "https://github.com/ffuf/ffuf/releases/download/v2.1.0/ffuf_2.1.0_linux_amd64.tar.gz",
+    "archive_sha256": "fc2c82736c14dcbea4daf3d3cf3878c1c4773008ba45c2bc0fceba7d17b40bb5",
+    "github_asset_id": 126330178,
+    "upstream_verified": true
+  },
+  {
+    "tool": "httpx",
+    "version": "1.7.1",
+    "url": "https://github.com/projectdiscovery/httpx/releases/download/v1.7.1/httpx_1.7.1_linux_amd64.zip",
+    "archive_sha256": "865806a4eec321368e365b419baa3abdc0deb0d4ba598fe85a548a7c8682eb30",
+    "github_asset_id": 273305113,
+    "upstream_verified": true
+  },
+  {
+    "tool": "katana",
+    "version": "1.1.2",
+    "url": "https://github.com/projectdiscovery/katana/releases/download/v1.1.2/katana_1.1.2_linux_amd64.zip",
+    "archive_sha256": "710205030c3d07a23d86fe11dac595a3c681ab5fa8daad679c752cbfd4ee0425",
+    "github_asset_id": 210453053,
+    "upstream_verified": true
+  },
+  {
+    "tool": "nuclei",
+    "version": "3.4.10",
+    "url": "https://github.com/projectdiscovery/nuclei/releases/download/v3.4.10/nuclei_3.4.10_linux_amd64.zip",
+    "archive_sha256": "234c12cc5288af071abdcd6f854245b6067345556e1235cf96b76725c1004357",
+    "github_asset_id": 285467813,
+    "upstream_verified": true
+  },
+  {
+    "tool": "subfinder",
+    "version": "2.9.0",
+    "url": "https://github.com/projectdiscovery/subfinder/releases/download/v2.9.0/subfinder_2.9.0_linux_amd64.zip",
+    "archive_sha256": "7588d91a483613b74f00679b571f445760eb79f3760e814c02925d01e4ffe570",
+    "github_asset_id": 297505463,
+    "upstream_verified": true
+  },
+  {
+    "tool": "zap",
+    "version": "2.16.1",
+    "url": "https://github.com/zaproxy/zaproxy/releases/download/v2.16.1/ZAP_2.16.1_Linux.tar.gz",
+    "archive_sha256": "5b2eb8319b085121a6e8ad50d69d67dbef8c867166f71a937bfc888d247a2ac1",
+    "github_asset_id": 240698226,
+    "upstream_verified": true
+  }
+]

@@ -1,5 +1,6 @@
 """Prepare minimal, secret-free build contexts and complete Python wheel locks."""
 import argparse
+import hashlib
 from email.parser import BytesParser
 import hashlib
 import json
@@ -42,8 +43,13 @@ def prepare(tool: str, downloads: Path, build: Path) -> Path:
         target=overlay/'opt/tools'/tool;target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(downloads/'tools'/tool,target)
     if tool=='sqlmap':
+        lock=json.loads((ROOT/'worker/adapters/locks/sqlmap.json').read_text())
+        archive=downloads/'sqlmap-1.9.11.tar.gz'
+        if (lock.get('tool') != 'sqlmap' or lock.get('version') != '1.9.11'
+                or hashlib.sha256(archive.read_bytes()).hexdigest() != lock.get('archive_sha256')):
+            raise ValueError('SQLmap source archive differs from the committed hash lock')
         destination=overlay/'opt/sqlmap';destination.mkdir(parents=True,exist_ok=True)
-        with tarfile.open(downloads/'sqlmap-1.9.11.tar.gz') as archive:
+        with tarfile.open(archive) as archive:
             prefix=archive.getmembers()[0].name.split('/')[0]+'/'
             for member in archive.getmembers():
                 if not member.name.startswith(prefix):continue
@@ -61,6 +67,8 @@ def prepare(tool: str, downloads: Path, build: Path) -> Path:
     if tool=='semgrep':
         shutil.copytree(downloads/'semgrep-wheels',context/'wheels',dirs_exist_ok=True)
         wheel_lock(context/'wheels',context/'wheels.lock')
+        if (context/'wheels.lock').read_bytes() != (ROOT/'worker/adapters/locks/semgrep-wheels.txt').read_bytes():
+            raise ValueError('Semgrep wheelhouse differs from the committed hash lock')
         dockerfile=dockerfile.replace('COPY overlay/ /','COPY wheels/ /tmp/wheels/\nCOPY wheels.lock /tmp/wheels.lock\nRUN python -m venv /opt/semgrep && /opt/semgrep/bin/pip install --no-index --require-hashes --find-links=/tmp/wheels -r /tmp/wheels.lock && rm -rf /tmp/wheels\nCOPY overlay/ /')
         fixture=context/'fixture';fixture.mkdir(exist_ok=True)
         (fixture/'fixture.py').write_text('def synthetic_handler(user_input):\n    return eval(user_input)  # disposable static-analysis fixture; never executed\n')
@@ -71,6 +79,8 @@ def prepare(tool: str, downloads: Path, build: Path) -> Path:
     if tool=='playwright':
         shutil.copytree(downloads/'playwright-wheels',context/'wheels',dirs_exist_ok=True)
         wheel_lock(context/'wheels',context/'wheels.lock')
+        if (context/'wheels.lock').read_bytes() != (ROOT/'worker/adapters/locks/playwright-wheels.txt').read_bytes():
+            raise ValueError('Playwright wheelhouse differs from the committed hash lock')
         libraries='libglib2.0-0 libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxcb1 libdrm2 libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 fonts-liberation'
         extra=f'RUN apt-get -o Acquire::Check-Valid-Until=false update && apt-get install -y --no-install-recommends {libraries} && dpkg-query -W > /usr/local/share/aria-dpkg.lock && rm -rf /var/lib/apt/lists/*\nCOPY wheels/ /tmp/wheels/\nCOPY wheels.lock /tmp/wheels.lock\nRUN pip install --no-index --require-hashes --find-links=/tmp/wheels -r /tmp/wheels.lock && rm -rf /tmp/wheels\nRUN PLAYWRIGHT_BROWSERS_PATH=/opt/chromium python -m playwright install chromium\n'
         dockerfile=dockerfile.replace('COPY overlay/ /',extra+'COPY overlay/ /')

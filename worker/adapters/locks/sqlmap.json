@@ -1,0 +1,7 @@
+{
+  "tool": "sqlmap",
+  "version": "1.9.11",
+  "source_commit": "0599f7c1b6fe679106d18744b49f90fd1f340cff",
+  "url": "https://codeload.github.com/sqlmapproject/sqlmap/tar.gz/0599f7c1b6fe679106d18744b49f90fd1f340cff",
+  "archive_sha256": "6ba4ace25f956838a44ef9532e6628b316d72754e7189b63af28bfb30b08f053"
+}
