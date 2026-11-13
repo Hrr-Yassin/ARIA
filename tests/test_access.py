@@ -24,9 +24,10 @@ class AccessTests(OfflineCase):
                 await get_accessible_session('engagement', OWNER)
             self.assertEqual(error.exception.status_code, 403)
 
-    async def test_all_eight_v10_routes_reject_non_owner(self):
+    async def test_v10_autonomous_routes_reject_non_owner(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
         routes = [('POST', 'autonomous/start', {}), ('POST', 'autonomous/stop', {}),
+                  ('POST', 'autonomous/restore', {}),
                   ('GET', 'autonomous/status', None), ('GET', 'autonomous/approvals', None),
                   ('POST', 'autonomous/approve', {'action_id': 'x', 'decision': 'approve'}),
                   ('GET', 'decision-log', None), ('GET', 'playbooks', None), ('GET', 'kb-snapshot', None)]

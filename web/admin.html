@@ -3,14 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PentestAI v9 — Admin</title>
+<title>ARIA — Administration</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles/admin.css">
+<link rel="stylesheet" href="/static/styles/aria-foundation.css">
+<link rel="stylesheet" href="/static/styles/aria-legacy.css">
 </head>
-<body>
+<body data-aria-page="admin">
+<a class="aria-skip" href="#admin-main">Skip to administration</a>
 <div class="shell">
   <div class="topbar">
-    <span class="brand">PentestAI</span><span class="ver">v9</span>
+    <span class="brand">ARIA</span><span class="ver">Administration</span>
     <span class="badge">Admin</span>
     <div class="spacer"></div>
     <button class="btn" onclick="window.location.href='/'">← Back to Chat</button>
@@ -18,15 +21,15 @@
     <button class="btn" onclick="doLogout()">Logout</button>
   </div>
   <div class="body">
-    <div class="nav">
-      <div class="nav-item active" onclick="showSection('dashboard',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Dashboard</div>
-      <div class="nav-item" onclick="showSection('users',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</div>
-      <div class="nav-item" onclick="showSection('sessions',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> Sessions</div>
-      <div class="nav-item" onclick="showSection('logs',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Logs</div>
-      <div class="nav-item" onclick="showSection('health',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg> Health</div>
-      <div class="nav-item" onclick="showSection('errors',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Errors</div>
-    </div>
-    <div class="content">
+    <nav class="nav" aria-label="Administration sections">
+      <button type="button" class="nav-item active" onclick="showSection('dashboard',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Dashboard</button>
+      <button type="button" class="nav-item" onclick="showSection('users',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> Users</button>
+      <button type="button" class="nav-item" onclick="showSection('sessions',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg> Sessions</button>
+      <button type="button" class="nav-item" onclick="showSection('logs',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Logs</button>
+      <button type="button" class="nav-item" onclick="showSection('health',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg> Health</button>
+      <button type="button" class="nav-item" onclick="showSection('errors',this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Errors</button>
+    </nav>
+    <main class="content" id="admin-main" tabindex="-1">
       <div class="section active" id="sec-dashboard">
         <h2>Dashboard</h2>
         <div class="cards" id="dash-cards"></div>
@@ -66,7 +69,7 @@
         <h2>Backend Errors</h2>
         <div class="table-wrap"><div class="table-header"><h3>Recent Errors</h3></div><div class="log-list" id="errors-list"></div></div>
       </div>
-    </div>
+    </main>
   </div>
 </div>
 <script src="/static/scripts/admin.js"></script>

@@ -7,9 +7,11 @@
 <link rel="icon" type="image/svg+xml" href="/static/aria.svg">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles/login.css">
+<link rel="stylesheet" href="/static/styles/aria-foundation.css">
+<link rel="stylesheet" href="/static/styles/aria-legacy.css">
 </head>
-<body>
-<div class="login-card">
+<body data-aria-page="login">
+<main class="login-card" aria-label="Sign in to ARIA">
   <div class="logo">AR<span>IA</span></div>
   <div class="subtitle">Evidence-driven security research</div>
   <div class="field">
@@ -23,7 +25,7 @@
   <button class="btn-login" id="login-btn" onclick="doLogin()">Sign In</button>
   <div class="error" id="error-msg" role="alert"></div>
   <div class="footer">Authorized personnel only</div>
-</div>
+</main>
 <script src="/static/scripts/login.js"></script>
 </body>
 </html>

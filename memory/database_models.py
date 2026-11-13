@@ -302,7 +302,7 @@ async def init_db():
     from sqlalchemy import text
     async with engine.connect() as conn:
         revision = await conn.scalar(text("SELECT version_num FROM alembic_version"))
-        if revision != "0003":
+        if revision != "0005":
             raise RuntimeError("Database revision unsupported; run python -m alembic upgrade head")
 
 
@@ -319,6 +319,59 @@ class AutonomousRun(Base):
     state = Column(String(30), nullable=False)
     snapshot = Column(JSON, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AutonomousCampaign(Base):
+    """Durable campaign schedule, supervisor lease and LLM budget ledger.
+
+    ``active_key`` equals the session identifier while the campaign is
+    non-terminal and is NULL afterwards.  The unique constraint therefore
+    enforces at most one active campaign per engagement across all processes.
+    """
+    __tablename__ = "autonomous_campaigns"
+    id = Column(String(36), primary_key=True)
+    session_id = Column(String(36), ForeignKey("pentest_sessions.id", ondelete="CASCADE"), nullable=False)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    state = Column(String(30), nullable=False)
+    active_key = Column(String(36), nullable=True)
+    goal = Column(String(50), nullable=False)
+    target = Column(String(500), nullable=False)
+    skill_level = Column(String(20), nullable=False)
+    objective = Column(Text, nullable=False, default="")
+    max_steps = Column(Integer, nullable=False)
+    auto_risk_threshold = Column(String(20), nullable=False)
+    scope_digest = Column(String(64), nullable=False)
+    auth_revision = Column(Integer, nullable=False, default=0)
+    worker_epoch = Column(Integer, nullable=False, default=0)
+    schedule = Column(JSON, nullable=False)
+    budget = Column(JSON, nullable=False)
+    usage = Column(JSON, nullable=False)
+    retry = Column(JSON, nullable=False)
+    # Bounded operational event ring (SPEC-14).  Kept separate from the
+    # immutable DecisionLog audit trail and never used for authorization.
+    operations = Column(JSON, nullable=False, default=dict)
+    run_id = Column(String(36), nullable=True)
+    has_started = Column(Boolean, nullable=False, default=False)
+    auto_resume = Column(Boolean, nullable=False, default=False)
+    lease_holder = Column(String(64), nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    next_action_at = Column(DateTime, nullable=True)
+    pause_reason = Column(String(200), nullable=False, default="")
+    reason_code = Column(String(100), nullable=False, default="")
+    reason = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_autonomous_campaigns_session_id", "session_id"),
+        Index("ix_autonomous_campaigns_owner_id", "owner_id"),
+        Index("ix_autonomous_campaigns_state", "state"),
+        Index("ix_autonomous_campaigns_next_action_at", "next_action_at"),
+        UniqueConstraint("active_key", name="uq_autonomous_campaigns_active_key"),
+    )
 
 
 class WebAction(Base):

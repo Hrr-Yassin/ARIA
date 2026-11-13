@@ -62,6 +62,23 @@ class WorkerTests(OfflineCase):
     async def asyncTearDown(self):
         self.url.stop();await super().asyncTearDown()
 
+    async def test_autonomous_worker_failure_preserves_diagnostic_and_stops(self):
+        engine = AutonomousEngine()
+        state = SessionRunState('a', 'alice', 'http_check', '192.0.2.1', 'expert')
+        with patch('agents.autonomous_engine.execution_authorization.execute', AsyncMock(return_value={
+            'exit_code': -1, 'job_id': 'j1', 'status': 'failed',
+            'stderr': 'Worker rejected request: unsupported command',
+        })):
+            stdout, stderr, success = await engine._execute_command(
+                state, 'curl', 'curl -I http://192.0.2.1', action_id='action-1')
+        self.assertFalse(success)
+        self.assertEqual((stdout, stderr), ('', 'Worker rejected request: unsupported command'))
+        self.assertEqual(state.reason_code, 'worker_exit_nonzero')
+        self.assertIn('unsupported command', state.failure_detail)
+        engine._runs['a'] = state
+        status = engine.get_status('a')
+        self.assertEqual(status['failure_detail'], state.failure_detail)
+
     async def test_unadvertised_tool_never_dispatches(self):
         self.worker.capabilities = AsyncMock(return_value={'tools': ['curl']})
         with self.assertRaises(HTTPException) as error:
@@ -157,6 +174,8 @@ class WorkerTests(OfflineCase):
         context={'owner_id':'alice','scope':{'targets':['192.0.2.1']},'auth_revision':0}
         with patch('agents.autonomous_engine.execution_authorization._context',AsyncMock(return_value=context)), \
              patch('agents.autonomous_engine.worker_jobs.client.capabilities',AsyncMock(return_value={'tools':['curl','nmap']})), \
+             patch('llm.pool_manager.pool_manager.planner_preflight',AsyncMock(return_value={'ready':True})), \
+             patch('agents.autonomous_engine.knowledge_store.restore',AsyncMock(return_value={'restored':0,'skipped':0})), \
              patch.object(engine,'_write_decision_log',AsyncMock()),patch.object(engine,'_run_loop',side_effect=run), \
              patch('agents.autonomous_engine.worker_jobs.cancel_session',AsyncMock(return_value={'cancelled':0,'pending':0,'jobs':[]})):
             results=await asyncio.gather(engine.start('a','alice'),engine.start('a','alice'))

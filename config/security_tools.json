@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "mode": "catalog_only",
+  "tools": [
+    {
+      "name": "curl",
+      "version": null,
+      "category": "http_tls",
+      "container_profile": "http-observer-v1",
+      "image_id": null,
+      "executable": "/usr/bin/curl",
+      "enabled": false,
+      "resources": {
+        "cpus": 1,
+        "memory_mib": 256,
+        "memory_swap_mib": 256,
+        "pids": 64,
+        "nofile": 256,
+        "tmpfs_mib": 32,
+        "shm_mib": 8,
+        "read_only_root": true,
+        "tool_uid": 65534,
+        "tool_capabilities": [],
+        "no_new_privileges": true
+      },
+      "network": {
+        "transport": "tcp",
+        "destinations": "engagement_scope_intersect_worker_ceiling",
+        "dns": "resolve_once_pin_all_answers",
+        "redirects": false,
+        "proxy": false,
+        "external_services": false
+      },
+      "audit_requirements": [
+        "action_id",
+        "job_id",
+        "session_id",
+        "owner_id",
+        "scope_digest",
+        "worker_epoch",
+        "registry_digest",
+        "request_digest",
+        "image_id",
+        "tool_version",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "output_hash",
+        "evidence_ids"
+      ],
+      "health_check": {
+        "argv": [
+          "/usr/bin/curl",
+          "--version"
+        ],
+        "timeout_seconds": 5,
+        "network": "none"
+      },
+      "operations": [
+        {
+          "id": "http.headers",
+          "capability": "curl.http.headers.v1",
+          "input_schema": "http.headers.v1",
+          "output_schema": "aria.tool.result.v1",
+          "required_permissions": [
+            "engagement.execute",
+            "network.http.observe"
+          ],
+          "approval": "existing_execution_authorization",
+          "risk": "green",
+          "agent_roles": [
+            "recon",
+            "web_intel"
+          ],
+          "limits": {
+            "timeout_seconds": 10,
+            "max_concurrency": 1,
+            "min_interval_seconds": 1,
+            "max_targets": 1,
+            "max_ports": 1,
+            "stdout_bytes": 100000,
+            "stderr_bytes": 10000
+          }
+        },
+        {
+          "id": "http.get",
+          "capability": "curl.http.get.v1",
+          "input_schema": "http.get.v1",
+          "output_schema": "aria.tool.result.v1",
+          "required_permissions": [
+            "engagement.execute",
+            "network.http.observe"
+          ],
+          "approval": "existing_execution_authorization",
+          "risk": "orange",
+          "agent_roles": [
+            "recon",
+            "web_intel",
+            "vuln"
+          ],
+          "limits": {
+            "timeout_seconds": 10,
+            "max_concurrency": 1,
+            "min_interval_seconds": 1,
+            "max_targets": 1,
+            "max_ports": 1,
+            "stdout_bytes": 100000,
+            "stderr_bytes": 10000
+          }
+        }
+      ]
+    },
+    {
+      "name": "nmap",
+      "version": null,
+      "category": "recon",
+      "container_profile": "tcp-discovery-v1",
+      "image_id": null,
+      "executable": "/usr/bin/nmap",
+      "enabled": false,
+      "resources": {
+        "cpus": 1,
+        "memory_mib": 256,
+        "memory_swap_mib": 256,
+        "pids": 64,
+        "nofile": 256,
+        "tmpfs_mib": 32,
+        "shm_mib": 8,
+        "read_only_root": true,
+        "tool_uid": 65534,
+        "tool_capabilities": [],
+        "no_new_privileges": true
+      },
+      "network": {
+        "transport": "tcp",
+        "destinations": "engagement_scope_intersect_worker_ceiling",
+        "dns": "resolve_once_pin_all_answers",
+        "redirects": false,
+        "proxy": false,
+        "external_services": false
+      },
+      "audit_requirements": [
+        "action_id",
+        "job_id",
+        "session_id",
+        "owner_id",
+        "scope_digest",
+        "worker_epoch",
+        "registry_digest",
+        "request_digest",
+        "image_id",
+        "tool_version",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "output_hash",
+        "evidence_ids"
+      ],
+      "health_check": {
+        "argv": [
+          "/usr/bin/nmap",
+          "--version"
+        ],
+        "timeout_seconds": 5,
+        "network": "none"
+      },
+      "operations": [
+        {
+          "id": "tcp.connect",
+          "capability": "nmap.tcp.connect.v1",
+          "input_schema": "tcp.connect.v1",
+          "output_schema": "aria.tool.result.v1",
+          "required_permissions": [
+            "engagement.execute",
+            "network.tcp.connect"
+          ],
+          "approval": "existing_execution_authorization",
+          "risk": "orange",
+          "agent_roles": [
+            "scan"
+          ],
+          "limits": {
+            "timeout_seconds": 30,
+            "max_concurrency": 1,
+            "min_interval_seconds": 1,
+            "max_targets": 1,
+            "max_ports": 32,
+            "stdout_bytes": 100000,
+            "stderr_bytes": 10000
+          }
+        }
+      ]
+    }
+  ]
+}

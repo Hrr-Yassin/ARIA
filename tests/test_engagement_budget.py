@@ -128,6 +128,19 @@ class EngagementBudgets(OfflineCase):
             self.assertEqual(error.exception.status_code,409)
         self.assertNotIn('model_usage',self.session.metadata_)
 
+    async def test_preflight_is_read_only_and_local_has_zero_cost_with_limits(self):
+        before = dict(self.session.metadata_)
+        self.assertTrue((await self.accounting.reserve('owner', 'local', 'offline', '', '', check_only=True))['ready'])
+        self.assertEqual(self.session.metadata_, before)
+        self.assertEqual(self.rows, [])
+        self.db.commit.assert_not_awaited()
+        attempt = await self.accounting.reserve('owner', 'local', 'offline', 'prompt', '')
+        self.assertEqual(attempt['reserved_cost_microusd'], 0)
+        self.assertEqual(self.session.metadata_['model_usage']['calls'], 1)
+        self.session.metadata_['model_limits'] = {'max_calls': 1}
+        with self.assertRaises(HTTPException):
+            await self.accounting.reserve('owner', 'local', 'offline', '', '', check_only=True)
+
     async def test_duplicate_tariffs_are_rejected_before_configuration(self):
         from pydantic import ValidationError
         tariff={'provider':'groq','model':'test','microusd_per_million':1000000}

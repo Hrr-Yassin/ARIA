@@ -1,6 +1,7 @@
 """Owner-bound team ledger. Mutations and their polling events commit together."""
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Literal
@@ -9,7 +10,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
-from agents.result_contract import AgentResult
+from agents.result_contract import AgentResult, normalize_unverified_result
 from memory.database_models import ChatLog, DecisionLog, PentestSession, PentestPhase, async_session
 from memory.program_policy import owned_engagement
 from security.redaction import redact, deployment_secrets
@@ -180,6 +181,29 @@ class TeamStore:
             events = [event for event in await self._events(db, sid) if event['sequence'] > after][:100]
             return {'events': events, 'cursor': events[-1]['sequence'] if events else after}
 
+    async def task_summary(self, sid: str, owner: str, task_ids) -> dict:
+        """Bounded state counts for the given run-linked specialist tasks."""
+        ids = [task_id for task_id in (task_ids or [])
+               if isinstance(task_id, str) and task_id][:20]
+        states = ('queued', 'running', 'awaiting_review', 'blocked',
+                  'completed', 'cancelled', 'failed', 'missing')
+        counts = {state: 0 for state in states}
+        async with async_session() as db:
+            await owned_engagement(db, sid, owner)
+            if not ids:
+                return {'schema': 'aria.specialist.summary.v1',
+                        'counts': counts, 'task_ids': [], 'available': True}
+            state = materialize(await self._events(db, sid))
+            for task_id in ids:
+                task = state['tasks'].get(task_id)
+                label = task.get('state') if task else 'missing'
+                counts[label if label in counts else 'missing'] += 1
+        active = sum(counts[name] for name in
+                     ('queued', 'running', 'awaiting_review'))
+        return {'schema': 'aria.specialist.summary.v1', 'counts': counts,
+                'task_ids': ids, 'active': active, 'total': len(ids),
+                'available': True}
+
     async def mutate(self, sid: str, owner: str, request_id: str, operation: dict, build) -> dict:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
@@ -206,7 +230,33 @@ class TeamStore:
             raise HTTPException(422, 'Reference is not in this engagement catalog')
 
     async def create(self, sid: str, owner: str, body: CreateTask) -> dict:
+        return await self._create(sid, owner, body, {})
+
+    async def create_investigation(self, sid: str, owner: str, body: CreateTask,
+                                   *, campaign_id: str,
+                                   investigation_key: str) -> dict:
+        """Internal campaign binding for an evidence-driven specialist task.
+
+        These fields are not part of the public ``TaskSpec``: ordinary task
+        creation cannot claim to be a campaign investigation or squat a
+        semantic investigation identity.
+        """
+        if (not isinstance(campaign_id, str) or not campaign_id
+                or len(campaign_id) > 100
+                or not isinstance(investigation_key, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', investigation_key)):
+            raise ValueError('Specialist investigation metadata is invalid')
+        return await self._create(sid, owner, body, {
+            'campaign_id': campaign_id,
+            'investigation_key': investigation_key,
+        })
+
+    async def _create(self, sid: str, owner: str, body: CreateTask,
+                      internal: dict) -> dict:
         task_data = body.task.model_dump(exclude={'phase'} if body.task.phase is None else set())
+        if set(internal) & set(task_data):
+            raise ValueError('Internal task metadata conflicts with the task contract')
+        task_data.update(internal)
         async def build(db, session, state):
             if len(state['tasks']) >= 500:
                 raise HTTPException(409, 'Engagement task limit reached')
@@ -306,28 +356,32 @@ class TeamStore:
         return await self.mutate(sid, owner, request_id, {'claim': task_id}, build)
 
     async def collect(self, sid: str, owner: str, task_id: str, run_id: str, result: AgentResult) -> dict:
+        # Storage is the trust boundary.  Even a direct caller cannot persist
+        # an LLM observation or hypothesis as verified; worker receipts remain
+        # separately cataloged with their own provenance.
+        normalized = normalize_unverified_result(result)
         async def build(db, session, state):
             task = state['tasks'].get(task_id)
             if not task or task['state'] != 'running' or task['run_id'] != run_id:
                 raise HTTPException(409, 'Task no longer owns this specialist run')
-            self._references(state, result.evidence_references)
-            if not set(result.evidence_references).issubset(task['evidence_inputs']):
+            self._references(state, normalized.evidence_references)
+            if not set(normalized.evidence_references).issubset(task['evidence_inputs']):
                 raise HTTPException(422, 'Result cites evidence outside its task inputs')
-            for entry in result.observations + result.hypotheses:
+            for entry in normalized.observations + normalized.hypotheses:
                 refs = entry.get('evidence_references', [])
                 if entry.get('evidence_id'):
                     refs = [*refs, entry['evidence_id']]
-                if not set(refs).issubset(result.evidence_references):
+                if not set(refs).issubset(normalized.evidence_references):
                     raise HTTPException(422, 'Conclusion cites unattributed evidence')
-                if not refs and not result.uncertainty:
+                if not refs and not normalized.uncertainty:
                     raise HTTPException(422, 'Unattributed conclusions require explicit uncertainty')
-            if not result.evidence_references and not result.uncertainty:
+            if not normalized.evidence_references and not normalized.uncertainty:
                 raise HTTPException(422, 'Result requires evidence or explicit uncertainty')
-            target = 'blocked' if result.status == 'blocked' else 'awaiting_review'
+            target = 'blocked' if normalized.status == 'blocked' else 'awaiting_review'
             updated = transition_task(task, target, 'Specialist result collected', internal=True)
-            updated['result'] = result.model_dump()
+            updated['result'] = normalized.model_dump()
             return 'tasks', task_id, updated
-        return await self.mutate(sid, owner, run_id + ':result', {'collect': task_id, 'result': result.model_dump()}, build)
+        return await self.mutate(sid, owner, run_id + ':result', {'collect': task_id, 'result': normalized.model_dump()}, build)
 
     async def block(self, sid: str, owner: str, task_id: str, run_id: str, reason: str, *, failed: bool = False) -> dict:
         async def build(db, session, state):

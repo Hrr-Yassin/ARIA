@@ -30,6 +30,7 @@ from api.routers import application_map as application_map_router
 from api.routers import team as team_router
 from api.routers import programs as programs_router
 from api.routers import burp as burp_router
+from api.routers import tool_registry as tool_registry_router
 from config.settings import settings
 from memory.database_models import init_db
 from memory.session_manager import session_manager
@@ -79,6 +80,11 @@ async def lifespan(app: FastAPI):
     from memory.application_map import application_map
     await application_map.purge_expired()
 
+    # Start the durable campaign supervisor only after run checkpoints and
+    # worker jobs have been reconciled.
+    from orchestrator.campaign_supervisor import campaign_supervisor
+    campaign_supervisor.start()
+
     # Ensure report directory
     Path(settings.REPORT_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -89,6 +95,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await campaign_supervisor.stop()
         retention_task.cancel()
         await asyncio.gather(retention_task, return_exceptions=True)
 
@@ -127,9 +134,11 @@ app.add_middleware(
 async def request_correlation(request: Request, call_next):
     import uuid
     from structlog.contextvars import bound_contextvars
+    from memory.campaign_observability import correlation_scope
     # Generate locally: arbitrary caller headers never become log fields.
     request_id = uuid.uuid4().hex
-    with bound_contextvars(request_id=request_id):
+    with bound_contextvars(request_id=request_id), correlation_scope(
+            f"http-{request_id[:24]}"):
         response = await call_next(request)
         log.info("http_request", method=request.method, status=response.status_code)
     response.headers["X-Request-ID"] = request_id
@@ -143,6 +152,7 @@ app.include_router(application_map_router.router, prefix="/api/application-map",
 app.include_router(team_router.router, prefix="/api/team", tags=["team-tasks"])
 app.include_router(programs_router.router, prefix="/api/programs", tags=["program-policies"])
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
+app.include_router(tool_registry_router.router, prefix="/api", tags=["tool-registry"])
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])
 app.include_router(sessions_router.router, prefix="/api/session", tags=["sessions"])
 app.include_router(reports_router.router, prefix="/api/report", tags=["reports"])
@@ -323,6 +333,15 @@ async def serve_chat(session_id: str):
     raise HTTPException(404, "Not found")
 
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard():
+    """Owner-facing operations overview. Authentication remains client-enforced."""
+    f = WEB_DIR / "dashboard.html"
+    if f.exists():
+        return render_page(f)
+    raise HTTPException(404, "dashboard.html not found")
+
+
 # Only explicit UI routes and the confined StaticFiles mount serve files.
 @app.get("/login.html", response_class=HTMLResponse)
 async def login_alias():
@@ -337,6 +356,11 @@ async def admin_alias():
 @app.get("/index.html", response_class=HTMLResponse)
 async def index_alias():
     return await serve_ui()
+
+
+@app.get("/dashboard.html", response_class=HTMLResponse)
+async def dashboard_alias():
+    return await serve_dashboard()
 
 
 @app.get("/{path:path}")

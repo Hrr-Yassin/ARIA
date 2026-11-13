@@ -1,0 +1,106 @@
+/* Compatibility adapter. Load after legacy page CSS. Keep layout and API behavior. */
+:root {
+  --bg-base: var(--aria-bg); --bg-surface: var(--aria-surface);
+  --bg-elevated: var(--aria-raised); --bg-hover: var(--aria-hover);
+  --bg-border: var(--aria-border); --bg-border-strong: var(--aria-border-strong);
+  --accent-primary: var(--aria-primary); --accent-secondary: var(--aria-telemetry);
+  --accent-success: var(--aria-success); --accent-warn: var(--aria-warning); --accent-danger: var(--aria-danger);
+  --text-primary: var(--aria-text); --text-secondary: var(--aria-secondary); --text-muted: var(--aria-muted);
+  --font-display: var(--aria-font-ui); --font-body: var(--aria-font-ui); --font-mono: var(--aria-font-mono);
+  --radius-sm: var(--aria-radius-sm); --radius-md: var(--aria-radius-md); --radius-lg: var(--aria-radius-lg);
+  --ink-0: var(--aria-bg); --ink-1: var(--aria-surface); --ink-2: var(--aria-raised);
+  --ink-3: var(--aria-hover); --ink-4: var(--aria-hover);
+  --line: var(--aria-border); --line-strong: var(--aria-border-strong);
+  --text: var(--aria-text); --text-2: var(--aria-secondary); --text-3: var(--aria-muted);
+  --brass: var(--aria-primary); --brass-bright: var(--aria-primary); --brass-soft: var(--aria-primary-soft);
+  --teal: var(--aria-telemetry); --teal-soft: #142c36;
+  --good: var(--aria-success); --good-soft: var(--aria-success-soft);
+  --serious: var(--aria-warning); --serious-soft: var(--aria-warning-soft);
+  --critical: var(--aria-danger); --critical-soft: var(--aria-danger-soft);
+  --low: var(--aria-secondary); --low-soft: var(--aria-raised);
+  --font-ui: var(--aria-font-ui); --radius-panel: var(--aria-radius-md); --radius-control: var(--aria-radius-sm);
+  --bg: var(--aria-bg); --bg2: var(--aria-surface); --sidebar: var(--aria-surface); --hover: var(--aria-hover);
+  --border: var(--aria-border); --border2: var(--aria-border-strong);
+  --t2: var(--aria-secondary); --t3: var(--aria-muted); --input-bg: var(--aria-raised); --code-bg: var(--aria-bg);
+  --acc: var(--aria-primary); --acch: var(--aria-primary); --accl: var(--aria-primary-soft);
+  --ok: var(--aria-success); --okb: var(--aria-success-soft); --err: var(--aria-danger); --errb: var(--aria-danger-soft);
+  --warn: var(--aria-warning); --warnb: var(--aria-warning-soft); --crit: var(--aria-danger); --high: var(--aria-warning);
+  --med: var(--aria-warning); --blue: var(--aria-primary); --purple: #c5b5f4;
+  --font: var(--aria-font-ui); --mono: var(--aria-font-mono); --r: var(--aria-radius-md);
+}
+body[data-aria-page="workspace"] .app-header {
+  background: #101722ed; border-bottom-color: var(--aria-border);
+}
+body[data-aria-page="workspace"] .brand-logo {
+  background: var(--aria-primary-soft); color: var(--aria-primary);
+  border: 1px solid var(--aria-border-strong); box-shadow: none;
+}
+body[data-aria-page="workspace"] :where(.new-session-btn, .send-btn) { color: var(--aria-on-primary); }
+body[data-aria-page="dashboard"]::before { opacity: .3; }
+body[data-aria-page="dashboard"] :where(.panel-heading h2, .campaign-summary strong) { font-weight: 500; }
+body[data-aria-page="login"] {
+  background: radial-gradient(ellipse at 20% 0%, #1b2c4c80, transparent 55%), var(--aria-bg);
+  color: var(--aria-text); padding: 24px;
+}
+body[data-aria-page="login"] .login-card {
+  width: min(100%, 420px); background: var(--aria-surface); border-color: var(--aria-border);
+  border-radius: var(--aria-radius-lg); padding: 36px; box-shadow: var(--aria-shadow);
+}
+body[data-aria-page="login"] .logo { font-size: 28px; letter-spacing: -.04em; }
+body[data-aria-page="login"] .logo span { color: var(--aria-primary); }
+body[data-aria-page="login"] :where(.subtitle, .field label, .footer) { color: var(--aria-muted); }
+body[data-aria-page="login"] .subtitle { margin-top: 6px; line-height: 1.6; }
+body[data-aria-page="login"] .field input {
+  min-height: 46px; background: var(--aria-bg); color: var(--aria-text); border-color: var(--aria-border-strong);
+}
+body[data-aria-page="login"] .field input::placeholder { color: var(--aria-muted); }
+body[data-aria-page="login"] .btn-login {
+  min-height: 46px; background: var(--aria-primary); color: var(--aria-on-primary);
+}
+body[data-aria-page="login"] .btn-login:hover { background: #bed0ff; }
+body[data-aria-page="login"] .error { color: var(--aria-danger); line-height: 1.6; }
+body[data-aria-page="admin"] .nav-item { font-family: inherit; text-align: left; background: transparent; border: 0; border-left: 2px solid transparent; }
+body[data-aria-page="admin"] .nav-item.active { background: var(--accl); border-left-color: var(--acc); }
+@media (max-width: 640px) {
+  body[data-aria-page="admin"] .topbar { height: auto; min-height: 56px; flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  body[data-aria-page="admin"] .body { flex-direction: column; min-height: 0; }
+  body[data-aria-page="admin"] .nav { width: 100%; flex-direction: row; flex-wrap: wrap; padding: 8px; border-right: 0; border-bottom: 1px solid var(--aria-border); }
+  body[data-aria-page="admin"] .nav-item { flex: 1 0 30%; min-height: 44px; padding: 8px; }
+  body[data-aria-page="admin"] .content { padding: 20px 16px; min-width: 0; }
+  body[data-aria-page="admin"] .table-wrap { overflow-x: auto; }
+  body[data-aria-page="admin"] .topbar .btn { min-height: 44px; }
+  body[data-aria-page="login"] .login-card { padding: 28px 24px; }
+}
+
+/* Static markers preserve state labels without inventing ongoing activity. */
+body[data-aria-page] :where(.auto-log-pulse, .pulse-dot, .sp-dot-run, .approval-banner) { animation: none; box-shadow: none; }
+body[data-aria-page="workspace"] .auto-btn[data-state="on"] .auto-dot { animation: none; box-shadow: none; }
+body[data-aria-page="workspace"] .auto-glow { display: none; }
+body[data-aria-page="dashboard"] .phase-beacon.is-live .phase-tick[data-state="current"]::after { animation: none; }
+body[data-aria-page="workspace"] .btn-primary { color: var(--aria-on-primary); }
+body[data-aria-page="workspace"] .btn-primary:hover:not(:disabled) { background: #bed0ff; }
+body[data-aria-page="workspace"] .btn-success { color: var(--aria-on-primary); }
+body[data-aria-page="workspace"] .btn-success:hover:not(:disabled) { background: #9fe6c3; }
+@media (max-width: 768px) {
+  body[data-aria-page="workspace"] { --header-h: 116px; }
+  body[data-aria-page="workspace"] .app-header {
+    display: grid; grid-template-columns: minmax(0, 1fr); align-content: center;
+    padding: 10px 16px; gap: 8px;
+  }
+  body[data-aria-page="workspace"] .brand-logo { width: 32px; height: 32px; }
+  body[data-aria-page="workspace"] .brand-tag { font-size: 10px; }
+  body[data-aria-page="workspace"] .header-actions { width: 100%; min-width: 0; gap: 8px; }
+  body[data-aria-page="workspace"] .auto-btn { flex: 1; min-width: 0; min-height: 44px; padding: 8px 10px; font-size: 11px; }
+  body[data-aria-page="workspace"] .auto-dot { flex-shrink: 0; }
+  body[data-aria-page="workspace"] :where(.icon-btn, .overview-link) { width: 44px; height: 44px; flex: 0 0 44px; }
+  body[data-aria-page="workspace"] #new-session-btn { padding: 8px 3px; min-height: 64px; font-size: 10px; overflow-wrap: anywhere; }
+  body[data-aria-page="workspace"] .settings-panel { max-width: 100vw; }
+}
+
+/* Filled legacy actions need dark text on the shared light interaction fill. */
+body[data-aria-page="workspace"] .cmd-btn-run { color: var(--aria-on-primary); }
+body[data-aria-page="workspace"] :where(.cmd-btn-run, .send-btn):hover { background: #bed0ff; border-color: #bed0ff; }
+body[data-aria-page="dashboard"] .topbar { background: #101722ed; }
+body[data-aria-page="dashboard"] .state-pill:is([data-state="scheduled"], [data-state="paused"], [data-state="pausing"]) {
+  color: var(--aria-warning); background: var(--aria-warning-soft); border-color: currentColor;
+}

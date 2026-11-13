@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from config.settings import settings
 from memory.database_models import DecisionLog, PentestSession, User, async_session
+from memory.knowledge_store import scope_identity_digest
 from orchestrator.execution_policy import PolicyError, validate_command
 from memory.worker_jobs import worker_jobs
 from security.credentials import auth_revision
@@ -96,7 +97,11 @@ async def authoritative_context(user_id, session_id, *, allow_inactive_session=F
             scope['mode'] = 'bug_bounty'
         metadata = getattr(session, 'metadata_', None)
         metadata = metadata if isinstance(metadata, dict) else {}
-        return {'owner_id': session.user_id, 'scope': scope, 'auth_revision': auth_revision(user),
+        target = str(getattr(session, 'target', '') or '')
+        return {'owner_id': session.user_id, 'scope': scope,
+                'target': target,
+                'scope_digest': scope_identity_digest(session.scope, target),
+                'auth_revision': auth_revision(user),
                 'worker_epoch': int(metadata.get('worker_epoch', 0)),
                 'worker_blocked': bool(metadata.get('worker_blocked', False))}
 

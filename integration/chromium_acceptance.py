@@ -18,7 +18,7 @@ BASE = 'http://localhost:7000'
 TARGET = '192.168.77.20'
 
 AUDIT = r'''
-import asyncio, hashlib, json, sys
+import asyncio, hashlib, json, os, subprocess, sys, uuid
 from pathlib import Path
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -35,14 +35,27 @@ async def main():
               'model_attempt_count':sum(r.decision_type=='model_attempt' for r in rows),
               'authorizations':[{'id':r.id,'status':r.human_decision,'command':r.action_taken} for r in rows if r.decision_type=='execution_authorization']}
     await engine.dispose()
-    worker=create_async_engine(dotenv_values('.local-lab/worker.env')['WORKER_DATABASE_URL'])
-    async with worker.connect() as conn:
-        receipts=await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'session_id'=:sid"),{'sid':sid})
-        data['independent_worker_receipts']=[{'job_id':r['job_id'],'state':r['state'],'exit_code':r.get('exit_code'),
-            'terminated':r.get('terminated'),'stdout_sha256':hashlib.sha256(r.get('stdout','').encode()).hexdigest(),
-            'has_open_tcp80':'80/tcp' in r.get('stdout','') and 'open' in r.get('stdout',''),
-            'plan':r.get('plan')} for r in receipts]
-    await worker.dispose()
+    if os.environ.get('ARIA_KALI_AUDIT') == '1':
+        # UUID validation makes the SQL literal safe; secrets are supplied only via the environment.
+        sid = str(uuid.UUID(sid))
+        query = "SELECT record::text FROM aria_worker_jobs WHERE record->>'session_id'='" + sid + "'"
+        import shlex
+        command = 'psql -d aria_kali_worker -t -A -c ' + shlex.quote(query)
+        result = subprocess.run(['sshpass', '-e', 'ssh', '-o', 'BatchMode=no', '-o',
+            'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + os.environ['ARIA_KALI_KNOWN_HOSTS'],
+            '-o', 'ConnectTimeout=8', 'kali@192.168.77.10', command],
+            check=True, capture_output=True, text=True, timeout=20)
+        receipts = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    else:
+        worker=create_async_engine(dotenv_values('.local-lab/worker.env')['WORKER_DATABASE_URL'])
+        async with worker.connect() as conn:
+            rows=await conn.scalars(text("SELECT record FROM aria_worker_jobs WHERE record->>'session_id'=:sid"),{'sid':sid})
+            receipts=list(rows)
+        await worker.dispose()
+    data['independent_worker_receipts']=[{'job_id':r['job_id'],'state':r['state'],'exit_code':r.get('exit_code'),
+        'terminated':r.get('terminated'),'stdout_sha256':hashlib.sha256(r.get('stdout','').encode()).hexdigest(),
+        'has_open_tcp80':'80/tcp' in r.get('stdout','') and 'open' in r.get('stdout',''),
+        'plan':r.get('plan')} for r in receipts]
     print(json.dumps(data,default=str))
 asyncio.run(main())
 '''
@@ -237,7 +250,7 @@ async def main():
                 after=await audit('after-autonomous')
                 assert len(after['worker_jobs'])==len(before['worker_jobs'])
                 assert after['model_attempt_count']==0 and not after['model_usage'].get('calls',0)
-                await expect(page.locator('#auto-label')).to_have_text('Auto mode')
+                await expect(page.locator('#auto-label')).to_have_text('AUTONOMOUS — BLOCKED')
                 await expect(page.locator('#auto-log-counter')).to_have_text('step 0 / 2')
                 return {'state':status['run_state'],'reason_code':status.get('reason_code'),'reason':status.get('reason'),'physical_model_calls':0,'new_worker_jobs':0}
             await check('autonomous-blocks-without-paid-model-calls',auto_blocked)

@@ -29,6 +29,10 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.run_save.start()
         self.run_latest = patch("memory.autonomous_runs.run_store.latest", AsyncMock(return_value={"active": False}))
         self.run_latest.start()
+        self.campaign_guard = patch(
+            "memory.campaign_store.campaign_store.latest_active_for_session",
+            AsyncMock(return_value=None))
+        self.campaign_guard.start()
         self.network = patch.object(socket.socket, 'connect', side_effect=AssertionError('Network disabled in tests'))
         self.network.start()
         self.dns = patch.object(socket, "getaddrinfo", side_effect=AssertionError("DNS disabled in tests"))
@@ -50,3 +54,4 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.web_revoke.stop()
         self.run_save.stop()
         self.run_latest.stop()
+        self.campaign_guard.stop()

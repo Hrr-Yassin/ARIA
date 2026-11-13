@@ -7,10 +7,13 @@
 <link rel="icon" type="image/svg+xml" href="/static/aria.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles/index.css">
+<link rel="stylesheet" href="/static/styles/aria-foundation.css">
+<link rel="stylesheet" href="/static/styles/aria-legacy.css">
 </head>
-<body>
+<body data-aria-page="workspace">
+<a class="aria-skip" href="#workspace-main">Skip to research workspace</a>
 
 <!-- ─────────── HEADER ─────────── -->
 <header class="app-header" id="app-header">
@@ -56,6 +59,18 @@
       </svg>
       <span class="auto-label" id="auto-label">Auto mode</span>
     </button>
+    <a id="overview-link" class="overview-link" href="/dashboard"
+       aria-label="Operations overview" title="Operations overview">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round"
+           stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1"/>
+        <rect x="14" y="3" width="7" height="7" rx="1"/>
+        <rect x="3" y="14" width="7" height="7" rx="1"/>
+        <rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      <span>Overview</span>
+    </a>
     <button id="settings-button" class="icon-btn" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round"
@@ -89,7 +104,7 @@
 </div>
 
 <!-- ─────────── MAIN 3-PANEL LAYOUT ─────────── -->
-<main class="app-main">
+<main class="app-main" id="workspace-main" tabindex="-1">
 
   <!-- ── LEFT SIDEBAR ── -->
   <aside class="sidebar" id="sidebar">

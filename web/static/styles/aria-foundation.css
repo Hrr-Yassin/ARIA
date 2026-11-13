@@ -1,0 +1,141 @@
+/* ARIA foundation v1. Shared tokens and opt-in primitives. No operational state. */
+:root {
+  color-scheme: dark;
+  --aria-bg: #090d14;
+  --aria-surface: #101722;
+  --aria-raised: #172130;
+  --aria-hover: #1e2b3e;
+  --aria-border: #29374b;
+  --aria-border-strong: #607697;
+  --aria-text: #edf2fa;
+  --aria-secondary: #b6c3d6;
+  --aria-muted: #8d9fb8;
+  --aria-primary: #a2bbff;
+  --aria-primary-fill: #a2bbff;
+  --aria-on-primary: #0a142a;
+  --aria-primary-soft: #1b2c4c;
+  --aria-telemetry: #77d5e4;
+  --aria-success: #83d8af;
+  --aria-success-soft: #152f29;
+  --aria-warning: #f2c078;
+  --aria-warning-soft: #342a1b;
+  --aria-danger: #ff9b9f;
+  --aria-danger-soft: #361f2a;
+  --aria-unknown: #b1bdd0;
+  --aria-font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --aria-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  --aria-space-1: 4px;
+  --aria-space-2: 8px;
+  --aria-space-3: 12px;
+  --aria-space-4: 16px;
+  --aria-space-5: 24px;
+  --aria-space-6: 32px;
+  --aria-space-7: 48px;
+  --aria-radius-sm: 6px;
+  --aria-radius-md: 10px;
+  --aria-radius-lg: 16px;
+  --aria-shadow: 0 16px 48px #00000038;
+  --aria-duration: 150ms;
+  --aria-ease: cubic-bezier(.2, .7, .2, 1);
+  --aria-row-padding: 14px;
+}
+html { accent-color: var(--aria-primary); }
+body[data-aria-page] { font-family: var(--aria-font-ui); }
+body[data-aria-page] :where(button, input, select, textarea) { font-family: inherit; }
+body[data-aria-page] :where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--aria-primary);
+  outline-offset: 3px;
+}
+body[data-aria-page] :where(input, select, textarea) { scroll-margin-block: 80px; }
+body[data-aria-page] :where(button, input, select, textarea):disabled {
+  cursor: not-allowed;
+}
+body[data-aria-page] [hidden] { display: none !important; }
+.aria-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.aria-skip {
+  position: fixed; top: 12px; left: 12px; z-index: 1000;
+  padding: 12px 18px; border-radius: var(--aria-radius-sm);
+  background: var(--aria-primary); color: var(--aria-on-primary);
+  font: 600 14px var(--aria-font-ui); transform: translateY(-180%);
+}
+.aria-skip:focus { transform: translateY(0); }
+.aria-panel {
+  min-width: 0; background: var(--aria-surface);
+  border: 1px solid var(--aria-border); border-radius: var(--aria-radius-lg);
+}
+.aria-panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 18px 24px; border-bottom: 1px solid var(--aria-border);
+}
+.aria-panel-body { padding: 24px; }
+.aria-kicker {
+  font: 500 11px/1.5 var(--aria-font-mono); letter-spacing: .1em;
+  text-transform: uppercase; color: var(--aria-muted);
+}
+.aria-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 10px 16px; border: 1px solid var(--aria-border-strong);
+  border-radius: var(--aria-radius-sm); background: var(--aria-raised);
+  color: var(--aria-text); font: 500 14px/1.4 var(--aria-font-ui);
+  text-decoration: none; cursor: pointer;
+  transition: background var(--aria-duration) var(--aria-ease), border-color var(--aria-duration) var(--aria-ease);
+}
+.aria-button:hover { background: var(--aria-hover); border-color: var(--aria-primary); }
+.aria-button-primary { background: var(--aria-primary-fill); color: var(--aria-on-primary); border-color: transparent; }
+.aria-button-primary:hover { background: #bed0ff; }
+.aria-button:disabled { color: var(--aria-muted); background: var(--aria-surface); border-color: var(--aria-border); cursor: not-allowed; }
+.aria-field { display: grid; gap: 8px; font-size: 14px; min-width: 0; }
+.aria-field label { font-weight: 500; }
+.aria-input {
+  width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px;
+  border: 1px solid var(--aria-border-strong); border-radius: var(--aria-radius-sm);
+  background: var(--aria-bg); color: var(--aria-text); font: inherit;
+}
+.aria-input::placeholder { color: var(--aria-muted); }
+.aria-input[aria-invalid="true"] { border-color: var(--aria-danger); }
+.aria-help { margin: 0; color: var(--aria-muted); font-size: 12px; line-height: 1.6; }
+.aria-badge {
+  display: inline-flex; align-items: center; gap: 7px; width: fit-content;
+  padding: 4px 9px; border: 1px solid currentColor; border-radius: 5px;
+  font: 500 12px/1.4 var(--aria-font-ui); color: var(--aria-unknown);
+}
+.aria-badge::before { content: ""; width: 5px; height: 5px; flex: 0 0 5px; background: currentColor; border-radius: 50%; }
+.aria-badge[data-tone="info"] { color: var(--aria-telemetry); background: #142c36; }
+.aria-badge[data-tone="success"] { color: var(--aria-success); background: var(--aria-success-soft); }
+.aria-badge[data-tone="warning"] { color: var(--aria-warning); background: var(--aria-warning-soft); }
+.aria-badge[data-tone="danger"] { color: var(--aria-danger); background: var(--aria-danger-soft); }
+.aria-notice {
+  padding: 16px; border: 1px solid var(--aria-border); border-left: 3px solid var(--aria-primary);
+  border-radius: var(--aria-radius-sm); background: var(--aria-raised);
+  color: var(--aria-secondary); font-size: 14px; line-height: 1.6;
+}
+.aria-notice strong { display: block; margin-bottom: 4px; color: var(--aria-text); }
+.aria-notice[data-tone="danger"] { border-left-color: var(--aria-danger); }
+.aria-notice[data-tone="warning"] { border-left-color: var(--aria-warning); }
+.aria-table-wrap { overflow: auto; border: 1px solid var(--aria-border); border-radius: var(--aria-radius-md); }
+.aria-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.aria-table caption { padding: 16px; text-align: left; color: var(--aria-secondary); }
+.aria-table :where(th, td) { padding: var(--aria-row-padding) 16px; border-top: 1px solid var(--aria-border); }
+.aria-table th { color: var(--aria-muted); font-weight: 500; font-size: 12px; }
+.aria-table td { color: var(--aria-secondary); }
+.aria-table tbody tr:hover { background: var(--aria-raised); }
+.aria-code { font-family: var(--aria-font-mono); font-size: .85em; overflow-wrap: anywhere; }
+.aria-inspector { border: 1px solid var(--aria-border); border-radius: var(--aria-radius-md); }
+.aria-inspector summary { cursor: pointer; padding: 16px; min-height: 44px; font-size: 14px; }
+.aria-inspector > div { padding: 0 16px 16px; color: var(--aria-secondary); font-size: 14px; }
+[data-density="compact"] { --aria-row-padding: 9px; }
+/* Motion is optional decoration; it never implies a process is executing. */
+html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="off"] *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (forced-colors: active) {
+  .aria-panel, .aria-notice, .aria-input, .aria-button, .aria-badge, .aria-inspector { border: 1px solid CanvasText; }
+  body[data-aria-page] :focus-visible { outline-color: Highlight; }
+  .aria-badge::before { background: CanvasText; }
+}

@@ -136,6 +136,8 @@ class AttackKnowledgeBase:
                 "attack_graph": {},
                 "current_goal": None,
                 "mode_settings": _MODE_SETTINGS["lab"],
+                "observations": {},
+                "evidence": {},
             }
         return self._sessions[session_id]
 
@@ -232,6 +234,107 @@ class AttackKnowledgeBase:
                 "suggested_phase": "exploitation",
                 "urgency": "high",
             })
+
+    # ── Durable observation restoration ──────────────────────────────────
+
+    @staticmethod
+    def _vuln_key(vuln: dict) -> tuple:
+        return (str(vuln.get("title", "")).lower().strip(), vuln.get("port", 0),
+                ",".join(sorted(str(cve) for cve in (vuln.get("cve_ids") or []))))
+
+    def _restore_host(self, session: dict, ip: str, observed_at: str) -> HostEntry:
+        """Create or timestamp a host without emitting callbacks or synthetic events."""
+        host = session["hosts"].get(ip)
+        if host is None:
+            host = HostEntry(ip=ip, first_seen=observed_at, last_updated=observed_at)
+            session["hosts"][ip] = host
+            return host
+        if observed_at < (host.first_seen or observed_at):
+            host.first_seen = observed_at
+        if observed_at > (host.last_updated or ""):
+            host.last_updated = observed_at
+        return host
+
+    def restore_observations(self, session_id: str, observations: List[dict]) -> dict:
+        """Apply validated durable observations idempotently.
+
+        This never schedules enrichment, fires replan callbacks, or emits
+        timestamps based on the current clock. All timestamps come from the
+        persisted observation.
+        """
+        session = self._ensure_session(session_id)
+        stored = session.setdefault("observations", {})
+        evidence_refs = session.setdefault("evidence", {})
+        ordered = sorted(observations, key=lambda item: (item["observed_at"], item["observation_id"]))
+
+        # Detect conflicting duplicate identifiers before mutating anything.
+        for observation in ordered:
+            previous = stored.get(observation["observation_id"])
+            if previous is not None and previous.get("content_digest") != observation["content_digest"]:
+                raise ValueError("conflicting restored observation")
+
+        restored = 0
+        skipped = 0
+        for observation in ordered:
+            observation_id = observation["observation_id"]
+            if observation_id in stored:
+                skipped += 1
+                continue
+            observed_at = observation["observed_at"]
+            payload = observation["payload"]
+
+            for ip in payload["hosts_updated"]:
+                self._restore_host(session, ip, observed_at)
+            for port in payload["ports_added"]:
+                host = self._restore_host(session, port["ip"], observed_at)
+                previous_port = host.ports.get(port["port"])
+                if previous_port is None or str(previous_port.get("scanned_at", "")) <= observed_at:
+                    host.ports[port["port"]] = {
+                        "service": port["service"], "version": port["version"],
+                        "banner": "", "state": "open", "scanned_at": observed_at,
+                    }
+                host.last_updated = max(host.last_updated or "", observed_at)
+            for vuln in payload["vulns_added"]:
+                host = self._restore_host(session, vuln["ip"], observed_at)
+                if not any(self._vuln_key(existing) == self._vuln_key(vuln)
+                           for existing in host.vulnerabilities):
+                    host.vulnerabilities.append({
+                        "title": vuln["title"], "severity": vuln["severity"],
+                        "cve_ids": list(vuln["cve_ids"]), "cvss": vuln["cvss"],
+                        "description": "", "exploitable": False,
+                        "port": vuln["port"], "found_at": observed_at,
+                    })
+                host.last_updated = max(host.last_updated or "", observed_at)
+
+            ref = {
+                "observation_id": observation_id,
+                "job_id": observation["job_id"],
+                "tool": observation["tool"],
+                "observation": observation["observation"],
+                "target": observation["target"],
+                "observed_at": observed_at,
+                "content_digest": observation["content_digest"],
+                "evidence": dict(observation["evidence"]),
+            }
+            stored[observation_id] = ref
+            evidence_refs[observation["job_id"]] = dict(observation["evidence"])
+            session["timeline"].append({
+                "ts": observed_at,
+                "event": "knowledge_restored",
+                "agent": "knowledge_store",
+                "detail": (f"Restored {observation['observation']} from {observation['tool']} "
+                           f"job {observation['job_id']}"),
+            })
+            restored += 1
+        return {"restored": restored, "skipped": skipped}
+
+    def get_observations(self, session_id: str) -> List[dict]:
+        values = list(self._sessions.get(session_id, {}).get("observations", {}).values())
+        return [{**item, "evidence": dict(item.get("evidence", {}))} for item in values]
+
+    def get_evidence_references(self, session_id: str) -> Dict[str, dict]:
+        return {job_id: dict(value) for job_id, value
+                in self._sessions.get(session_id, {}).get("evidence", {}).items()}
 
     # ── v10: Re-planning callbacks ───────────────────────────────────────
 

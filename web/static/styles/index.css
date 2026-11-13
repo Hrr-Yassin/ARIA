@@ -134,6 +134,22 @@ input:focus, textarea:focus, select:focus {
   color: var(--text-primary); background: var(--bg-hover);
   border-color: var(--bg-border-strong);
 }
+.overview-link {
+  height: 36px; padding: 0 12px;
+  display: flex; align-items: center; gap: 7px;
+  color: var(--text-secondary); text-decoration: none;
+  border: 1px solid var(--bg-border); border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 500;
+  transition: all 150ms ease;
+}
+.overview-link:hover {
+  color: var(--text-primary); background: var(--bg-hover);
+  border-color: var(--bg-border-strong);
+}
+@media (max-width: 900px) {
+  .overview-link span { display: none; }
+  .overview-link { width: 36px; padding: 0; justify-content: center; }
+}
 
 /* Auto button — flagship element */
 .auto-btn {

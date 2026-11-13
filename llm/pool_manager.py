@@ -35,6 +35,8 @@ from fastapi import HTTPException
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 
 from config.settings import settings
+from llm.local_client import LocalClient
+from llm.planner_errors import budget_error, public_error
 from llm.groq_client import GroqClient
 from llm.gemini_client import GeminiClient
 from llm.openrouter_client import OpenRouterClient
@@ -286,10 +288,47 @@ class LLMPoolManager:
                 prompt = '<untrusted_engagement_data>\n' + redact(prompt, secrets) + '\n</untrusted_engagement_data>'
                 system = redact(system, secrets)
                 return await self._query_for_task(user_id, task_type, prompt, system)
-            except HTTPException:
-                return {'success': False, 'content': '', 'error': 'model_budget_denied'}
+            except HTTPException as exc:
+                return {'success': False, 'content': '', 'error': budget_error(exc)}
             except Exception:
                 return {'success': False, 'content': '', 'error': 'provider_authorization_or_storage_unavailable'}
+
+    def _model_for(self, provider, task_type):
+        configured = {'groq': settings.GROQ_MODEL, 'gemini': settings.GEMINI_MODEL,
+                      'openrouter': settings.OPENROUTER_MODEL}
+        task = TASK_MODEL_MAP.get(task_type, TASK_MODEL_MAP[DEFAULT_TASK])
+        return task.get('model_override', {}).get(provider) or configured.get(provider, '')
+
+    async def planner_preflight(self, user_id, session_id):
+        """Read-only admission check: no generation, quota consumption or reservation."""
+        from llm.engagement_budget import engagement_context, model_accounting
+        token = engagement_context.set({'session_id': session_id, 'owner': user_id})
+        try:
+            await self.refresh_user_keys(user_id)
+            if settings.LLM_ROUTING == 'local':
+                provider, model = 'local', settings.LOCAL_LLM_MODEL
+                if not model:
+                    return {'ready': False, 'code': 'model_not_configured', 'message': public_error('model_not_configured')}
+            else:
+                pool = self._pools.get(user_id)
+                key = self._find_best_key(pool, preferred_providers=TASK_MODEL_MAP['attack_planning']['preferred_providers']) if pool else None
+                if not key:
+                    code = 'no_keys' if not pool or not pool.keys else 'all_exhausted'
+                    return {'ready': False, 'code': code, 'message': public_error(code)}
+                provider, model = key.provider, self._model_for(key.provider, 'attack_planning')
+                self.decrypt_key(key.encrypted_key)
+            await model_accounting.reserve(user_id, provider, model, '', '', check_only=True)
+            if provider == 'local' and not await LocalClient(model=model).available():
+                return {'ready': False, 'code': 'local_model_unavailable', 'message': public_error('local_model_unavailable')}
+            return {'ready': True, 'provider': provider, 'model': model}
+        except HTTPException as exc:
+            code = budget_error(exc)
+            return {'ready': False, 'code': code, 'message': public_error(code)}
+        except Exception:
+            code = 'provider_authorization_or_storage_unavailable'
+            return {'ready': False, 'code': code, 'message': public_error(code)}
+        finally:
+            engagement_context.reset(token)
 
     async def _query_for_task(self, user_id: str, task_type: str,
                              prompt: str, system: str = "") -> dict:
@@ -312,6 +351,24 @@ class LLMPoolManager:
                 "tier": 0,
                 "provider": "none",
             }
+
+        if settings.LLM_ROUTING == 'local':
+            from llm.engagement_budget import model_accounting
+            from llm.validation_budget import current_budget
+            if not settings.LOCAL_LLM_MODEL:
+                return {'success': False, 'content': '', 'error': 'model_not_configured'}
+            budget = current_budget.get()
+            if budget is not None and not budget.reserve(prompt, system, 4096):
+                return {'success': False, 'content': '', 'error': 'validation_budget_exhausted'}
+            attempt = await model_accounting.reserve(user_id, 'local', settings.LOCAL_LLM_MODEL, prompt, system)
+            result = {'success': False, 'error': 'local_model_request_failed'}
+            try:
+                result = await LocalClient(model=settings.LOCAL_LLM_MODEL, temperature=settings.LLM_TEMPERATURE).query(prompt, system)
+                if budget is not None:
+                    budget.record(result.get('tokens_used', 0))
+            finally:
+                await model_accounting.settle(attempt, result)
+            return {**result, 'provider': 'local', 'model': settings.LOCAL_LLM_MODEL, 'task_type': task_type, 'tier': tier}
 
         pool = self._pools.get(user_id)
         if not pool or not pool.keys:
@@ -426,7 +483,7 @@ class LLMPoolManager:
 
         return {
             "success": False, "content": "",
-            "error": f"all_exhausted ({last_error})",
+            "error": "all_exhausted",
             "provider": "none", "task_type": task_type, "tier": tier,
         }
 

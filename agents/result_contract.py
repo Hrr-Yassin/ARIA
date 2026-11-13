@@ -20,9 +20,24 @@ class AgentResult(BaseModel):
     rejections: list[dict] = Field(default_factory=list)
 
 
+def normalize_unverified_result(result: AgentResult) -> AgentResult:
+    """Return a copy whose conclusions can never be stored as verified.
+
+    Evidence receipts stay in the durable catalog with their own provenance.
+    An LLM observation or hypothesis is always an unverified conclusion, no
+    matter what a provider or direct caller put in the ``verified`` field.
+    """
+    normalized = result.model_copy(deep=True)
+    for entry in [*normalized.observations, *normalized.hypotheses]:
+        entry['verified'] = False
+    return normalized
+
+
 def professional_result(agent, request, result, scope, evidence, capabilities):
     """Evidence is supplied by the server, never accepted from model output."""
-    interpreted = request.get('user_input') or request.get('description') or request.get('goal_type') or 'Assess the configured target within engagement scope'
+    interpreted = (request.get('original_objective') or request.get('objective')
+                   or request.get('user_input') or request.get('description')
+                   or request.get('goal_type') or 'Assess the configured target within engagement scope')
     observations = [{'evidence_id':entry['id'], 'observation':entry['summary'],
         'provenance':entry.get('provenance','saved_tool_output_unverified'), 'verified':False} for entry in evidence]
     contract = AgentResult(interpreted_request=interpreted,

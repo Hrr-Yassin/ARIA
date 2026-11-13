@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARIA — Interface system · Phase A review</title>
+<link rel="icon" type="image/svg+xml" href="/static/aria.svg">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles/aria-foundation.css">
+<link rel="stylesheet" href="/static/styles/design-system.css">
+<script src="/static/scripts/design-system.js" defer></script>
+</head>
+<body data-aria-page="design-system">
+<a href="#review-main" class="aria-skip">Skip to design system</a>
+<header class="review-header">
+  <a href="#review-main" class="review-brand" aria-label="ARIA interface system">
+    <svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m16 3 12 7v12l-12 7L4 22V10L16 3Z" stroke="currentColor"/><path d="m10 22 6-13 6 13M12 18h8" stroke="currentColor" stroke-width="1.5"/></svg>
+    ARIA <span>Interface system / 01</span>
+  </a>
+  <span class="aria-badge">Phase A · Design review</span>
+</header>
+<div class="review-layout">
+  <nav class="review-nav" aria-label="Design system sections">
+    <div class="aria-kicker">Foundation</div>
+    <a href="#direction">Design direction</a>
+    <a href="#palette">Color system</a>
+    <a href="#primitives">Components</a>
+    <a href="#states">Data states</a>
+    <a href="#type">Typography</a>
+  </nav>
+  <main class="review-main" id="review-main" tabindex="-1">
+    <section class="review-hero" id="direction">
+      <div class="aria-kicker">Security research / Autonomous operations</div>
+      <h1>Clarity at every<br>level of operation.</h1>
+      <p>A shared visual language for understanding execution, inspecting evidence, and keeping human decisions in view.</p>
+      <div class="review-hero-meta"><span>01 / Midnight surfaces</span><span>02 / Explicit states</span><span>03 / Evidence before activity</span></div>
+    </section>
+    <section class="review-section" id="palette" aria-labelledby="palette-title">
+      <div class="section-heading"><span class="aria-kicker">01</span><h2 id="palette-title">Color with a purpose</h2></div>
+      <div class="palette">
+        <button class="swatch" data-token="--aria-bg" style="--swatch:var(--aria-bg)"><span class="swatch-color"></span><span class="swatch-label"><strong>Canvas</strong>#090D14</span></button>
+        <button class="swatch" data-token="--aria-surface" style="--swatch:var(--aria-surface)"><span class="swatch-color"></span><span class="swatch-label"><strong>Surface</strong>#101722</span></button>
+        <button class="swatch" data-token="--aria-primary" style="--swatch:var(--aria-primary)"><span class="swatch-color"></span><span class="swatch-label"><strong>Interaction</strong>#A2BBFF</span></button>
+        <button class="swatch" data-token="--aria-telemetry" style="--swatch:var(--aria-telemetry)"><span class="swatch-color"></span><span class="swatch-label"><strong>Observation</strong>#77D5E4</span></button>
+        <button class="swatch" data-token="--aria-warning" style="--swatch:var(--aria-warning)"><span class="swatch-color"></span><span class="swatch-label"><strong>Attention</strong>#F2C078</span></button>
+        <button class="swatch" data-token="--aria-danger" style="--swatch:var(--aria-danger)"><span class="swatch-color"></span><span class="swatch-label"><strong>Failure</strong>#FF9B9F</span></button>
+      </div>
+      <p class="token-readout" id="token-readout" aria-live="polite">Select a swatch to inspect its shared CSS token.</p>
+    </section>
+    <section class="review-section" id="primitives" aria-labelledby="primitives-title">
+      <div class="section-heading"><span class="aria-kicker">02</span><h2 id="primitives-title">Built for inspection</h2></div>
+      <div class="review-columns">
+        <article class="aria-panel">
+          <header class="aria-panel-head"><h3>Record anatomy</h3><span class="aria-kicker">Component specimen</span></header>
+          <div class="aria-panel-body">
+            <p class="aria-help">Static vocabulary examples. These rows do not describe live ARIA activity.</p>
+            <div class="review-controls">
+              <div class="aria-field"><label for="density">Record density</label><select class="aria-input" id="density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></div>
+              <label class="motion-label"><input type="checkbox" id="motion"> Disable decorative motion</label>
+            </div>
+            <div class="aria-table-wrap" tabindex="0" role="region" aria-label="Lifecycle vocabulary, horizontally scrollable">
+              <table class="aria-table"><caption>State vocabulary examples</caption><thead><tr><th scope="col">Label</th><th scope="col">Meaning</th></tr></thead>
+                <tbody><tr><td><span class="aria-badge" data-tone="info">Executing</span></td><td>Execution confirmed by source</td></tr><tr><td><span class="aria-badge" data-tone="warning">Blocked</span></td><td>A prerequisite prevents progress</td></tr><tr><td><span class="aria-badge" data-tone="success">Completed</span></td><td>Terminal outcome recorded</td></tr><tr><td><span class="aria-badge">Unknown</span></td><td>Source cannot establish state</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+        <article class="aria-panel">
+          <header class="aria-panel-head"><h3>Controls &amp; disclosure</h3><span class="aria-kicker">Keyboard accessible</span></header>
+          <div class="aria-panel-body stack">
+            <div class="aria-field"><label for="example-objective">Objective label example</label><input class="aria-input" id="example-objective" placeholder="Describe the research objective" aria-describedby="objective-help"><p class="aria-help" id="objective-help">Design specimen only. Input is not saved or sent.</p></div>
+            <div class="aria-field"><label for="validation-example">Validation example</label><input class="aria-input" id="validation-example" value="" aria-invalid="true" aria-describedby="validation-help"><p class="aria-help" id="validation-help">Example error: enter a value before continuing.</p></div>
+            <a class="aria-button aria-button-primary" href="#states">Inspect data states <span aria-hidden="true">↗</span></a>
+            <details class="aria-inspector"><summary>Inspect the disclosure pattern</summary><div>Context appears beside the selected record. Show source, recorded time, durable identifiers, and any retention limits. Expand with Enter or Space.</div></details>
+          </div>
+        </article>
+      </div>
+    </section>
+    <section class="review-section" id="states" aria-labelledby="states-title">
+      <div class="section-heading"><span class="aria-kicker">03</span><h2 id="states-title">Uncertainty stays visible</h2></div>
+      <p class="aria-help">Copy specimens for future integrations. No status below is a live system assertion.</p>
+      <div class="review-columns" style="margin-top:18px">
+        <div class="stack">
+          <div class="aria-notice"><strong>Not started</strong>No campaign exists for this session. Campaign monitoring begins after one is created.</div>
+          <div class="aria-notice"><strong>Not recorded</strong>This source does not retain model prompt previews.</div>
+          <div class="aria-notice"><strong>Unavailable</strong>The source could not be reached. Previously retrieved values must show their last retrieval time.</div>
+        </div>
+        <div class="stack">
+          <div class="aria-notice" data-tone="warning"><strong>Blocked</strong>Execution is waiting for a required approval. Display the recorded reason beside the affected action.</div>
+          <div class="aria-notice" data-tone="danger"><strong>Failed</strong>The operation ended with a recorded failure. Inspect its durable event before choosing recovery.</div>
+          <div class="aria-notice"><strong>Unknown</strong>No reliable lifecycle value was returned. No active or healthy state can be inferred.</div>
+        </div>
+      </div>
+    </section>
+    <section class="review-section" id="type" aria-labelledby="type-title">
+      <div class="section-heading"><span class="aria-kicker">04</span><h2 id="type-title">Readable under pressure</h2></div>
+      <div class="aria-panel aria-panel-body">
+        <div class="anatomy-label">IBM Plex Sans / Interface &amp; headings</div>
+        <p class="type-sample">Every action has a source.</p>
+        <p class="type-copy">Use plain language, explicit timestamps, and progressive disclosure. Reserve color for meaning; pair every state with a readable label.</p>
+        <div class="anatomy-label">IBM Plex Mono / Identifiers, commands &amp; accounting</div>
+        <p class="aria-code">session_id / campaign_id / run_id / action_id / job_id</p>
+      </div>
+    </section>
+    <footer class="review-footer"><span><span class="token-pulse" aria-hidden="true"></span>ARIA foundation v1 · Review specimen</span><span>No execution controls or live telemetry on this page.</span></footer>
+  </main>
+</div>
+</body>
+</html>

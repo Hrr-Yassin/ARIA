@@ -127,10 +127,12 @@ class ReliabilityTests(OfflineCase):
         steps=[{'tool':'nmap','command':'nmap -p 80 192.0.2.1'}, {'tool':'curl','command':'curl -I http://192.0.2.1'}]
         async def propose(uid,sid,command,tool,**kwargs):
             return SimpleNamespace(command=command,tool=tool,risk='green',id=tool,status='authorized')
-        parsed=SimpleNamespace(events=[],ports_added=[],vulns_added=[],creds_added=[],shells_added=[])
-        with patch('agents.autonomous_engine.execution_authorization._context',AsyncMock(return_value={})), patch('agents.autonomous_engine.execution_authorization.propose',AsyncMock(side_effect=propose)), patch('agents.autonomous_engine.execution_authorization.execute',AsyncMock(side_effect=[{'exit_code':0,'job_id':'j1','stdout':'80/tcp open http'},{'exit_code':0,'job_id':'j2','stdout':'HTTP/1.1 200 OK'}])), patch.object(engine,'_plan_next_step',AsyncMock(side_effect=steps)) as planner, patch.object(engine,'_write_decision_log',AsyncMock()), patch('agents.autonomous_engine.dispatch_parser',return_value=parsed), patch.object(engine,'STEP_DELAY',0):
+        parsed=SimpleNamespace(events=[],hosts_updated=[],ports_added=[],vulns_added=[],creds_added=[],shells_added=[])
+        with patch('agents.autonomous_engine.execution_authorization._context',AsyncMock(return_value={})), patch('agents.autonomous_engine.execution_authorization.propose',AsyncMock(side_effect=propose)), patch('agents.autonomous_engine.execution_authorization.execute',AsyncMock(side_effect=[{'exit_code':0,'job_id':'j1','stdout':'80/tcp open http'},{'exit_code':0,'job_id':'j2','stdout':'HTTP/1.1 200 OK'}])), patch.object(engine,'_plan_next_step',AsyncMock(side_effect=steps)) as planner, patch.object(engine,'_write_decision_log',AsyncMock()), patch('agents.autonomous_engine.dispatch_parser',return_value=parsed), patch('agents.autonomous_engine.knowledge_store.record_observation',AsyncMock()) as stored, patch.object(engine,'STEP_DELAY',0):
             await engine._run_loop(state)
         self.assertEqual(planner.await_count,2)
         self.assertEqual(state.run_state,'completed')
         self.assertEqual(set(state.completed_observations),{'port_discovery','http_response'})
         self.assertEqual(state.evidence_job_ids,['j1','j2'])
+        self.assertEqual(stored.await_count,2)
+        self.assertEqual([call.kwargs['job_id'] for call in stored.await_args_list],['j1','j2'])

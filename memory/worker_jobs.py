@@ -8,7 +8,7 @@ import uuid
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from config.settings import settings
 from memory.database_models import DecisionLog, PentestSession, async_session
@@ -125,6 +125,27 @@ class SQLJobStore:
                 query = query.where(DecisionLog.session_id == session_id)
             rows = (await db.execute(query)).scalars().all()
             return [dict(row.metadata_) for row in rows]
+
+    async def summary(self, session_id=None):
+        """Fixed-cardinality receipt counts for operational monitoring."""
+        state = DecisionLog.metadata_['state'].as_string()
+        query = select(state, func.count()).where(
+            DecisionLog.decision_type == 'worker_job')
+        if session_id is not None:
+            query = query.where(DecisionLog.session_id == session_id)
+        query = query.group_by(state)
+        async with async_session() as db:
+            rows = (await db.execute(query)).all()
+        counts = {name: 0 for name in sorted(STATES)}
+        for name, count in rows:
+            label = name if name in counts else 'unknown'
+            counts[label] += int(count or 0)
+        active = sum(counts[name] for name in (
+            'prepared', 'dispatching', 'queued', 'running',
+            'cancel_requested', 'unknown'))
+        return {'schema': 'aria.worker.summary.v1', 'counts': counts,
+                'active': active,
+                'unresolved': counts['cancel_requested'] + counts['unknown']}
 
 
 class WorkerClient:
@@ -417,6 +438,11 @@ class WorkerJobs:
             current = await self.store.get(job_id)
             if current and current['state'] not in TERMINAL:
                 await self.cancel_job(current)
+            import structlog
+            structlog.get_logger(__name__).exception(
+                'worker job transport failed', job_id=job_id,
+                protocol=job.get('protocol'),
+            )
             raise HTTPException(502, 'Worker job failed; inspect durable job status') from None
 
 
