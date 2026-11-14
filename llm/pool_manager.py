@@ -71,16 +71,16 @@ TASK_MODEL_MAP: Dict[str, dict] = {
 
     # Tier 1 — Small & fast
     "output_analysis":       {"tier": 1,
-                              "preferred_providers": ["groq", "gemini"],
+                              "preferred_providers": ["openrouter", "groq", "gemini"],
                               "model_override": {"groq": "llama-3.3-70b-versatile"}},
     "next_step_suggestion":  {"tier": 1,
-                              "preferred_providers": ["groq", "gemini"],
+                              "preferred_providers": ["openrouter", "groq", "gemini"],
                               "model_override": {"groq": "llama-3.3-70b-versatile"}},
     "vuln_validation":       {"tier": 1,
-                              "preferred_providers": ["gemini", "groq"],
+                              "preferred_providers": ["openrouter", "gemini", "groq"],
                               "model_override": {}},
     "chat_reply":            {"tier": 1,
-                              "preferred_providers": ["groq", "gemini"],
+                              "preferred_providers": ["openrouter", "groq", "gemini"],
                               "model_override": {}},
 
     # Tier 2 — Reasoning (medium complexity)
@@ -145,6 +145,7 @@ class LLMPoolManager:
     def __init__(self):
         self._pools: Dict[str, UserPool] = {}
         self._locks = {}
+        self._request_slots = asyncio.Semaphore(settings.LLM_MAX_CONCURRENT_REQUESTS)
         try:
             self._fernet = MultiFernet([Fernet(settings.FERNET_KEY.encode()),
                                         *(Fernet(k.encode()) for k in settings.FERNET_PREVIOUS_KEYS)])
@@ -203,7 +204,12 @@ class LLMPoolManager:
         exclude = exclude_ids or set()
         candidates = []
 
+        # An explicitly enabled hosted credential pins this pool to OpenRouter.
+        # Exhaustion/cooldown must not redirect paid work to another provider.
+        hosted = any(key.provider == 'openrouter' and key.is_active for key in pool.keys)
         for key in pool.keys:
+            if hosted and key.provider != 'openrouter':
+                continue
             if key.key_id in exclude:
                 continue
             if not key.is_active:
@@ -273,7 +279,7 @@ class LLMPoolManager:
         from security.redaction import redact, deployment_secrets
         from memory.access_scope import owned_session_ids
         from memory.attack_knowledge_base import attack_kb
-        async with self._locks.setdefault(user_id, asyncio.Lock()):
+        async with self._request_slots, self._locks.setdefault(user_id, asyncio.Lock()):
             try:
                 await self.refresh_user_keys(user_id)
                 secrets = deployment_secrets()
@@ -427,6 +433,8 @@ class LLMPoolManager:
                     return {'success':False, 'content':'', 'error':'validation_budget_exhausted', 'provider':'none'}
                 from llm.engagement_budget import model_accounting
                 attempt = await model_accounting.reserve(user_id, key_state.provider, model, prompt, system)
+                if key_state.provider == 'openrouter':
+                    client.tariff = attempt.get('tariff')
                 result = {'success': False, 'content': '', 'error': 'provider_request_failed'}
                 try:
                     result = await client.query(prompt, system)
@@ -461,6 +469,11 @@ class LLMPoolManager:
                              remaining=key_state.requests_limit - key_state.requests_used,
                              pass_num=pass_num)
                     return result
+
+                # Hosted selection never silently switches provider/model after failure.
+                if key_state.provider == 'openrouter':
+                    return {**result, 'provider': 'openrouter', 'model': model,
+                            'task_type': task_type, 'tier': tier}
 
                 # Failure → mark + continue
                 raw_error = str(result.get("error", "unknown"))

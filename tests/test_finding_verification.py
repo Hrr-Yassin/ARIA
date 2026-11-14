@@ -118,9 +118,33 @@ class FindingVerification(OfflineCase):
         view = await VerificationStore().view('engagement', 'owner')
         self.assertTrue(view['findings'][0]['ready_for_external_submission'])
         self.assertEqual(view['private_program_duplicates'], 'unknown')
+        from orchestrator.research_verifier import inspect_finding
+        verified = await inspect_finding(self.db, 'engagement', 'owner', finding['id'],
+            materialize(self.events), self.session.scope)
+        self.assertTrue(verified['confirmed'])
+        self.assertEqual(len(verified['checks']), 2)
+        self.assertFalse(verified['discovery_prompt_used'])
+        from memory.research import ResearchStore, CreateHypothesis, ResearchTransition
+        from tests.test_research import hypothesis
+        research = ResearchStore()
+        event = await research.create('engagement', 'owner', CreateHypothesis(
+            request_id=uuid.uuid4(), hypothesis=hypothesis(supporting_evidence=['initial'])))
+        item = event['data']
+        for target in ('HYPOTHESIZED', 'PLANNED', 'TESTED', 'CONFIRMED'):
+            event = await research.transition('engagement', 'owner', item['id'], ResearchTransition(
+                request_id=uuid.uuid4(), expected_revision=item['revision'], state=target,
+                reason='Check independent controls and existing human signoff',
+                evidence_references=['p1','p2'] if target=='TESTED' else [],
+                finding_id=finding['id'] if target=='CONFIRMED' else None))
+            item = event['data']
+        self.assertTrue(item['independent_verification']['confirmed'])
+        self.assertTrue((await research.view('engagement','owner'))['hypotheses'][0]['confirmed'])
         self.mapped['captures']['p2']['expired'] = True
         view = await self.verification.view('engagement', 'owner')
         self.assertFalse(view['findings'][0]['ready_for_external_submission'])
+        self.assertFalse((await research.view('engagement','owner'))['hypotheses'][0]['confirmed'])
+        self.assertFalse((await inspect_finding(self.db, 'engagement', 'owner', finding['id'],
+            materialize(self.events), self.session.scope))['confirmed'])
 
     async def test_no_skips_reuse_stale_revision_or_model_agreement(self):
         finding = await self.seed()

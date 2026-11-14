@@ -136,7 +136,7 @@ async function api(path, opts = {}) {
     : await resp.text();
   if (!resp.ok) {
     const msg = (data && data.detail) || resp.statusText;
-    throw new Error(msg);
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
   }
   return data;
 }

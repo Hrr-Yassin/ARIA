@@ -61,6 +61,46 @@ class EngagementBudgets(OfflineCase):
         await self.accounting.settle(attempt,{'success':False})
         self.assertEqual(self.session.metadata_['model_usage']['unknown_cost_calls'],1)
 
+    async def test_hosted_missing_cost_stops_even_with_known_tokens(self):
+        from llm.provider_tariffs import select_quote
+        quote = select_quote('test', [{'id': 'test', 'supported_parameters': ['response_format', 'structured_outputs']}], {
+            'id': 'test', 'endpoints': [{'status': 0, 'tag': 'fixture',
+            'supported_parameters': ['response_format', 'structured_outputs', 'temperature', 'max_tokens'],
+            'pricing': {'prompt': '0.00000009', 'completion': '0.00000018'}}]})
+        self.session.metadata_['model_tariffs'] = {'test': quote}
+        await self.accounting.configure('engagement', 'owner', ModelLimits(tariffs=[{
+            'provider': 'openrouter', 'model': 'test', 'microusd_per_million': 180000, 'quote_id': quote['id']}]))
+        attempt = await self.accounting.reserve('owner', 'openrouter', 'test', 'x', '')
+        row = next(row for row in self.rows if row.id == attempt['id'])
+        self.db.get = AsyncMock(return_value=row)
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: self.session))
+        await self.accounting.settle(attempt, {'success': True, 'tokens_used': 10})
+        with self.assertRaises(HTTPException):
+            await self.accounting.reserve('owner', 'openrouter', 'test', 'x', '')
+
+    async def test_failed_hosted_call_with_unknown_usage_stops_and_schema_is_reserved(self):
+        from tests.test_provider_tariffs import fixture_quote
+        from llm.provider_tariffs import select_quote
+        from llm.base_llm import response_schema
+        quote = select_quote(*fixture_quote())
+        self.session.metadata_['model_tariffs'] = {quote['model']: quote}
+        await self.accounting.configure('engagement', 'owner', ModelLimits(tariffs=[{
+            'provider':'openrouter', 'model':quote['model'], 'quote_id':quote['id'],
+            'microusd_per_million':quote['microusd_per_million']}]))
+        schema = response_schema.set({'description': 'x' * 9000})
+        try:
+            attempt = await self.accounting.reserve('owner', 'openrouter', quote['model'], 'x', '')
+        finally:
+            response_schema.reset(schema)
+        self.assertGreater(attempt['reserved_tokens'], 17000)
+        row = next(row for row in self.rows if row.id == attempt['id'])
+        self.db.get = AsyncMock(return_value=row)
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda:self.session))
+        await self.accounting.settle(attempt, {'success':False, 'error':'timeout'})
+        self.assertEqual(self.session.metadata_['model_usage']['stop_reason'], 'unknown_usage')
+        with self.assertRaises(HTTPException):
+            await self.accounting.reserve('owner', 'openrouter', quote['model'], 'x', '')
+
     async def test_token_cost_limits_and_overrun_stop(self):
         for limits in ({'max_tokens':1},{'max_cost_microusd':1}):
             self.session.metadata_={}

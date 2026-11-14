@@ -231,6 +231,10 @@
       <p class="settings-note">Delegate analysis of saved evidence. Review every result. Tasks never run tools automatically.</p>
       <button id="team-refresh" class="btn btn-ghost">Load saved team work</button>
       <p id="team-status" role="status" aria-live="polite"></p>
+      <details><summary>Persistent research</summary>
+        <p class="settings-note">Hypotheses retain evidence, controls and investigation history. Confirmation requires independent reproduction and the existing human review.</p>
+        <div id="team-research"></div>
+      </details>
       <details><summary>Create a task</summary>
         <label>Specialist<select id="team-role"><option>web_intel</option><option>recon</option><option>scan</option><option>vuln</option><option>correlation</option><option>report</option></select></label>
         <label>Security question / objective<textarea id="team-objective" rows="2"></textarea></label>
@@ -268,14 +272,17 @@
         <div id="team-coverage"></div>
       </details>
       <details><summary>Shared model budget</summary>
-        <p class="settings-note">Calls require an owner-entered tariff for the exact provider and model. Use a conservative rate that covers both input and output tokens. Missing provider cost remains unknown. Counters never reset when limits change.</p>
+        <p class="settings-note">OpenRouter requires a verified tariff for the exact model before owner approval. Other providers use an owner-entered conservative rate. Missing provider cost remains unknown. Counters never reset when limits change.</p>
         <label>Maximum provider calls<input id="team-model-calls" type="number" min="0" max="10000"></label>
         <label>Maximum reserved tokens<input id="team-model-tokens" type="number" min="0" max="100000000"></label>
-        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001"></label>
+        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001" value="2"></label>
         <label>Provider<select id="team-model-provider"><option>groq</option><option>gemini</option><option>openrouter</option></select></label>
         <label>Exact configured model name<input id="team-model-name"></label>
         <label>Conservative combined rate (USD per million tokens)<input id="team-model-rate" type="number" min="0" step="0.000001"></label>
-        <button id="team-save-budget" class="btn btn-ghost">Save model budget</button>
+        <button id="team-save-budget" class="btn btn-ghost">Approve spending limit</button>
+        <button id="team-refresh-tariff" class="btn btn-ghost">Verify OpenRouter key and refresh tariff</button>
+        <p id="team-effective-tariff" role="status"></p>
+        <p id="team-budget-approval" role="status"></p>
         <pre id="team-model-usage"></pre>
       </details>
     </section>

@@ -98,11 +98,21 @@ class TeamCoordinator:
                 view = await team_store.view(sid, owner)
             evidence = [entry for entry in view['evidence'] if entry['id'] in task['evidence_inputs']]
             specialist = self.specialists()[task['owner_role']]
+            related = [item for item in view.get('research_hypotheses', [])
+                if set(item['supporting_evidence']) & set(task['evidence_inputs'])][:3]
+            research_context = {
+                'hypotheses':[{key:item[key] for key in ('id','claim','alternative_explanations',
+                    'positive_controls','negative_controls','uncertainty','state')} for item in related],
+                'responsibility':('Challenge the discovery claims and explain missing independent controls; model agreement cannot verify a finding.'
+                    if task['owner_role']=='correlation' else
+                    'Propose evidence-linked hypotheses, alternative explanations and controlled tests; keep claims unverified.'),
+                'verification':'untrusted research assertions; no execution authority'}
             response = await specialist.process(sid, owner, {
                 'user_input': task['objective'], 'description': task['objective'],
                 'target': view.get('target', ''),
                 'team_evidence': evidence, 'expected_output': task['expected_output'],
                 'completion_criteria': task['completion_criteria'],
+                'research_context':research_context,
                 'team_task': True,
             }, skill)
             contract = AgentResult.model_validate(response['agent_result'])

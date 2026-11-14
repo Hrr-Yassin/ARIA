@@ -29,10 +29,12 @@ class Settings(BaseSettings):
     # ── LLM defaults (users manage their own keys) ──────────────────────
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
-    OPENROUTER_MODEL: str = "anthropic/claude-sonnet-4-5"
+    OPENROUTER_MODEL: str = "deepseek/deepseek-v4-flash"
+    OPENROUTER_MAX_OUTPUT_TOKENS: int = Field(default=4096, ge=1, le=4096)
     LLM_ROUTING: Literal["cloud", "local"] = "cloud"
     LOCAL_LLM_URL: str = "http://127.0.0.1:11434/v1"
     LOCAL_LLM_MODEL: str = ""
+    LLM_MAX_CONCURRENT_REQUESTS: int = Field(default=1, ge=1, le=8)
     LLM_TEMPERATURE: float = 0.1
     LLM_COOLDOWN_SECONDS: int = 300
 

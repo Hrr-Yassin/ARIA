@@ -1,11 +1,12 @@
 """SQL-serialized accounting for every physical pool call, including failover.
 
 Reservations are never refunded: missing usage, crashes and cancelled calls remain
-charged at their declared ceiling. Monetary ceilings use owner-entered tariffs,
-not an assertion about current provider prices.
+charged at their declared ceiling. OpenRouter requires authenticated expiring
+provider quotes; other hosted providers retain owner-entered conservative rates.
 """
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import json
 import uuid
 from typing import Literal
 
@@ -35,12 +36,13 @@ class Tariff(Strict):
     model: str = Field(min_length=1, max_length=200)
     # Conservative combined input/output rate in micro-USD per million tokens.
     microusd_per_million: int = Field(ge=1, le=10000000000)
+    quote_id: str | None = Field(default=None, max_length=36)
 
 
 class ModelLimits(Strict):
     max_calls: int = Field(default=20, ge=0, le=10000)
     max_tokens: int = Field(default=200000, ge=0, le=100000000)
-    max_cost_microusd: int = Field(default=1000000, ge=0, le=1000000000)
+    max_cost_microusd: int = Field(default=2000000, ge=0, le=1000000000)
     tariffs: list[Tariff] = Field(default_factory=list, max_length=100)
 
 
@@ -97,7 +99,12 @@ class ModelAccounting:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             metadata = dict(session.metadata_ or {})
+            from llm.provider_tariffs import checked_quote
+            for tariff in limits.tariffs:
+                if tariff.provider == 'openrouter':
+                    checked_quote(metadata, tariff)
             metadata['model_limits'] = limits.model_dump()
+            metadata['model_budget_approved_at'] = datetime.now(timezone.utc).isoformat()
             session.metadata_ = metadata  # Counters and reservations are retained.
             db.add(DecisionLog(session_id=sid, user_id=owner, decision_type='model_limits',
                                human_involved=True, metadata_=limits.model_dump()))
@@ -127,7 +134,15 @@ class ModelAccounting:
             tariffs = [t for t in limits.tariffs if t.provider == provider and t.model == model]
             if provider != 'local' and len(tariffs) != 1:
                 raise HTTPException(409, {'code': 'model_tariff_missing', 'message': 'Configure exactly one conservative tariff for this provider/model'})
-            tokens, cost = reservation_ceiling(prompt, system, 0 if provider == 'local' else tariffs[0].microusd_per_million)
+            quote = None
+            if provider == 'openrouter':
+                from llm.provider_tariffs import checked_quote
+                quote = checked_quote(metadata, tariffs[0])
+            schema_text = ''
+            if provider == 'openrouter':
+                from llm.base_llm import response_schema
+                schema_text = json.dumps(response_schema.get() or {}, ensure_ascii=True)
+            tokens, cost = reservation_ceiling(prompt, system + schema_text, 0 if provider == 'local' else tariffs[0].microusd_per_million)
             raw_usage = metadata.get('model_usage')
             used, invalid = _read_usage(raw_usage)
             if isinstance(raw_usage, dict) and isinstance(raw_usage.get('tasks'), dict):
@@ -186,6 +201,8 @@ class ModelAccounting:
                        'provider': provider, 'model': model,
                        'reserved_tokens': tokens, 'reserved_cost_microusd': cost,
                        'timestamp': datetime.now(timezone.utc).isoformat(), 'state': 'reserved'}
+            if quote:
+                attempt['tariff'] = quote
             db.add(DecisionLog(id=attempt['id'], session_id=sid, user_id=owner,
                                decision_type='model_attempt', metadata_=attempt))
             await db.commit()  # Required before physical provider I/O.
@@ -215,9 +232,9 @@ class ModelAccounting:
                     or (cost is not None and cost > attempt['reserved_cost_microusd'])):
                 used['stopped'] = True
                 used['stop_reason'] = 'provider_overrun'
-            # A successful physical call without token usage cannot be
-            # reconciled against the ledger.  Fail closed on later calls.
-            elif success and tokens is None:
+            # Unknown OpenRouter usage or cost stops all later calls, including
+            # failures that may have reached the provider before timing out.
+            elif (success and tokens is None) or (attempt.get('provider') == 'openrouter' and (tokens is None or cost is None)):
                 used['stopped'] = True
                 used['stop_reason'] = 'unknown_usage'
             metadata['model_usage'] = used
@@ -253,7 +270,9 @@ class ModelAccounting:
                 metadata['model_usage'] = used
                 session.metadata_ = metadata
             row.metadata_ = {**row.metadata_, 'state': 'succeeded' if success else 'failed',
+                             'error_code': str(result.get('error', ''))[:100],
                              'reported_tokens': tokens, 'reported_cost_microusd': cost,
+                             'provider_usage': result.get('provider_usage'),
                              'finished_at': datetime.now(timezone.utc).isoformat()}
             await db.commit()
 
@@ -281,11 +300,12 @@ class ModelAccounting:
                 'stop_reason': usage.get('stop_reason', ''),
                 'task_ledgers': len(tasks) if isinstance(tasks, dict) else 0,
                 'invalid': invalid,
-                'cost_basis': ('Owner-entered conservative tariffs; actual cost '
-                               'may be unknown. Reservations never refunded.'),
+                'cost_basis': ('Verified OpenRouter quotes or owner-entered tariffs; '
+                               'actual usage may be unknown. Reservations never refunded.'),
             }
 
     async def status(self, sid: str, owner: str) -> dict:
+        from config.settings import settings
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             rows = (await db.execute(select(DecisionLog).where(DecisionLog.session_id == sid,
@@ -293,10 +313,13 @@ class ModelAccounting:
                 DecisionLog.created_at.desc()).limit(MAX_ATTEMPTS))).scalars().all()
             metadata = session.metadata_ or {}
             return {'limits': ModelLimits.model_validate(metadata.get('model_limits', {})).model_dump(),
+                    'configured_selection': {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL},
+                    'tariff_quotes': metadata.get('model_tariffs', {}),
+                    'approved_at': metadata.get('model_budget_approved_at'),
                     'usage': metadata.get('model_usage', {}),
                     'attempts': [row.metadata_ for row in reversed(rows)],
                     'attempts_limit': MAX_ATTEMPTS,
-                    'cost_basis': 'Owner-entered conservative tariffs; actual cost may be unknown. Reservations never refunded.'}
+                    'cost_basis': 'Verified OpenRouter quotes or owner-entered tariffs; actual usage may be unknown. Reservations never refunded.'}
 
 
 model_accounting = ModelAccounting()

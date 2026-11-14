@@ -10,8 +10,30 @@ from memory.team_tasks import (
 from agents.coordinator_agent import coordinator_agent
 from memory.finding_verification import Candidate, Review, verification_store
 from orchestrator.specialist_investigations import InvestigationRequest, plan_investigation
+from memory.research import ApplicationModel, CreateHypothesis, ResearchTransition, research_store
 
 router = APIRouter()
+
+
+@router.get('/{session_id}/research')
+async def research_view(session_id: str, user: TokenData = Depends(get_current_user)):
+    return await research_store.view(session_id, user.user_id)
+
+
+@router.post('/{session_id}/research/hypotheses')
+async def research_create(session_id: str, body: CreateHypothesis, user: TokenData = Depends(get_current_user)):
+    return await research_store.create(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/research/hypotheses/{hypothesis_id}/transition')
+async def research_transition(session_id: str, hypothesis_id: str, body: ResearchTransition,
+                              user: TokenData = Depends(get_current_user)):
+    return await research_store.transition(session_id, user.user_id, hypothesis_id, body)
+
+
+@router.put('/{session_id}/research/application-model')
+async def research_application_model(session_id: str, body: ApplicationModel, user: TokenData = Depends(get_current_user)):
+    return await research_store.save_model(session_id, user.user_id, body)
 
 
 class RunRequest(Strict):
@@ -76,6 +98,26 @@ async def model_status(session_id: str, user: TokenData = Depends(get_current_us
 @router.put('/{session_id}/model-budget')
 async def configure_model_budget(session_id: str, body: ModelLimits, user: TokenData = Depends(get_current_user)):
     return await model_accounting.configure(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/model-tariff/refresh')
+async def refresh_model_tariff(session_id: str, user: TokenData = Depends(get_current_user)):
+    from config.settings import settings
+    from llm.provider_tariffs import fetch_quote
+    from memory.database_models import async_session, DecisionLog
+    from memory.program_policy import owned_engagement
+    # Check ownership before provider I/O; reacquire the row for persistence.
+    async with async_session() as db:
+        await owned_engagement(db, session_id, user.user_id)
+        quote = await fetch_quote(db, user.user_id, settings.OPENROUTER_MODEL)
+        session = await owned_engagement(db, session_id, user.user_id)
+        metadata = dict(session.metadata_ or {})
+        metadata['model_tariffs'] = {**metadata.get('model_tariffs', {}), quote['model']: quote}
+        session.metadata_ = metadata
+        db.add(DecisionLog(session_id=session_id, user_id=user.user_id,
+                           decision_type='model_tariff', human_involved=False, metadata_=quote))
+        await db.commit()
+        return quote
 
 
 @router.post('/{session_id}/investigation-plan')

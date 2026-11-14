@@ -7,6 +7,16 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 response_schema = ContextVar('response_schema', default=None)
+response_output_limit = ContextVar('response_output_limit', default=None)
+
+
+def output_limit(default: int) -> int:
+    requested = response_output_limit.get()
+    if requested is None:
+        return default
+    if type(requested) is not int or not 1 <= requested <= 4096:
+        raise ValueError('Output limit must be an integer between 1 and 4096')
+    return requested
 
 
 class BaseLLMClient(ABC):

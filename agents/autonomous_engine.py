@@ -1523,14 +1523,33 @@ class AutonomousEngine:
         return {**result, "limitations": limitations}
 
     async def _specialist_context(self, state: SessionRunState) -> dict:
+        from memory.research import research_store
+        if state.specialist_investigation_ids:
+            await research_store.sync_specialists(state.session_id, state.owner_id or state.user_id,
+                list(state.specialist_investigation_ids))
+        research = await research_store.view(state.session_id, state.owner_id or state.user_id)
+        queued = [{key:item[key] for key in ('id','state','claim','vulnerability_class','priority',
+            'supporting_evidence','related_assets','related_components','alternative_explanations',
+            'prerequisites','validation_strategy','positive_controls','negative_controls','confidence',
+            'information_value','security_relevance','feasibility','estimated_cost_microusd','uncertainty')}
+            for item in research['queue'][:3]]
+        model = research['application_model'] if research.get('application_model_current', True) else {}
+        nodes = model.get('nodes', [])[:12]
+        node_ids = {n['id'] for n in nodes}
+        edges = [edge for edge in model.get('edges', [])
+                 if edge['source'] in node_ids and edge['target'] in node_ids][:16]
+        research_context = ({'research_queue':queued,
+            'application_model':{'revision':model.get('revision'), 'nodes':nodes, 'edges':edges,
+                'truncated':len(nodes)<len(model.get('nodes', [])) or len(edges)<len(model.get('edges', []))},
+            'research_limitations':research['limitations']} if queued or model else {})
         if not state.specialist_investigation_ids:
-            return {}
+            return research_context
         from orchestrator.specialist_integration import specialist_integration
-        return await specialist_integration.planner_context(
+        return {**research_context, **await specialist_integration.planner_context(
             session_id=state.session_id,
             owner_id=state.owner_id or state.user_id,
             task_ids=list(state.specialist_investigation_ids),
-            verified_observations=self._verified_observations(state))
+            verified_observations=self._verified_observations(state))}
 
     async def _check_goal_achieved(self, state: SessionRunState) -> tuple[bool, str]:
         """
@@ -1684,7 +1703,8 @@ class AutonomousEngine:
             result = await orchestrator_agent.query_llm_smart(state.user_id,
                 json.dumps({'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}),
                 'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
-                'Use at most three short observations, one concise hypothesis and two short limitations. Cite exact evidence_job_ids. '
+                'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
+                'Record alternative explanations and confidence; uncertainty never grants verification. '
                 'A banner, version or open port never proves a vulnerability. '
                 'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
                 'No tool names, commands or larger budgets may be invented. '
@@ -1717,6 +1737,9 @@ class AutonomousEngine:
                    'interpretations':review.observations, 'hypotheses':hypotheses,
                    'verification': 'unverified',
                    'evidence_job_ids': sorted(allowed), 'proposed_investigations': proposals}
+        from memory.research import research_store
+        payload['persistent_hypothesis_ids'] = await research_store.ingest_review(
+            state.session_id, state.user_id, state.run_id, payload)
         await self._emit(state, {'type': 'investigation_review', 'status':'done',
             'action':'Evidence reviewed; follow-up investigations remain proposals', 'review': payload})
         await self._write_decision_log(state, decision_type='investigation_review',

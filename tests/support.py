@@ -20,6 +20,12 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         loop.call_later(0.05, wake_loop)
         self.worker_manifest = patch('agents.report_agent.worker_evidence_manifest', AsyncMock(return_value=[]))
         self.worker_manifest.start()
+        self.research_view = patch('memory.research.research_store.view', AsyncMock(return_value={
+            'queue':[], 'application_model':{}, 'limitations':[]}))
+        self.research_ingest = patch('memory.research.research_store.ingest_review', AsyncMock(return_value=[]))
+        self.research_sync = patch('memory.research.research_store.sync_specialists', AsyncMock())
+        self.research_sync.start()
+        self.research_view.start(); self.research_ingest.start()
         # Run persistence is tested separately; these service fixtures remain offline.
         self.connector_owner=patch("config.settings.settings.BURP_CONNECTOR_USER_ID","owner")
         self.connector_owner.start()
@@ -45,6 +51,8 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self):
         self.worker_manifest.stop()
+        self.research_view.stop(); self.research_ingest.stop()
+        self.research_sync.stop()
         await self.client.aclose()
         self.embedder.stop()
         self.admission.stop()

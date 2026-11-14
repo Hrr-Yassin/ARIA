@@ -4,7 +4,7 @@ import time
 import httpx
 import structlog
 from config.settings import settings
-from llm.base_llm import BaseLLMClient, usage_metrics, response_schema
+from llm.base_llm import BaseLLMClient, usage_metrics, response_schema, output_limit
 
 logger = structlog.get_logger(__name__)
 
@@ -38,7 +38,7 @@ class LocalClient(BaseLLMClient):
         started = time.monotonic()
         endpoint_kind = 'ollama_native' if self._ollama_base else 'openai_compatible'
         schema = response_schema.get()
-        output_limit = 768 if schema else 192
+        token_limit = output_limit(768 if schema else 192)
         try:
             async with httpx.AsyncClient(timeout=180 if schema else 60, trust_env=False, follow_redirects=False) as client:
                 if not self._ollama_base and settings.LOCAL_LLM_URL.endswith('/v1'):
@@ -55,13 +55,13 @@ class LocalClient(BaseLLMClient):
                     response = await client.post(self._ollama_base + '/api/chat', json={
                         'model': self.model, 'messages': messages, 'think': False,
                         'stream': False, 'format': schema or 'json',
-                        'options': {'temperature': self.temperature, 'num_predict': output_limit},
+                        'options': {'temperature': self.temperature, 'num_predict': token_limit},
                     })
                 else:
                     logger.info('local_model_request', model=self.model, endpoint=endpoint_kind)
                     response = await client.post(settings.LOCAL_LLM_URL + '/chat/completions', json={
                         'model': self.model, 'messages': messages, 'temperature': self.temperature,
-                        'max_tokens': output_limit, 'stream': False, 'response_format': {'type': 'json_object'},
+                        'max_tokens': token_limit, 'stream': False, 'response_format': {'type': 'json_object'},
                     })
                 response.raise_for_status()
                 data = response.json()
