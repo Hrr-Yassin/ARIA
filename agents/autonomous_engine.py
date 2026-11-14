@@ -749,6 +749,8 @@ class AutonomousEngine:
                 raise CheckpointStateError("Checkpoint model-call budget is exhausted")
 
         capabilities = {"tools": list(checkpoint["capabilities"]["tools"])}
+        if 'typed_adapters' in checkpoint['capabilities']:
+            capabilities['typed_adapters'] = dict(checkpoint['capabilities']['typed_adapters'])
         for name in ("authenticated_http_version", "specialist_http_version"):
             if name in checkpoint["capabilities"]:
                 capabilities[name] = checkpoint["capabilities"][name]
@@ -1043,7 +1045,7 @@ class AutonomousEngine:
                     digest = command_digest(command)
                     if digest not in state.executed_command_hashes:
                         state.executed_command_hashes.append(digest)
-                    observation = "port_discovery" if tool == "nmap" else "http_response" if tool == "curl" else ""
+                    observation = "port_discovery" if tool == "nmap" else "http_response" if tool in {"curl", "httpx"} else ""
                     if observation:
                         if observation not in state.completed_observations:
                             state.completed_observations.append(observation)
@@ -1124,6 +1126,8 @@ class AutonomousEngine:
                     break
                 completion = observation_completion(state)
                 if completion["complete"]:
+                    if state.capabilities.get('typed_adapters', {}).get('httpx.http.probe.v1') == 1:
+                        await self._review_investigation(state)
                     if not await self._run_specialist_phase_guarded(state):
                         break
                     state.run_state = "completed"
@@ -1303,15 +1307,23 @@ class AutonomousEngine:
         from worker.policy import validate_worker_command
         required = set(required_observations(state.goal))
         missing_observations = required.difference(state.completed_observations)
-        observation_by_tool = {"nmap": "port_discovery", "curl": "http_response"}
+        observation_by_tool = {"nmap": "port_discovery", "curl": "http_response", "httpx": "http_response"}
         for command in commands:
             try:
                 if not isinstance(command, dict):
                     raise ValueError('Command must be an object')
-                checked = validate_worker_command(command.get('command', ''), context['scope'])
+                validator = validate_worker_command
+                if str(command.get('command', '')).startswith('aria-tool '):
+                    from orchestrator.execution_policy import validate_command
+                    validator = validate_command
+                checked = validator(command.get('command', ''), context['scope'])
                 if command_was_executed(state, checked.command):
                     raise ValueError('Command already executed in this run; propose a missing observation')
-                if checked.tool not in state.capabilities.get('tools', []):
+                from security_tools.adapters import ADAPTERS
+                advertised = state.capabilities.get('typed_adapters', {})
+                version = advertised.get(ADAPTERS[checked.tool].capability) if checked.tool in ADAPTERS else None
+                typed_available = type(version) is int and version == 1
+                if checked.tool not in state.capabilities.get('tools', []) and not typed_available:
                     raise ValueError('Tool is not advertised by the worker')
                 observation = observation_by_tool.get(checked.tool)
                 if observation not in missing_observations:
@@ -1576,11 +1588,22 @@ class AutonomousEngine:
                                action_id: str = "") -> tuple[str, str, bool]:
         if state.stop_requested:
             return "", "Run stopped before dispatch", False
+        timeout = self.STEP_TIMEOUT
+        if command.startswith('aria-tool '):
+            from security_tools.adapters import decode
+            adapter, _ = decode(command)
+            timeout = min(timeout, adapter.timeout)
         result = await execution_authorization.execute(
             state.user_id, state.session_id, command, tool=tool, action_id=action_id,
-            timeout=self.STEP_TIMEOUT, expected_revision=state.auth_revision, expected_worker_epoch=state.worker_epoch,
+            timeout=timeout, expected_revision=state.auth_revision, expected_worker_epoch=state.worker_epoch,
         )
         success = result.get("exit_code", -1) == 0 and bool(result.get("job_id")) and bool(result.get("stdout", "").strip())
+        if success and command.startswith('aria-tool '):
+            from security_tools.adapters import decode
+            adapter, parameters = decode(command)
+            context = await execution_authorization._context(state.user_id, state.session_id)
+            normalized = adapter.normalize(result['stdout'], parameters, context['scope'], 0, 'succeeded')
+            success = normalized.error == 'none'
         if success:
             state.evidence_job_ids.append(result["job_id"])
         else:
@@ -1602,6 +1625,102 @@ class AutonomousEngine:
                 from security.redaction import deployment_secrets, redact
                 state.failure_detail = str(redact(stderr, deployment_secrets()))[:1000]
         return result.get("stdout", ""), result.get("stderr", ""), success
+
+    async def _review_investigation(self, state: SessionRunState) -> None:
+        """Review only current-run, reverified receipts; conclusions remain hypotheses."""
+        from agents.orchestrator_agent import orchestrator_agent, InvestigationReview
+        from llm.base_llm import response_schema
+        evidence = []
+        follow_ups = {}
+        for job_id in state.evidence_job_ids[-5:]:
+            job = await worker_jobs.store.get(job_id)
+            if not job or job.get('session_id') != state.session_id:
+                raise ValueError('Review receipt ownership mismatch')
+            snapshot = await worker_jobs.client.status(job)
+            await worker_jobs.verify_receipt(state.user_id, state.session_id, job_id,
+                snapshot['stdout'], snapshot['stderr'], snapshot['exit_code'])
+            summary = snapshot['stdout'][:1000]
+            if job.get('adapter_request_sha256'):
+                from security_tools.adapters import decode, sha256
+                command = next((item for item in state.executed_commands
+                                if sha256(item) == job['adapter_request_sha256']), None)
+                if command is None:
+                    raise ValueError('Review cannot bind adapter parameters')
+                adapter, parameters = decode(command)
+                normalized = adapter.normalize(snapshot['stdout'], parameters,
+                    job['scope'], snapshot['exit_code'], snapshot['state'])
+                if normalized.error != 'none':
+                    raise ValueError('Review output normalization failed')
+                summary = [{'kind':item.kind, 'locator':item.locator, 'summary':item.summary}
+                           for item in normalized.observations[:8]]
+                if adapter.name == 'httpx':
+                    from security_tools.adapters import ADAPTERS, encode
+                    advertised = state.capabilities.get('typed_adapters', {})
+                    for key, name, extra in [('bounded_http_paths','ffuf',{'words':['admin','test']}),
+                                              ('http_observation_template','nuclei',{})]:
+                        version = advertised.get(ADAPTERS[name].capability)
+                        if type(version) is int and version == 1:
+                            operation = {'tool':name, 'parameters':{'url':parameters.url, **extra}}
+                            command = encode(operation)
+                            checked, values = decode(command)
+                            checked.validate_scope(values, job['scope'])
+                            follow_ups[key] = {'operation':operation, 'evidence_job_id':job_id,
+                                'requires_approval':True, 'executed':False,
+                                'validation_criterion': (
+                                    'Compare HTTP statuses for /admin and /test without redirects; a non-404 response is a path candidate, not a vulnerability.'
+                                    if name == 'ffuf' else
+                                    'Capture the pinned informational single-response observation; it does not establish a vulnerability.')}
+            evidence.append({'job_id': job_id, 'output': summary})
+        if state.model_calls >= self.MAX_MODEL_CALLS:
+            raise ValueError('Review model budget exhausted')
+        state.model_calls += 1
+        await self._persist(state)
+        allowed = {item['job_id'] for item in evidence}
+        schema = InvestigationReview.model_json_schema()
+        schema['$defs']['EvidenceHypothesis']['properties']['evidence_job_ids']['items']['enum'] = sorted(allowed)
+        schema['$defs']['EvidenceHypothesis']['properties']['follow_up']['enum'] = [*follow_ups, 'none']
+        token = response_schema.set(schema)
+        try:
+            result = await orchestrator_agent.query_llm_smart(state.user_id,
+                json.dumps({'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}),
+                'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
+                'Use at most three short observations, one concise hypothesis and two short limitations. Cite exact evidence_job_ids. '
+                'A banner, version or open port never proves a vulnerability. '
+                'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
+                'No tool names, commands or larger budgets may be invented. '
+                'Do not claim verified vulnerabilities, credentials or exploitation. No commands execute from this review.',
+                task_type='output_analysis')
+        finally:
+            response_schema.reset(token)
+        if not result.get('success'):
+            raise ValueError('Evidence review model unavailable')
+        review = InvestigationReview.model_validate_json(result['content'])
+        if any(not set(h.evidence_job_ids).issubset(allowed) for h in review.hypotheses):
+            raise ValueError('Review cited unknown evidence')
+        proposals = []
+        for hypothesis in review.hypotheses:
+            key = hypothesis.follow_up
+            if key != 'none':
+                if key not in follow_ups or follow_ups[key]['evidence_job_id'] not in hypothesis.evidence_job_ids:
+                    raise ValueError('Review follow-up is unavailable or lacks supporting HTTP evidence')
+                proposals.append(follow_ups[key])
+        facts = [{'job_id':item['job_id'], **observation} for item in evidence
+                 if isinstance(item['output'],list) for observation in item['output']]
+        hypotheses = []
+        for hypothesis in review.hypotheses:
+            entry = hypothesis.model_dump()
+            entry['model_validation_criterion'] = entry['validation_criterion']
+            if hypothesis.follow_up != 'none':
+                entry['validation_criterion'] = follow_ups[hypothesis.follow_up]['validation_criterion']
+            hypotheses.append(entry)
+        payload = {**review.model_dump(), 'observations':facts,
+                   'interpretations':review.observations, 'hypotheses':hypotheses,
+                   'verification': 'unverified',
+                   'evidence_job_ids': sorted(allowed), 'proposed_investigations': proposals}
+        await self._emit(state, {'type': 'investigation_review', 'status':'done',
+            'action':'Evidence reviewed; follow-up investigations remain proposals', 'review': payload})
+        await self._write_decision_log(state, decision_type='investigation_review',
+            observation=json.dumps(payload), action_taken='Receipt-bound evidence review; no follow-up dispatched')
 
     # ────────────────────────────────────────────────────────────────────
     #  Approval waiting

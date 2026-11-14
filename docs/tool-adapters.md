@@ -1,5 +1,12 @@
 # Typed security adapters — implementation and Kali deployment record
 
+Autonomous intelligence follow-up (14 November 2026): the original Phase 2
+planner failure was followed by a completed local-inference discovery run with
+two verified worker receipts, three model calls and a bounded typed follow-up
+proposal. The worker profiles and limits were unchanged. See
+[the investigation and failure-analysis record](autonomous-intelligence.md) for
+the exact acceptance scope, model errors, usage, receipts and remaining limits.
+
 ## Phase 2 deployment and laboratory validation — 13 November 2026
 
 The previous offline-only statement below describes the Phase 1 state. Phase 2

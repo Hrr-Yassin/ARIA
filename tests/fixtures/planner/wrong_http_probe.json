@@ -1,0 +1,1 @@
+{"commands":[{"expected_evidence":"http_response","operation":{"parameters":{"host":"192.168.77.20","ports":[80]},"tool":"nmap"},"purpose":"Probe open HTTP port for HTTP response to confirm service availability and generate unverified hypothesis about content structure."}]}

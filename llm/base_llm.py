@@ -2,8 +2,11 @@
 PentestAI v8 — Base LLM Client
 """
 import time
+from contextvars import ContextVar
 from abc import ABC, abstractmethod
 from typing import Optional
+
+response_schema = ContextVar('response_schema', default=None)
 
 
 class BaseLLMClient(ABC):

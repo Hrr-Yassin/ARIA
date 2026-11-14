@@ -14,6 +14,7 @@ MESSAGES = {
     'validation_budget_exhausted': 'Model validation budget is exhausted.',
     'local_model_request_failed': 'Local model request failed. Check server compatibility and availability.',
     'provider_timeout': 'Model provider timed out.',
+    'model_output_truncated': 'Model output reached its token limit before completion; no proposal was accepted.',
 }
 
 

@@ -78,6 +78,7 @@ class SpecialistFixtures(OfflineCase):
                             self.assertEqual(entry['provenance'],expected['data']['source'])
                         self.assertTrue(task)
 
+    @patch('agents.orchestrator_agent.record_planner_diagnostic', AsyncMock())
     async def test_autonomous_prompt_preserves_trusted_context(self):
         agent=import_module('agents.orchestrator_agent').orchestrator_agent
         scope={'targets':['192.0.2.1'],'ports':[80],'exclusions':['198.51.100.2']}

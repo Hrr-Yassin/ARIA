@@ -92,6 +92,8 @@ class BaseAgent(ABC):
                     capabilities = await worker_jobs.client.capabilities()
                 advertised = capabilities.get('tools') if isinstance(capabilities, dict) else None
                 tools = {tool for tool in advertised if isinstance(tool, str)} if isinstance(advertised, list) else set()
+                from security_tools.adapters import catalog
+                tools.update(entry['tool'] for entry in catalog(capabilities) if entry['worker_available'])
             except Exception:
                 tools = set()
             trusted = {'objective':objective, 'scope':scope,

@@ -84,14 +84,18 @@ def professional_result(agent, request, result, scope, evidence, capabilities):
     for command in commands[:8]:
         try:
             if not isinstance(command, dict): raise ValueError('Expected a command object')
-            checked = validate_worker_command(command.get('command',''), scope)
+            validator = validate_worker_command
+            if str(command.get('command','')).startswith('aria-tool '):
+                from orchestrator.execution_policy import validate_command
+                validator = validate_command
+            checked = validator(command.get('command',''), scope)
             if requested_ports and not action_scope.get('ports'): raise ValueError('Requested ports conflict with engagement configuration')
-            checked = validate_worker_command(checked.command, action_scope)
+            checked = validator(checked.command, action_scope)
             if checked.tool not in capabilities: raise ValueError('Worker capability is unavailable')
             if checked.command in seen: raise ValueError('Equivalent evidence or action already exists')
             seen.add(checked.command)
             contract.proposed_actions.append({**command, 'command':checked.command, 'tool':checked.tool,
-                'risk_color':checked.risk, 'expected_evidence':command.get('purpose') or 'A durable worker receipt and target response',
+                'risk_color':checked.risk, 'expected_evidence':command.get('expected_evidence') or command.get('purpose') or 'A durable worker receipt and target response',
                 'evidence_references':contract.evidence_references})
         except (ValueError, TypeError) as exc:
             contract.rejections.append({'code':'unsupported_or_out_of_scope_action', 'detail':str(exc)[:250]})

@@ -177,6 +177,13 @@ def build_checkpoint(snapshot: dict) -> dict:
             value = capabilities.get(name)
             if type(value) is int and 0 <= value <= 100:
                 capability_versions[name] = value
+    typed = capabilities.get('typed_adapters') if isinstance(capabilities, dict) else None
+    typed_versions = {}
+    if isinstance(typed, dict):
+        typed_versions = {key:value for key,value in typed.items()
+                          if isinstance(key,str) and 0 < len(key) <= 100
+                          and type(value) is int and value == 1}
+        typed_versions = dict(sorted(typed_versions.items())[:10])
     steps_taken = max(0, _int(snapshot.get("steps_taken")))
     max_steps = max(0, _int(snapshot.get("max_steps")))
     model_calls = max(0, _int(snapshot.get("model_calls")))
@@ -215,7 +222,8 @@ def build_checkpoint(snapshot: dict) -> dict:
         "checkpointed_at": datetime.utcnow().isoformat(),
         "auth_revision": max(0, _int(snapshot.get("auth_revision"))),
         "worker_epoch": max(0, _int(snapshot.get("worker_epoch"))),
-        "capabilities": {"tools": tools, **capability_versions},
+        "capabilities": {"tools": tools, **capability_versions,
+                         **({'typed_adapters':typed_versions} if typed_versions else {})},
         "risk_threshold": _clean_text(
             snapshot.get("risk_threshold", snapshot.get("auto_risk_threshold")),
             20) or "manual",
@@ -379,7 +387,7 @@ def validate_checkpoint(checkpoint, *, expected_run_id: str = "",
 
     capabilities = checkpoint["capabilities"]
     allowed_capabilities = {"tools", "authenticated_http_version",
-                            "specialist_http_version"}
+                            "specialist_http_version", "typed_adapters"}
     _require(isinstance(capabilities, dict) and "tools" in capabilities
              and set(capabilities).issubset(allowed_capabilities),
              "Checkpoint capabilities are malformed")
@@ -388,11 +396,17 @@ def validate_checkpoint(checkpoint, *, expected_run_id: str = "",
              "Checkpoint capability list is malformed")
     _require(all(isinstance(tool, str) and 0 < len(tool) <= MAX_TOOL_TEXT
                  for tool in tools), "Checkpoint capability is malformed")
-    for name in allowed_capabilities - {"tools"}:
+    for name in allowed_capabilities - {"tools", "typed_adapters"}:
         if name in capabilities:
             _require(type(capabilities[name]) is int
                      and 0 <= capabilities[name] <= 100,
                      "Checkpoint protocol capability is malformed")
+    if 'typed_adapters' in capabilities:
+        typed = capabilities['typed_adapters']
+        _require(isinstance(typed,dict) and len(typed) <= 10
+                 and all(isinstance(key,str) and 0 < len(key) <= 100
+                         and type(value) is int and value == 1 for key,value in typed.items()),
+                 'Checkpoint typed capabilities are malformed')
 
     if "campaign_id" in checkpoint:
         _require(isinstance(checkpoint["campaign_id"], str)

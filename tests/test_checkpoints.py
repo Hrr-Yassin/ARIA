@@ -556,6 +556,17 @@ class CheckpointTests(OfflineCase):
                                 expected_owner_id="alice")
         self.assertIn("protocol capability", str(error.exception))
 
+    async def test_typed_capabilities_survive_checkpoint_and_reject_boolean_versions(self):
+        snapshot = make_snapshot()
+        snapshot['capabilities']['typed_adapters'] = {'httpx.http.probe.v1': 1}
+        checkpoint = build_checkpoint(snapshot)
+        self.assertEqual(checkpoint['capabilities']['typed_adapters'], {'httpx.http.probe.v1': 1})
+        validate_checkpoint(checkpoint, expected_session_id='s1', expected_owner_id='alice')
+        checkpoint['capabilities']['typed_adapters']['httpx.http.probe.v1'] = True
+        checkpoint['digest'] = _payload_digest(checkpoint)
+        with self.assertRaisesRegex(CheckpointIntegrityError, 'typed capabilities'):
+            validate_checkpoint(checkpoint, expected_session_id='s1', expected_owner_id='alice')
+
     async def test_pre_spec13_checkpoint_without_optional_fields_is_valid(self):
         snapshot = make_snapshot()
         checkpoint = build_checkpoint(snapshot)

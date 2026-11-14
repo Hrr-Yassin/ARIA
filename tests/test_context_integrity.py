@@ -92,6 +92,7 @@ class EvidenceSelectionTests(OfflineCase):
 
 
 class AutonomousContextTests(OfflineCase):
+    @patch('agents.orchestrator_agent.record_planner_diagnostic', AsyncMock())
     async def test_planner_receives_objective_criteria_and_bounded_evidence(self):
         objective = 'Assess only HTTP port 80 on 192.0.2.1 and report headers'
         instruction = 'AUTO http_check step 1: choose a missing observation.'
@@ -152,6 +153,7 @@ class AutonomousContextTests(OfflineCase):
         self.assertIn('durable current-run worker receipts', task_data['completion_criteria'])
         self.assertEqual(task_data['scope_ports'], [80])
 
+    @patch('agents.orchestrator_agent.record_planner_diagnostic', AsyncMock())
     async def test_evidence_limits_never_truncate_scope_or_objective(self):
         objective = 'Assess only HTTP port 80 on 192.0.2.1'
         instruction = 'AUTO http_check step 1: choose a missing observation.'
