@@ -6,11 +6,13 @@ from decimal import Decimal, InvalidOperation
 import httpx
 from config.settings import settings
 from llm.base_llm import BaseLLMClient, usage_metrics, response_schema, output_limit
+from llm.request_metrics import RequestMetrics, token_components
 
 
 def provider_receipt(data: dict) -> dict:
     """Retain only accounting fields, never prompts, headers or key metadata."""
-    usage = data.get('usage') or {}
+    usage = data.get('usage')
+    usage = usage if isinstance(usage, dict) else {}
     receipt = {}
     for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
         value = usage.get(key)
@@ -20,12 +22,15 @@ def provider_receipt(data: dict) -> dict:
         value = data.get(key)
         if isinstance(value, str) and len(value) <= 200:
             receipt[key] = value
-    choices = data.get('choices') or []
-    reason = choices[0].get('finish_reason') if choices else None
+    choices = data.get('choices')
+    reason = (choices[0].get('finish_reason') if isinstance(choices, list)
+              and choices and isinstance(choices[0], dict) else None)
     if reason in {'stop', 'length', 'content_filter', 'error', 'tool_calls'}:
         receipt['finish_reason'] = reason
+    details = usage.get('cost_details')
+    details = details if isinstance(details, dict) else {}
     costs = {'cost': usage.get('cost'), **{
-        key: (usage.get('cost_details') or {}).get(key) for key in (
+        key: details.get(key) for key in (
             'upstream_inference_cost', 'upstream_inference_prompt_cost',
             'upstream_inference_completions_cost')}}
     for key, value in costs.items():
@@ -35,7 +40,8 @@ def provider_receipt(data: dict) -> dict:
                 receipt[key] = str(amount)
         except (ValueError, InvalidOperation):
             pass
-    cached = (usage.get('prompt_tokens_details') or {}).get('cached_tokens')
+    prompt_details = usage.get('prompt_tokens_details')
+    cached = prompt_details.get('cached_tokens') if isinstance(prompt_details, dict) else None
     if type(cached) is int and cached >= 0:
         receipt['cached_tokens'] = cached
     return receipt
@@ -49,8 +55,10 @@ class OpenRouterClient(BaseLLMClient):
         self.base_url = "https://openrouter.ai/api/v1/chat/completions"
 
     async def query(self, prompt: str, system: str = "") -> dict:
+        timing = RequestMetrics()
+        metrics = {**usage_metrics({}), **token_components({})}
         if not self.api_key:
-            return {"success": False, "content": "", "error": "no_key"}
+            return timing.finish({"success": False, "content": "", "error": "no_key", **metrics})
 
         messages = []
         if system:
@@ -69,10 +77,10 @@ class OpenRouterClient(BaseLLMClient):
         if schema:
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
                 'name': 'aria_plan', 'strict': True, 'schema': schema}}
-        start = time.monotonic()
+        timing.values['request_construction_ms'] = (time.monotonic_ns() - timing.started) / 1e6
         try:
             async with httpx.AsyncClient(timeout=90.0, trust_env=False, follow_redirects=False) as client:
-                r = await client.post(
+                r = await timing.post(client,
                     self.base_url,
                     headers={
                         "Authorization": f"Bearer {self.api_key}",
@@ -82,23 +90,35 @@ class OpenRouterClient(BaseLLMClient):
                     },
                     json=payload,
                 )
-                latency = int((time.monotonic() - start) * 1000)
-
-                if r.status_code == 429:
-                    return {"success": False, "content": "", "error": "rate_limited", "latency_ms": latency}
-                r.raise_for_status()
-
-                data = r.json()
-                metrics = {**usage_metrics(data.get('usage') or {}), 'provider_usage': provider_receipt(data)}
-                reason = data['choices'][0].get('finish_reason')
-                if data.get('model') != self.model or reason != 'stop':
-                    error = ('provider_model_mismatch' if data.get('model') != self.model else
-                             'model_output_truncated' if reason == 'length' else 'provider_response_incomplete')
-                    return {'success': False, 'content': '', 'error': error,
-                            **metrics, 'latency_ms': latency}
-                content = data["choices"][0]["message"]["content"]
-                return {"success": True, "content": content, **metrics, "latency_ms": latency}
+                with timing.phase('response_processing_ms'):
+                    if r.status_code == 429:
+                        result = {"success": False, "content": "", "error": "rate_limited"}
+                    else:
+                        r.raise_for_status()
+                        data = r.json()
+                        if not isinstance(data, dict):
+                            raise ValueError('Provider response must be an object')
+                        usage = data.get('usage')
+                        usage = usage if isinstance(usage, dict) else {}
+                        # Retain known billable usage even if content/envelope is invalid.
+                        metrics = {**usage_metrics(usage), **token_components(usage)}
+                        metrics['provider_usage'] = provider_receipt(data)
+                        reason = data['choices'][0].get('finish_reason')
+                        if data.get('model') != self.model or reason != 'stop':
+                            error = ('provider_model_mismatch' if data.get('model') != self.model else
+                                     'model_output_truncated' if reason == 'length' else 'provider_response_incomplete')
+                            result = {'success': False, 'content': '', 'error': error}
+                        else:
+                            content = data["choices"][0]["message"]["content"]
+                            if not isinstance(content, str) or not content.strip():
+                                raise ValueError('Empty provider content')
+                            result = {"success": True, "content": content}
+        except httpx.TimeoutException:
+            result = {"success": False, "content": "", "error": "provider_timeout"}
         except httpx.HTTPStatusError as e:
-            return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
-        except Exception as e:
-            return {"success": False, "content": "", "error": "provider_request_failed", "latency_ms": int((time.monotonic()-start)*1000)}
+            result = {"success": False, "content": "", "error": f"http_{e.response.status_code}"}
+        except Exception:
+            result = {"success": False, "content": "", "error": "provider_request_failed"}
+        # Legacy latency remains the observed HTTP attempt, not the mission.
+        return timing.finish({**result, **metrics,
+            'latency_ms': timing.values['provider_attempt_ms']})

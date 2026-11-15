@@ -89,11 +89,11 @@ function fmtCompact(value) {
   return fmtInt(number);
 }
 function fmtUsdMicro(value) {
-  const amount = Math.max(0, Number(value) || 0) / 1_000_000;
-  const digits = amount > 0 && amount < 0.01 ? 4 : 2;
+  if (!Number.isSafeInteger(value) || value < 0) return 'Unavailable';
+  const amount = value / 1_000_000;
   return new Intl.NumberFormat('en-US', {
     style: 'currency', currency: 'USD',
-    minimumFractionDigits: digits, maximumFractionDigits: digits,
+    minimumFractionDigits: 2, maximumFractionDigits: 6,
   }).format(amount);
 }
 function pct(part, total) {
@@ -207,6 +207,7 @@ function handleUnauthorized() {
 }
 
 async function api(path, options = {}) {
+  const started = typeof performance === 'undefined' ? null : performance.now();
   const headers = { 'Content-Type': 'application/json' };
   if (state.token) headers.Authorization = 'Bearer ' + state.token;
   let response;
@@ -217,10 +218,12 @@ async function api(path, options = {}) {
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch (error) {
+    recordHttpTiming(started, null, path);
     const failure = new Error('The ARIA API is unreachable.');
     failure.cause = error;
     throw failure;
   }
+  recordHttpTiming(started, response, path);
   if (response.status === 401) {
     handleUnauthorized();
     const expired = new Error('Your session expired.');
@@ -239,6 +242,21 @@ async function api(path, options = {}) {
     throw failure;
   }
   return data;
+}
+
+function recordHttpTiming(started, response, path) {
+  if (started === null || typeof performance.measure !== 'function') return;
+  const id = response?.headers?.get('x-request-id');
+  const rawDuration = response?.headers?.get('x-aria-handler-ms');
+  const handler = typeof rawDuration === 'string' && rawDuration.trim() !== '' && Number.isFinite(Number(rawDuration))
+    && Number(rawDuration) >= 0 ? Number(rawDuration) : null;
+  if (performance.getEntriesByName('aria.http.headers').length >= 64) performance.clearMeasures('aria.http.headers');
+  performance.measure('aria.http.headers', {start: started, end: performance.now(), detail:{
+    request_id: typeof id === 'string' && /^[a-f0-9]{32}$/.test(id) ? id : null,
+    server_handler_ms: handler, status: response?.status ?? null,
+    route: path.startsWith('/api/pentest/') ? 'mission' : path.startsWith('/api/team/') ? 'team'
+      : path.startsWith('/api/session/') ? 'session' : 'other',
+  }});
 }
 
 // ── Toasts ──────────────────────────────────────────────────────────────
@@ -353,8 +371,22 @@ function evidenceList() {
   return Array.isArray(evidence) ? evidence.filter((item) => item && typeof item === 'object') : [];
 }
 function verificationList() {
-  const findings = teamData().verification_findings;
+  const findings = state.data.verification?.findings;
   return Array.isArray(findings) ? findings.filter((item) => item && typeof item === 'object') : [];
+}
+function researchList() {
+  const hypotheses = state.data.research?.hypotheses;
+  return Array.isArray(hypotheses) ? hypotheses : [];
+}
+function researchLabel(item) {
+  if (item.confirmed === true && item.context_current === true) return 'Independently verified with human signoff';
+  return 'Unverified hypothesis / recorded ' + humanize(item.state || 'unknown')
+    + (item.context_current === false ? ' / context stale' : '');
+}
+function verificationLabel(item) {
+  return item.ready_for_external_submission === true && item.verification_current === true
+    ? 'Independently verified with human signoff'
+    : 'Unverified or requires revalidation / recorded ' + humanize(item.state || 'unknown');
 }
 function campaignData() { return state.data.campaign || null; }
 function healthData() { return state.data.campaignHealth || null; }
@@ -373,6 +405,35 @@ function sortedFindings() {
 }
 
 // ── Hero & phase ────────────────────────────────────────────────────────
+function missionSummary(auto, available = true) {
+  if (!available) return 'Mission state unavailable; the current run could not be refreshed.';
+  const mission = auto && auto.mission;
+  if (!mission || typeof mission !== 'object') {
+    return auto && (auto.run_id || auto.run_state)
+      ? 'Last autonomous cycle: ' + humanize(auto.run_state || 'recorded') + '.'
+      : 'No autonomous cycle recorded for this engagement.';
+  }
+  const parts = ['Bounded cycle: ' + humanize(auto.run_state || 'unknown') + '.',
+    'Mission for current objective: ' + humanize(mission.state || 'unknown') + '.'];
+  parts.push(Array.isArray(mission.pending_tasks)
+    ? 'Pending team tasks: ' + mission.pending_tasks.length + '.'
+    : 'Pending team task count unavailable.');
+  if (mission.reason) parts.push(mission.reason);
+  if (mission.objective) parts.push('Objective: ' + mission.objective);
+  return parts.join(' ');
+}
+
+function questionReadiness(status) {
+  const r = status?.progress?.readiness;
+  if (!r || !['ready', 'not_ready'].includes(r.state)
+      || !Number.isSafeInteger(r.questions_total) || r.questions_total <= 0
+      || !Number.isSafeInteger(r.questions_tested) || r.questions_tested < 0
+      || r.questions_tested > r.questions_total
+      || typeof r.percent !== 'number' || !Number.isFinite(r.percent)
+      || r.percent !== Math.round(100 * r.questions_tested / r.questions_total)) return null;
+  return r.percent;
+}
+
 function renderHero() {
   const session = sessionRecord();
   const status = state.data.status || {};
@@ -388,9 +449,7 @@ function renderHero() {
   setText('hero-note', hasSession
     ? (campaign
       ? 'Supervisor state is read from the durable campaign.'
-      : (auto && (auto.run_id || auto.run_state)
-        ? 'Last autonomous cycle: ' + humanize(auto.run_state || 'recorded') + '.'
-        : 'No autonomous cycle recorded for this engagement.'))
+      : missionSummary(auto, state.data.autonomous !== null))
     : 'The overview reads real session data. Create an engagement to begin.');
 
   if (campaign) {
@@ -413,28 +472,27 @@ function renderHero() {
   if (rail) {
     clear(rail);
     const labels = PHASES.map((phase, i) => {
-      const stateName = i < index ? 'complete' : i === index ? 'current' : 'upcoming';
+      const stateName = i < index ? 'earlier; completion unreported' : i === index ? 'current' : 'upcoming';
       return phase.label + ': ' + stateName;
     });
     rail.setAttribute('aria-label', 'Phase progress. ' + labels.join('. '));
     PHASES.forEach((phase, i) => {
       const tick = h('span', 'phase-tick');
-      tick.dataset.state = i < index ? 'done' : i === index ? 'current' : 'upcoming';
-      tick.title = phase.label + (i < index ? ' (complete)' : i === index ? ' (current)' : '');
+      tick.dataset.state = i < index ? 'earlier' : i === index ? 'current' : 'upcoming';
+      tick.title = phase.label + (i < index ? ' (earlier; completion unreported)' : i === index ? ' (current)' : '');
       rail.appendChild(tick);
     });
   }
 
-  const progress = status.progress || {};
-  const readiness = Number(progress.readiness?.percent);
-  const fallback = Number(progress.overall_pct);
-  const value = Math.max(0, Math.min(100, Number.isFinite(readiness) ? readiness : (Number.isFinite(fallback) ? fallback : 0)));
-  setText('phase-readiness', hasSession ? value + '%' : '—');
+  const value = hasSession ? questionReadiness(status) : null;
+  setText('phase-readiness', value === null ? 'Unavailable' : value + '%');
   const meterNode = $('phase-readiness-meter');
   if (meterNode) {
-    meterNode.setAttribute('aria-valuenow', String(value));
+    if (value === null) meterNode.removeAttribute('aria-valuenow');
+    else meterNode.setAttribute('aria-valuenow', String(value));
+    meterNode.setAttribute('aria-valuetext', value === null ? 'Question readiness unavailable' : value + '% of recorded questions tested');
     const fill = $('phase-readiness-bar');
-    if (fill) fill.style.width = value + '%';
+    if (fill) fill.style.width = (value ?? 0) + '%';
   }
 
   const live = campaign && ['starting', 'running', 'pausing', 'cancelling'].includes(String(campaign.state || '').toLowerCase());
@@ -485,10 +543,10 @@ function renderMetrics() {
     : 'Task ledger unavailable');
 
   const evidence = evidenceList();
-  const verifiedTeam = verificationList().filter((item) => item.state === 'reportable').length;
+  const verifiedTeam = verificationList().filter((item) => item.ready_for_external_submission === true && item.verification_current === true).length;
   setText('metric-evidence', state.data.team ? fmtInt(evidence.length) : '—');
   setText('metric-evidence-note', state.data.team
-    ? (evidence.length ? verifiedTeam + ' reviewed, ' + evidence.length + ' catalogued' : 'No catalogued evidence')
+    ? (evidence.length ? verifiedTeam + ' independently verified, ' + evidence.length + ' observations' : 'No catalogued evidence')
     : 'Evidence ledger unavailable');
 
   const budget = modelBudget();
@@ -504,6 +562,18 @@ function renderMetrics() {
 }
 
 // ── Campaign supervision ────────────────────────────────────────────────
+function blockerRows(auto) {
+  const blocker = auto?.mission?.blocker;
+  if (!blocker || typeof blocker !== 'object') return [];
+  return [
+    ['Reason code', blocker.reason_code || 'Unavailable'],
+    ['Status', humanize(blocker.status || 'unknown')],
+    ['Component', humanize(blocker.component || 'unknown')],
+    ['Explanation', blocker.explanation || 'Unavailable'],
+    ['Operator action', blocker.operator_action || 'Review the recorded state before resuming.'],
+  ];
+}
+
 function renderCampaign() {
   const body = $('campaign-body');
   if (!body) return;
@@ -511,6 +581,22 @@ function renderCampaign() {
   const campaign = campaignData();
   const health = healthData();
   const auto = autoStatus();
+  if (auto?.timings) {
+    const timing = h('div', 'campaign-alerts');
+    timing.appendChild(h('h3', null, 'Mission state timings'));
+    for (const [label, key] of [['Run status load', 'run_status_load_ms'],
+      ['Owned task ledger load', 'task_ledger_load_ms'], ['Mission projection', 'mission_projection_ms']]) {
+      timing.appendChild(kvRow(label, measuredValue(auto.timings[key], ' ms')));
+    }
+    body.appendChild(timing);
+  }
+  const rows = blockerRows(auto);
+  if (rows.length) {
+    const panel = h('div', 'campaign-alerts');
+    panel.appendChild(h('h3', null, 'Mission blocker'));
+    rows.forEach(([label, value]) => panel.appendChild(kvRow(label, value)));
+    body.appendChild(panel);
+  }
 
   if (state.loading && !campaign && !state.data.session) {
     body.appendChild(panelLoading('Reading campaign state…'));
@@ -555,7 +641,7 @@ function renderCampaign() {
   const summary = h('div', 'campaign-summary');
   append(summary,
     h('strong', null, fmtInt(stepsTaken) + ' / ' + fmtInt(maxSteps)),
-    h('span', null, 'steps completed this run'));
+    h('span', null, 'steps attempted this run'));
   const goal = h('span', null, 'Goal: ' + humanize(campaign.goal || '—'));
   summary.appendChild(goal);
   const risk = h('span', null, 'Risk: ' + humanize(campaign.auto_risk_threshold || '—'));
@@ -1188,11 +1274,20 @@ function hideGraphTooltip() {
 // ── Timeline ────────────────────────────────────────────────────────────
 function buildTimelineEvents() {
   const events = [];
+  const team = state.data.teamEvents?.events;
+  const teamIds = new Set(Array.isArray(team) ? team.filter(entry => typeof entry.id === 'string'
+    && entry.id && parseTime(entry.timestamp)).map(entry => entry.id) : []);
+  const seenDecisions = new Set();
   const decisions = state.data.decisions?.entries;
   if (Array.isArray(decisions)) {
     for (const entry of decisions) {
       const time = parseTime(entry.created_at);
       if (!time) continue;
+      if (entry.type === 'team_event' && teamIds.has(entry.id)) continue;
+      if (typeof entry.id === 'string' && entry.id) {
+        if (seenDecisions.has(entry.id)) continue;
+        seenDecisions.add(entry.id);
+      }
       events.push({
         id: 'decision-' + String(entry.id || events.length),
         category: 'decision',
@@ -1220,11 +1315,15 @@ function buildTimelineEvents() {
       });
     }
   }
-  const team = state.data.teamEvents?.events;
+  const seenTeam = new Set();
   if (Array.isArray(team)) {
     for (const entry of team) {
       const time = parseTime(entry.timestamp);
       if (!time) continue;
+      if (typeof entry.id === 'string' && entry.id) {
+        if (seenTeam.has(entry.id)) continue;
+        seenTeam.add(entry.id);
+      }
       const collection = String(entry.collection || '');
       const data = entry.data || {};
       let title = humanize(collection || 'Team event');
@@ -1239,7 +1338,7 @@ function buildTimelineEvents() {
         time,
         title,
         copy: data.reason || data.text || data.question || '',
-        human: false,
+        human: Boolean(data.reviewed_by),
         agent: humanize(entry.actor || ''),
       });
     }
@@ -1328,8 +1427,9 @@ function renderEvidence() {
   const findings = sortedFindings();
   const evidence = evidenceList();
   const verification = verificationList();
+  const hypotheses = researchList();
   setText('evidence-findings-count', fmtInt(findings.length));
-  setText('evidence-catalog-count', fmtInt(evidence.length + verification.length));
+  setText('evidence-catalog-count', fmtInt(evidence.length + verification.length + hypotheses.length));
 
   const findingsTab = $('evidence-tab-findings');
   const catalogTab = $('evidence-tab-catalog');
@@ -1357,7 +1457,7 @@ function renderEvidence() {
     if (!findings.length) {
       body.appendChild(emptyState(
         'No findings recorded',
-        'Findings appear after approved collection and are labelled unverified until a human reviews their evidence.'
+        'Recorded findings show their human-review status. Independent verification is reported separately in the evidence catalog.'
       ));
       return;
     }
@@ -1390,7 +1490,20 @@ function renderEvidence() {
     return;
   }
 
-  if (!evidence.length && !verification.length) {
+  if (state.data.research === null) body.appendChild(h('div', 'budget-empty', 'Research state unavailable.'));
+  if (state.data.verification === null) body.appendChild(h('div', 'budget-empty', 'Independent verification state unavailable.'));
+  if (hypotheses.length) {
+    body.appendChild(h('h3', null, 'Research assertions'));
+    const list = h('ul', 'catalog-list');
+    for (const item of hypotheses.slice(0, 6)) {
+      const row = h('li', 'catalog-item');
+      row.appendChild(h('div', 'catalog-title', shorten(item.claim || item.title || 'Research assertion', 180)));
+      row.appendChild(h('div', 'catalog-meta', researchLabel(item)));
+      list.appendChild(row);
+    }
+    body.appendChild(list);
+  }
+  if (!evidence.length && !verification.length && !hypotheses.length) {
     body.appendChild(emptyState(
       'No catalogued evidence',
       'Evidence is catalogued in the workspace from saved worker receipts or reviewed chat output. Specialist findings appear here after collection.'
@@ -1405,6 +1518,7 @@ function renderEvidence() {
       row.appendChild(h('div', 'catalog-title', shorten(title, 150)));
       const meta = h('div', 'catalog-meta');
       const parts = [];
+      parts.push('Observation; content is untrusted');
       if (item.source_kind) parts.push(humanize(item.source_kind));
       if (item.source_id) parts.push('Source ' + shorten(item.source_id, 30));
       if (item.created_at) parts.push(relativeTime(parseTime(item.created_at)));
@@ -1420,7 +1534,7 @@ function renderEvidence() {
       const row = h('li', 'catalog-item');
       row.appendChild(h('div', 'catalog-title', shorten(item.title || item.underlying_cause || 'Verification finding', 150)));
       const meta = h('div', 'catalog-meta');
-      meta.textContent = [humanize(item.state || 'observation'), item.severity ? humanize(item.severity) : '', item.human_verified ? 'Human verified' : '']
+      meta.textContent = [verificationLabel(item), item.severity ? humanize(item.severity) : '']
         .filter(Boolean).join(' / ');
       row.appendChild(meta);
       list.appendChild(row);
@@ -1453,6 +1567,34 @@ function renderEvidenceSelection() {
 }
 
 // ── Model budget ────────────────────────────────────────────────────────
+function measuredValue(value, unit = '', integer = false) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0
+      || (integer && !Number.isSafeInteger(value))) return 'Unavailable';
+  return (integer ? fmtInt(value) : value.toFixed(2)) + unit;
+}
+
+function attemptMetricRows(attempt) {
+  const timing = attempt.timings || {};
+  return [
+    ['HTTP attempts', measuredValue(timing.http_attempts, '', true)],
+    ['Request construction', measuredValue(timing.request_construction_ms, ' ms')],
+    ['HTTP request / response', measuredValue(timing.provider_attempt_ms, ' ms')],
+    ['Response processing', measuredValue(timing.response_processing_ms, ' ms')],
+    ['Structured validation', measuredValue(timing.structured_validation_ms, ' ms')],
+    ['Pool client invocation', measuredValue(timing.pool_attempt_ms, ' ms')],
+    ['Reported input tokens', measuredValue(attempt.input_tokens, '', true)],
+    ['Reported output tokens', measuredValue(attempt.output_tokens, '', true)],
+  ];
+}
+
+function providerCharge(attempt) {
+  const cost = attempt.provider_usage?.cost;
+  return typeof cost === 'string' && cost.length <= 100
+    && /^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(cost)
+    && Number.isFinite(Number(cost)) && Number(cost) >= 0
+    ? '$' + cost + ' USD (provider receipt)' : 'Unavailable';
+}
+
 function renderBudget() {
   const body = $('budget-body');
   if (!body) return;
@@ -1485,11 +1627,11 @@ function renderBudget() {
 
   const engagement = h('div', 'budget-section');
   engagement.appendChild(h('h3', null, 'Engagement ceiling'));
-  engagement.appendChild(budgetLine('Provider calls', fmtInt(usage.calls) + ' / ' + fmtInt(maxCalls), usage.calls, maxCalls));
+  engagement.appendChild(budgetLine('Model call reservations', fmtInt(usage.calls) + ' / ' + fmtInt(maxCalls), usage.calls, maxCalls));
   engagement.appendChild(budgetLine('Reserved tokens', fmtCompact(usage.reserved_tokens) + ' / ' + fmtCompact(maxTokens), usage.reserved_tokens, maxTokens,
     fmtInt(usage.reported_tokens) + ' tokens reported'));
   engagement.appendChild(budgetLine('Reserved cost', fmtUsdMicro(usage.reserved_cost_microusd) + ' / ' + fmtUsdMicro(maxCost), usage.reserved_cost_microusd, maxCost,
-    fmtUsdMicro(usage.reported_cost_microusd) + ' reported'));
+    fmtUsdMicro(usage.reported_cost_microusd) + ' reported, rounded up to micro-USD'));
   if (!usage.calls && !usage.reserved_tokens && !usage.reserved_cost_microusd) {
     engagement.appendChild(h('div', 'budget-empty', 'No provider calls are recorded for this engagement.'));
   }
@@ -1513,6 +1655,12 @@ function renderBudget() {
     attemptsBlock.appendChild(kvRow('Recorded attempts', fmtInt(attempts.length) + ' of ' + fmtInt(budget.attempts_limit || attempts.length)));
     attemptsBlock.appendChild(kvRow('Last provider', humanize(provider)));
     attemptsBlock.appendChild(kvRow('Last model', String(model)));
+    attemptsBlock.appendChild(kvRow('Attempt ID', last.id || 'Unavailable'));
+    attemptsBlock.appendChild(kvRow('Logical model request', last.logical_request_id || 'Unavailable'));
+    attemptsBlock.appendChild(kvRow('Reservation attempt', measuredValue(last.attempt_index, '', true)));
+    attemptsBlock.appendChild(kvRow('Exact reported charge', providerCharge(last)));
+    attemptMetricRows(last).forEach(([label, value]) => attemptsBlock.appendChild(kvRow(label, value)));
+    attemptsBlock.appendChild(h('div', 'budget-footnote', 'Latest recorded attempt only. HTTP duration includes transport and provider work; it does not measure model inference or mission duration.'));
   } else {
     attemptsBlock.appendChild(h('div', 'budget-empty', 'No model attempts are recorded.'));
   }
@@ -1582,7 +1730,7 @@ function renderWarnings() {
   }
   warning.hidden = false;
   const count = state.warnings.length;
-  setText('data-warning-text', count + ' live source' + (count === 1 ? '' : 's') + ' could not be refreshed. Affected panels show the last successful read.');
+  setText('data-warning-text', count + ' live source' + (count === 1 ? '' : 's') + ' could not be refreshed. Affected current state is unavailable.');
 }
 
 function renderLoading() {
@@ -1611,7 +1759,10 @@ function renderLoading() {
   document.body.dataset.dashboardReady = 'false';
 }
 
+let renderMeasurement = 0;
 function renderAll() {
+  const renderId = ++renderMeasurement;
+  const started = typeof performance === 'undefined' ? null : performance.now();
   renderHero();
   renderMetrics();
   renderCampaign();
@@ -1625,6 +1776,16 @@ function renderAll() {
   renderFooter(state.data.health);
   renderWarnings();
   document.body.dataset.dashboardReady = 'true';
+  if (started !== null && !state.loading && typeof performance.measure === 'function') {
+    const detail = {run_id: state.data.autonomous?.run_id || null, session_id: state.sessionId || null};
+    performance.clearMeasures('aria.dashboard.dom_update');
+    performance.measure('aria.dashboard.dom_update', {start: started, end: performance.now(), detail});
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (renderId !== renderMeasurement) return;
+      performance.clearMeasures('aria.dashboard.paint_opportunity');
+      performance.measure('aria.dashboard.paint_opportunity', {start: started, end: performance.now(), detail});
+    }));
+  }
 }
 
 function renderPicker() {
@@ -1729,6 +1890,8 @@ async function loadAll() {
     findings: api('/api/findings/' + encodeURIComponent(sid), { allow404: true }),
     status: api('/api/v8/status/' + encodeURIComponent(sid)),
     team: api('/api/team/' + encodeURIComponent(sid)),
+    research: api('/api/team/' + encodeURIComponent(sid) + '/research'),
+    verification: api('/api/team/' + encodeURIComponent(sid) + '/findings'),
     budget: api('/api/team/' + encodeURIComponent(sid) + '/model-budget'),
     autonomous: api('/api/pentest/' + encodeURIComponent(sid) + '/autonomous/status'),
     decisions: api('/api/pentest/' + encodeURIComponent(sid) + '/decision-log?limit=200'),
@@ -1742,7 +1905,6 @@ async function loadAll() {
   const results = await Promise.allSettled(Object.values(requests));
   if (generation !== state.requestGeneration || sid !== state.sessionId) return;
 
-  const previous = state.data || {};
   const data = {};
   const warnings = [];
   results.forEach((result, index) => {
@@ -1751,8 +1913,7 @@ async function loadAll() {
       data[name] = result.value;
     } else {
       if (result.reason?.status === 401) return;
-      if (previous[name] !== undefined && previous[name] !== null) data[name] = previous[name];
-      else data[name] = null;
+      data[name] = null;
       warnings.push({ name, message: result.reason?.message || 'Unavailable' });
     }
   });
@@ -1767,12 +1928,12 @@ async function loadAll() {
     if (generation !== state.requestGeneration || sid !== state.sessionId) return;
     if (healthResult.status === 'fulfilled') data.campaignHealth = healthResult.value;
     else {
-      data.campaignHealth = previous.campaignHealth || null;
+      data.campaignHealth = null;
       warnings.push({ name: 'campaignHealth', message: healthResult.reason?.message || 'Unavailable' });
     }
     if (eventsResult.status === 'fulfilled') data.campaignEvents = eventsResult.value;
     else {
-      data.campaignEvents = previous.campaignEvents || null;
+      data.campaignEvents = null;
       warnings.push({ name: 'campaignEvents', message: eventsResult.reason?.message || 'Unavailable' });
     }
   } else {

@@ -5,6 +5,9 @@ MESSAGES = {
     'local_model_unavailable': 'Local model is unavailable or not installed. Check the local server and model name.',
     'model_tariff_missing': 'Configure an engagement tariff for the selected provider and model.',
     'model_budget_exhausted': 'Engagement model budget is exhausted. Review its call, token and cost limits.',
+    'model_accounting_inconsistent': 'Model accounting is stopped or inconsistent. Reconcile recorded attempts and unknown usage before requesting more work.',
+    'task_model_budget_exhausted': 'Task model budget is exhausted. Review the task limits before requesting more work.',
+    'task_not_running': 'Task was cancelled or superseded before the model request; no call was admitted.',
     'model_budget_denied': 'Model request denied by engagement authorization, data-sharing policy or budget.',
     'campaign_budget_exhausted': 'Campaign model budget is exhausted. Review its token and cost limits.',
     'campaign_budget_unavailable': 'Campaign budget cannot be verified; model calls were denied.',
@@ -19,10 +22,10 @@ MESSAGES = {
 
 
 def public_error(code):
-    return MESSAGES.get(code, 'Model provider failed; check provider availability and configuration.')
+    return MESSAGES.get(code, 'Model provider failed; check provider availability and configuration.') if isinstance(code, str) else 'Model provider returned an invalid error code.'
 
 
 def budget_error(exc):
     detail = exc.detail
     code = detail.get('code') if isinstance(detail, dict) else None
-    return code if code in MESSAGES else 'model_budget_denied'
+    return code if isinstance(code, str) and code in MESSAGES else 'model_budget_denied'

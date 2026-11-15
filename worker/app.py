@@ -135,6 +135,8 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
         from security_tools.adapters import ADAPTERS
         profiles = app.state.service.profiles
         return {'specialist_http_version': 1 if specialties_available() else 0, 'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
+                'execution_constraints': {'version': 1, 'networks': list(app.state.service.ceiling),
+                                          'tcp_ports': sorted(app.state.service.allowed_ports)},
                 'network_scope': True, 'program_policy_version': 1,
                 'tools': sorted({'curl', 'nmap', *profiles}), 'max_timeout': 300,
                 'typed_adapters': {ADAPTERS[name].capability: 1 for name in profiles}}

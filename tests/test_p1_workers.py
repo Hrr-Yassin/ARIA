@@ -203,7 +203,8 @@ class WorkerTests(OfflineCase):
                 self.assertEqual(result['status'], 'stopped')
                 self.assertEqual(state.run_state, terminal)
                 self.assertEqual(state.reason_code, 'original_reason')
-                persist.assert_awaited_once_with(state)
+                persist.assert_awaited_with(state)
+                self.assertTrue(state.cancellation_confirmed)
 
     async def test_revoking_one_principal_does_not_cancel_other_users_jobs(self):
         for uid,sid,jid in [('alice','a','one'),('bob','b','two')]:

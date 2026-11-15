@@ -105,7 +105,8 @@ class BaseAgent(ABC):
             if generated_instruction:
                 trusted['generated_instruction'] = str(generated_instruction)
             from llm.engagement_budget import engagement_context
-            model_token = engagement_context.set({'session_id': session_id, 'owner': user_id})
+            from llm.engagement_budget import bound_model_context
+            model_token = engagement_context.set(bound_model_context(session_id, user_id))
             context_token = _agent_context.set(trusted)
             try:
                 if self.agent_name == 'post':
@@ -225,6 +226,8 @@ class BaseAgent(ABC):
 
     def parse_json(self, content: str) -> Optional[dict]:
         """Accept one JSON object, optionally fenced; reject arrays and embedded traces."""
+        if not isinstance(content, str):
+            return self._validated_model_object(None)
         content=re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip()).strip()
         try: return self._validated_model_object(json.loads(content))
         except (json.JSONDecodeError,TypeError): return self._validated_model_object(None)

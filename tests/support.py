@@ -26,6 +26,13 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.research_sync = patch('memory.research.research_store.sync_specialists', AsyncMock())
         self.research_sync.start()
         self.research_view.start(); self.research_ingest.start()
+        # Durable review journal SQL/concurrency is exercised in the dedicated
+        # disposable PostgreSQL suite. Other service fixtures remain offline.
+        self.enterContext(patch('memory.investigation_reviews.review_journal.acquire',
+            AsyncMock(return_value={'id': 'offline-review', 'created': True,
+                                    'state': 'requested', 'token': 'offline-token'})))
+        self.enterContext(patch('memory.investigation_reviews.review_journal.capture', AsyncMock()))
+        self.enterContext(patch('memory.investigation_reviews.review_journal.fail', AsyncMock()))
         # Run persistence is tested separately; these service fixtures remain offline.
         self.connector_owner=patch("config.settings.settings.BURP_CONNECTOR_USER_ID","owner")
         self.connector_owner.start()

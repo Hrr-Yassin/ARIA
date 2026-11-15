@@ -5,6 +5,7 @@ import httpx
 import structlog
 from config.settings import settings
 from llm.base_llm import BaseLLMClient, usage_metrics, response_schema, output_limit
+from llm.request_metrics import RequestMetrics, token_components
 
 logger = structlog.get_logger(__name__)
 
@@ -34,65 +35,70 @@ class LocalClient(BaseLLMClient):
             return False
 
     async def query(self, prompt: str, system: str = '') -> dict:
-        messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]
-        started = time.monotonic()
+        timing = RequestMetrics()
+        with timing.phase('request_construction_ms'):
+            messages = [{'role': 'system', 'content': system}, {'role': 'user', 'content': prompt}]
+            schema = response_schema.get()
+            token_limit = output_limit(768 if schema else 192)
         endpoint_kind = 'ollama_native' if self._ollama_base else 'openai_compatible'
-        schema = response_schema.get()
-        token_limit = output_limit(768 if schema else 192)
+        metrics = {**usage_metrics({}), **token_components({}), 'cost_microusd': 0}
         try:
             async with httpx.AsyncClient(timeout=180 if schema else 60, trust_env=False, follow_redirects=False) as client:
                 if not self._ollama_base and settings.LOCAL_LLM_URL.endswith('/v1'):
                     base = settings.LOCAL_LLM_URL[:-3]
                     try:
-                        probe = await client.get(base + '/api/version')
-                        if probe.is_success and isinstance(probe.json().get('version'), str):
-                            self._ollama_base = base
+                        with timing.phase('provider_discovery_ms'):
+                            probe = await client.get(base + '/api/version')
+                            if probe.is_success and isinstance(probe.json().get('version'), str):
+                                self._ollama_base = base
                     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
                         pass
-                if self._ollama_base:
-                    endpoint_kind = 'ollama_native'
-                    logger.info('local_model_request', model=self.model, endpoint=endpoint_kind)
-                    response = await client.post(self._ollama_base + '/api/chat', json={
-                        'model': self.model, 'messages': messages, 'think': False,
-                        'stream': False, 'format': schema or 'json',
-                        'options': {'temperature': self.temperature, 'num_predict': token_limit},
-                    })
-                else:
-                    logger.info('local_model_request', model=self.model, endpoint=endpoint_kind)
-                    response = await client.post(settings.LOCAL_LLM_URL + '/chat/completions', json={
-                        'model': self.model, 'messages': messages, 'temperature': self.temperature,
-                        'max_tokens': token_limit, 'stream': False, 'response_format': {'type': 'json_object'},
-                    })
-                response.raise_for_status()
-                data = response.json()
-                if data.get('done_reason') == 'length' or (data.get('choices') and data['choices'][0].get('finish_reason') == 'length'):
-                    return {'success': False, 'content': '', 'error': 'model_output_truncated',
-                            **usage_metrics(data.get('usage') or {'total_tokens': data.get('prompt_eval_count', 0) + data.get('eval_count', 0)}),
-                            'cost_microusd': 0}
-                if self._ollama_base:
-                    content = data['message']['content']
-                    usage = {'total_tokens': int(data.get('prompt_eval_count', 0)) + int(data.get('eval_count', 0))}
-                else:
-                    content = data['choices'][0]['message']['content']
-                    usage = data.get('usage') or {}
-                if not isinstance(content, str) or not content.strip():
-                    raise ValueError('Empty content')
-                logger.info(
-                    'local_model_response', model=self.model, endpoint=endpoint_kind,
-                    http_status=response.status_code, elapsed_ms=int((time.monotonic() - started) * 1000),
-                    prompt_tokens=data.get('prompt_eval_count', '') if endpoint_kind == 'ollama_native' else usage.get('prompt_tokens', ''),
-                    completion_tokens=data.get('eval_count', '') if endpoint_kind == 'ollama_native' else usage.get('completion_tokens', ''),
-                    content_chars=len(content),
-                )
-                return {'success': True, 'content': content,
-                        **usage_metrics(usage), 'cost_microusd': 0}
+                with timing.phase('request_construction_ms'):
+                    if self._ollama_base:
+                        endpoint_kind = 'ollama_native'
+                        url = self._ollama_base + '/api/chat'
+                        payload = {'model': self.model, 'messages': messages, 'think': False,
+                            'stream': False, 'format': schema or 'json',
+                            'options': {'temperature': self.temperature, 'num_predict': token_limit}}
+                    else:
+                        url = settings.LOCAL_LLM_URL + '/chat/completions'
+                        payload = {'model': self.model, 'messages': messages, 'temperature': self.temperature,
+                            'max_tokens': token_limit, 'stream': False, 'response_format': {'type': 'json_object'}}
+                logger.info('local_model_request', model=self.model, endpoint=endpoint_kind)
+                response = await timing.post(client, url, json=payload)
+                with timing.phase('response_processing_ms'):
+                    response.raise_for_status()
+                    data = response.json()
+                    if not isinstance(data, dict):
+                        raise ValueError('Provider response must be an object')
+                    prompt_count = data.get('prompt_eval_count')
+                    output_count = data.get('eval_count')
+                    native_usage = {'prompt_tokens': prompt_count, 'completion_tokens': output_count,
+                        'total_tokens': (prompt_count + output_count
+                            if type(prompt_count) is int and prompt_count >= 0
+                            and type(output_count) is int and output_count >= 0 else None)}
+                    usage = native_usage if self._ollama_base else data.get('usage')
+                    if not isinstance(usage, dict):
+                        usage = {}
+                    metrics = {**usage_metrics(usage), **token_components(usage), 'cost_microusd': 0}
+                    choices = data.get('choices')
+                    if choices is not None and (not isinstance(choices, list) or not choices
+                                                or not isinstance(choices[0], dict)):
+                        raise ValueError('Invalid provider choices')
+                    if data.get('done_reason') == 'length' or (choices and choices[0].get('finish_reason') == 'length'):
+                        result = {'success': False, 'content': '', 'error': 'model_output_truncated'}
+                    else:
+                        content = data['message']['content'] if self._ollama_base else data['choices'][0]['message']['content']
+                        if not isinstance(content, str) or not content.strip():
+                            raise ValueError('Empty content')
+                        result = {'success': True, 'content': content}
         except httpx.TimeoutException as exc:
             logger.warning('local_model_timeout', model=self.model, endpoint=endpoint_kind,
-                           elapsed_ms=int((time.monotonic() - started) * 1000), error=type(exc).__name__)
-            return {'success': False, 'content': '', 'error': 'provider_timeout'}
+                           error=type(exc).__name__)
+            result = {'success': False, 'content': '', 'error': 'provider_timeout'}
         except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
             status = getattr(getattr(exc, 'response', None), 'status_code', '')
             logger.warning('local_model_failure', model=self.model, endpoint=endpoint_kind,
-                           elapsed_ms=int((time.monotonic() - started) * 1000), http_status=status,
-                           error=type(exc).__name__)
-            return {'success': False, 'content': '', 'error': 'local_model_request_failed'}
+                           http_status=status, error=type(exc).__name__)
+            result = {'success': False, 'content': '', 'error': 'local_model_request_failed'}
+        return timing.finish({**result, **metrics})

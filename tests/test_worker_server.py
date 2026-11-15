@@ -86,7 +86,10 @@ class WorkerServerTests(unittest.IsolatedAsyncioTestCase):
                 ('POST', '/jobs/' + job['job_id'] + '/cancel', {'session_id': job['session_id']})]:
             self.assertEqual((await self.client.request(method, path, json=data)).status_code, 401)
         self.client.headers['Authorization'] = 'Bearer ' + self.token
-        self.assertTrue((await self.client.get('/capabilities')).json()['network_scope'])
+        capabilities = (await self.client.get('/capabilities')).json()
+        self.assertTrue(capabilities['network_scope'])
+        self.assertEqual(capabilities['execution_constraints'], {
+            'version': 1, 'networks': ['192.0.2.0/24'], 'tcp_ports': [443, 8080]})
         self.assertEqual((await self.client.post('/jobs', content=b'x' * 16385)).status_code, 413)
         for change in [{'job_id': '../escape'}, {'timeout': True}, {'timeout': 301}, {'scope': None}]:
             self.assertEqual((await self.client.post('/jobs', json={**job, **change})).status_code, 422)

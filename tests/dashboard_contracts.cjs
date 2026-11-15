@@ -75,4 +75,50 @@ assert.match(main, /@app\.get\("\/dashboard"/, 'FastAPI serves the dashboard rou
 assert.match(main, /dashboard\.html/, 'FastAPI serves the dashboard shell');
 assert.match(index, /href="\/dashboard"/, 'Workspace header links to the overview');
 
-console.log('Dashboard contracts, real API routes, responsive and accessibility checks passed');
+// Exercise mission wording with the actual pure formatter. No browser or API
+// fixture is substituted for visible acceptance by this contract check.
+const context = {document: {addEventListener() {}}};
+vm.createContext(context);
+vm.runInContext(js.replace("document.addEventListener('DOMContentLoaded', boot);",
+  'globalThis.missionSummary = missionSummary; globalThis.blockerRows = blockerRows; globalThis.questionReadiness = questionReadiness; globalThis.attemptMetricRows = attemptMetricRows; globalThis.researchLabel = researchLabel; globalThis.verificationLabel = verificationLabel; globalThis.providerCharge = providerCharge;'), context);
+const summary = context.missionSummary({run_state:'completed', mission:{
+  state:'work_pending', pending_tasks:[{id:'review'}], reason:'Owner review remains pending.',
+  objective:'Observe only the approved fixture'}});
+assert(summary.includes('Bounded cycle: Completed.'));
+assert(summary.includes('Work Pending') || summary.includes('Work pending'));
+assert(summary.includes('Pending team tasks: 1.'));
+assert(summary.includes('Owner review remains pending.'));
+assert(summary.includes('Observe only the approved fixture'));
+const unavailable = context.missionSummary({run_state:'completed', mission:{state:'blocked',pending_tasks:null}});
+assert(unavailable.includes('count unavailable'));
+assert(!unavailable.includes('tasks: 0'));
+const blocker = context.blockerRows({mission:{blocker:{reason_code:'worker_command_rejected',
+  status:'blocked',component:'worker',explanation:'The worker rejected this command.',
+  operator_action:'Review supported ports and the durable receipt.'}}});
+assert.deepEqual(Array.from(blocker, row => Array.from(row)), [
+  ['Reason code','worker_command_rejected'], ['Status','Blocked'], ['Component','Worker'],
+  ['Explanation','The worker rejected this command.'],
+  ['Operator action','Review supported ports and the durable receipt.']]);
+assert.equal(context.blockerRows({}).length, 0);
+for (const readiness of [null, {}, {state:'unknown',questions_total:0,questions_tested:0,percent:0},
+  {state:'not_ready',questions_total:2,questions_tested:1,percent:null},
+  {state:'not_ready',questions_total:2,questions_tested:1,percent:90}]) {
+  assert.equal(context.questionReadiness({progress:{readiness}}), null, 'Unknown or inconsistent readiness is unavailable');
+}
+assert.equal(context.questionReadiness({progress:{readiness:{state:'not_ready',questions_total:2,questions_tested:0,percent:0}}}), 0);
+assert.equal(context.questionReadiness({progress:{readiness:{state:'not_ready',questions_total:2,questions_tested:1,percent:50}}}), 50);
+assert.equal(context.questionReadiness({progress:{overall_pct:100}}), null);
+const metrics = Object.fromEntries(context.attemptMetricRows({input_tokens:0, output_tokens:null,
+  timings:{http_attempts:1, provider_attempt_ms:14.5}}));
+assert.equal(metrics['HTTP attempts'], '1');
+assert.equal(metrics['HTTP request / response'], '14.50 ms');
+assert.equal(metrics['Reported input tokens'], '0');
+assert.equal(metrics['Reported output tokens'], 'Unavailable');
+assert.equal(metrics['Structured validation'], 'Unavailable');
+assert.match(context.researchLabel({state:'CONFIRMED',confirmed:false,context_current:false}), /Unverified.*context stale/);
+assert.match(context.verificationLabel({state:'reportable',ready_for_external_submission:false,verification_current:false}), /Unverified/);
+assert.match(context.verificationLabel({state:'reportable',ready_for_external_submission:true,verification_current:true}), /^Independently verified/);
+assert.equal(context.providerCharge({provider_usage:{cost:'0.0000002'}}), '$0.0000002 USD (provider receipt)');
+assert.equal(context.providerCharge({provider_usage:{cost:'private-sentinel'}}), 'Unavailable');
+assert.equal(context.providerCharge({}), 'Unavailable');
+console.log('Dashboard contracts, mission-state wording, real API routes, responsive and accessibility checks passed');

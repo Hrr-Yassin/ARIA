@@ -108,6 +108,17 @@ def model_current(model: dict, evidence: dict, scope: dict) -> bool:
         bool(model.get('evidence_snapshot')) == bool(model.get('nodes') or model.get('edges')))
 
 
+def hypothesis_current(item: dict, model: dict, evidence: dict, scope: dict) -> bool:
+    """Current provenance is required for context; it never proves a claim."""
+    snapshot = item.get('evidence_snapshot')
+    return (isinstance(snapshot, dict) and bool(snapshot)
+        and model_current(model, evidence, scope)
+        and item.get('scope_digest') == digest(scope)
+        and item.get('model_digest') == digest(model)
+        and all(ref in evidence and digest(evidence[ref]) == value
+                for ref, value in snapshot.items()))
+
+
 def validate_model(body: ApplicationModel, state: dict, scope: dict) -> None:
     from orchestrator.execution_policy import PolicyError, allowed_target
     from urllib.parse import urlsplit
@@ -233,8 +244,7 @@ class ResearchStore:
         graph_current = model_current(model, evidence, ledger['scope'])
         hypotheses = []
         for item in ledger['research_hypotheses']:
-            valid = (graph_current and item['scope_digest'] == digest(ledger['scope']) and item['model_digest'] == digest(model)
-                and all(ref in evidence and digest(evidence[ref]) == value for ref, value in item['evidence_snapshot'].items()))
+            valid = hypothesis_current(item, model, evidence, ledger['scope'])
             hypotheses.append({**item, 'context_current':valid,
                 'requires_revalidation':not valid, 'confirmed':False})
         # Never display a stale confirmation as an independently verified fact.

@@ -25,6 +25,9 @@ const state = {
   skill:     localStorage.getItem('skill') || 'intermediate',
   autoActive: false,
   autoRunStatus: '',
+  autoRunId: '',
+  autoEventSequence: 0,
+  autoReconciling: false,
   autoStarting: false,
   booting: true,
   runGeneration: 0,
@@ -527,6 +530,11 @@ async function toggleAuto() {
 
 async function startAuto() {
   if (state.autoStarting || state.booting) return;
+  const objective = el.input.value.trim();
+  if (objective.length > 2000) {
+    toast('warn', 'Objective too long', 'Use at most 2,000 characters for an autonomous objective.');
+    return;
+  }
   const sid = state.sessionId;
   const epoch = state.sessionEpoch;
   if (!state.target) {
@@ -544,19 +552,34 @@ async function startAuto() {
   try {
     const res = await api(`/api/pentest/${state.sessionId}/autonomous/start`, {
       method: 'POST',
-      body: { goal: state.goalSelect || 'discovery', target: state.target, max_steps: state.autoMaxSteps, auto_risk_threshold: el.riskThreshold.value || 'green_only' },
+      body: { goal: state.goalSelect || 'discovery', target: state.target, max_steps: state.autoMaxSteps, auto_risk_threshold: el.riskThreshold.value || 'green_only', ...(objective ? {objective} : {}) },
     });
     if (state.sessionId !== sid || state.sessionEpoch !== epoch) return;
+    if (res?.run_id && res.run_id !== state.autoRunId) {
+      state.autoRunId = res.run_id;
+      state.autoEventSequence = 0;
+    }
     if (res && (res.status === 'started' || res.status === 'already_running')) {
+      if (res.status === 'started') {
+        state.autoRunId = res.run_id || '';
+        state.autoEventSequence = 0;
+        el.autoLines.textContent = '';
+        state.autoStep = res.steps_taken || 0;
+        state.pendingApprovals = [];
+        el.approvalBanner.classList.add('hidden');
+      }
+      state.autoRunStatus = '';
       state.autoActive = true;
       updateAutoUI();
       connectAutoWS();
       toast('success', 'AUTO mode active',
             `Goal: ${state.goalSelect || 'discovery'}`);
     } else {
+      if (state.ws) { state.ws.close(); state.ws = null; }
       state.autoActive = false;
       state.autoRunStatus = res?.run_state || res?.status || '';
       updateAutoUI();
+      renderAutoLine({status: state.autoRunStatus, action: res?.reason || res?.status || 'unknown'});
       toast('warn', res?.run_state || 'Auto', res?.reason || res?.status || 'unknown');
     }
   } catch (exc) {
@@ -573,6 +596,9 @@ async function stopAuto() {
     const stopped = await api(`/api/pentest/${state.sessionId}/autonomous/stop`, { method: 'POST' });
     if (stopped?.pending) { toast('warn', 'Cancellation pending', 'Worker termination is not confirmed'); return; }
     state.autoActive = false;
+    state.autoRunStatus = 'cancelled';
+    state.pendingApprovals = [];
+    el.approvalBanner.classList.add('hidden');
     updateAutoUI();
     if (state.ws) { state.ws.close(); state.ws = null; }
     toast('info', 'AUTO stopped', 'Autonomous cycle ended');
@@ -585,7 +611,8 @@ function updateAutoUI() {
   el.autoCount.textContent = `step ${state.autoStep || 0} / ${state.autoMaxSteps}`;
   if (state.autoActive) {
     el.autoBtn.dataset.state = 'on';
-    el.autoLabel.textContent = 'AUTONOMOUS — RUNNING';
+    el.autoLabel.textContent = state.autoRunStatus === 'awaiting_approval'
+      ? 'AUTONOMOUS — AWAITING APPROVAL' : 'AUTONOMOUS — RUNNING';
     el.autoLog.classList.remove('hidden');
     el.autoRun.classList.remove('hidden');
   } else {
@@ -593,7 +620,8 @@ function updateAutoUI() {
     const terminalLabels = {
       blocked: 'AUTONOMOUS — BLOCKED',
       failed: 'AUTONOMOUS — FAILED',
-      completed: 'AUTONOMOUS — COMPLETE',
+      completed: 'BOUNDED OBJECTIVE — COMPLETE',
+      unknown: 'AUTONOMOUS — STATUS UNAVAILABLE',
       cancelled: 'AUTONOMOUS — STOPPED',
       stopped: 'AUTONOMOUS — STOPPED',
     };
@@ -610,6 +638,7 @@ function connectAutoWS() {
   const url = `${proto}//${location.host}/api/pentest/ws/${state.sessionId}/auto`;
   let ws;
   try {
+    if (state.ws) { state.ws.close(); state.ws = null; }
     ws = new WebSocket(url);
   } catch (exc) {
     toast('danger', 'WebSocket', exc.message);
@@ -621,7 +650,7 @@ function connectAutoWS() {
   ws.onopen = () => ws.send(JSON.stringify({ token: state.token }));
 
   ws.onmessage = (e) => {
-    if (state.ws !== ws || state.sessionEpoch !== epoch) return;
+    if (state.ws !== ws || state.sessionEpoch !== epoch || state.autoStarting) return;
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
     handleAutoEvent(ev);
@@ -637,8 +666,27 @@ function connectAutoWS() {
 }
 
 function handleAutoEvent(ev) {
+  if (ev.session_id && ev.session_id !== state.sessionId) return;
+  if (ev.run_id && state.autoRunId && ev.run_id !== state.autoRunId) return;
+  if (ev.run_id && !state.autoRunId) state.autoRunId = ev.run_id;
+  const previousSequence = state.autoEventSequence;
+  if (ev.event_sequence !== undefined) {
+    if (!Number.isSafeInteger(ev.event_sequence) || ev.event_sequence <= state.autoEventSequence) return;
+    state.autoEventSequence = ev.event_sequence;
+  }
+  if (ev.stream_gap || ev.type === 'stream_gap' ||
+      (Number.isSafeInteger(ev.event_sequence) && ev.event_sequence > previousSequence + 1)) {
+    if (!state.autoReconciling) {
+      state.autoReconciling = true;
+      restoreRunStatus().finally(() => { state.autoReconciling = false; });
+    }
+  }
   switch (ev.type) {
     case 'auto_activity':
+      if (ev.status === 'running') {
+        state.autoRunStatus = '';
+        updateAutoUI();
+      }
       renderAutoLine(ev);
       if (ev.step) {
         state.autoStep = ev.step;
@@ -649,6 +697,10 @@ function handleAutoEvent(ev) {
       break;
 
     case 'waiting_approval':
+      if (ev.action_id && state.pendingApprovals.some(item => item.action_id === ev.action_id)) return;
+      state.autoStep = ev.step || state.autoStep;
+      state.autoRunStatus = 'awaiting_approval';
+      updateAutoUI();
       state.pendingApprovals.push(ev);
       showApprovalBanner(ev);
       renderAutoLine(ev);
@@ -661,7 +713,7 @@ function handleAutoEvent(ev) {
       break;
 
     case 'goal_achieved':
-      toast('success', '🎯 Goal achieved', ev.action || '');
+      toast('success', 'Bounded objective complete', ev.action || '');
       renderAutoLine({...ev, type: 'auto_activity', status: 'done',
                        action: `🎯 ${ev.action}`});
       refreshKB();
@@ -671,7 +723,7 @@ function handleAutoEvent(ev) {
       renderAutoLine({...ev, type: 'auto_activity', status: ev.status || 'done',
                        action: ev.action || 'Autonomous cycle complete'});
       state.autoActive = false;
-      state.autoRunStatus = ev.status || 'completed';
+      state.autoRunStatus = ev.status || 'unknown';
       updateAutoUI();
       break;
 
@@ -741,10 +793,24 @@ function renderAutoLine(ev) {
 }
 
 // ── Approval banner ────────────────────────────────────────────────────
+function commandForReview(command) {
+  if (!command.startsWith('aria-tool ') || command.length > 16384) return command;
+  try {
+    const encoded = command.slice(10).replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+    const operation = JSON.parse(new TextDecoder().decode(bytes));
+    if (operation.schema_version !== 1 || typeof operation.tool !== 'string' ||
+        !operation.parameters || typeof operation.parameters !== 'object' || Array.isArray(operation.parameters)) return command;
+    return `${operation.tool} (typed operation)\n${JSON.stringify(operation.parameters, null, 2)}\nExact authorization: ${command}`;
+  } catch (_) {
+    return command;
+  }
+}
+
 function showApprovalBanner(req) {
   el.approvalDetail.textContent =
       `Step ${req.step}: ${req.reason || req.purpose || ''}`;
-  el.approvalCommand.textContent = req.command || req.action || '';
+  el.approvalCommand.textContent = commandForReview(req.command || req.action || '');
   el.approvalBanner.classList.remove('hidden');
   el.btnApprove.dataset.actionId = req.action_id;
   el.btnReject.dataset.actionId  = req.action_id;
@@ -1292,6 +1358,8 @@ function switchSession(s) {
   if (state.ws) { state.ws.close(); state.ws = null; }
   state.autoActive = false;
   state.autoRunStatus = '';
+  state.autoRunId = '';
+  state.autoEventSequence = 0;
   state.pendingApprovals = [];
   el.autoLines.textContent = '';
   state.autoStep = 0;
@@ -1322,15 +1390,35 @@ async function restoreRunStatus() {
   try {
     const status = await api(`/api/pentest/${sid}/autonomous/status`);
     if (state.sessionId !== sid || state.sessionEpoch !== epoch || state.runGeneration !== runGeneration || !status) return;
+    if (status.run_id && status.run_id === state.autoRunId && Number.isSafeInteger(status.event_sequence)
+        && status.event_sequence < state.autoEventSequence) return;
+    if (status.run_id && status.run_id !== state.autoRunId) {
+      state.autoRunId = status.run_id;
+      state.autoEventSequence = 0;
+    }
     state.autoActive = Boolean(status.active);
-    state.autoRunStatus = status.active ? '' : (status.run_state || '');
+    state.autoRunStatus = status.active
+      ? (status.run_state === 'awaiting_approval' ? 'awaiting_approval' : '') : (status.run_state || '');
     state.autoMaxSteps = status.max_steps || 12;
     state.autoStep = status.steps_taken || 0;
     if (el.maxStepsInput) el.maxStepsInput.value = state.autoMaxSteps;
     if (el.maxStepsValue) el.maxStepsValue.textContent = state.autoMaxSteps;
     updateAutoUI();
-    if (status.active) connectAutoWS();
+    if (status.active && (!state.ws || state.ws.readyState > 1)) connectAutoWS();
     else if (status.run_state) renderAutoLine({status: status.run_state, action: status.reason || status.run_state});
+    if (status.mission) renderAutoLine({status: status.mission.state || 'unknown',
+      action: `Mission for current objective: ${status.mission.reason || status.mission.state || 'unavailable'}`});
+    if (status.active && status.waiting_approval) {
+      const approvals = await api(`/api/pentest/${sid}/autonomous/approvals`);
+      if (state.sessionEpoch !== epoch || state.runGeneration !== runGeneration || !state.autoActive
+          || (status.run_id && status.run_id !== state.autoRunId)) return;
+      for (const req of (Array.isArray(approvals?.pending) ? approvals.pending : [])) {
+        if (!state.pendingApprovals.some(item => item.action_id === req.action_id)) {
+          state.pendingApprovals.push(req);
+          showApprovalBanner({...req, step: req.step_number || req.step});
+        }
+      }
+    }
   } catch (exc) {
     if (state.sessionEpoch === epoch) toast('warn', 'Run status unavailable', exc.message);
   }
@@ -1339,10 +1427,18 @@ async function restoreRunStatus() {
 async function createNewSession() {
   const target = prompt('Target (IP or URL):');
   if (!target) return;
+  const portInput = prompt('Allowed TCP ports (comma separated; leave blank for no engagement port restriction):', '');
+  if (portInput === null) return;
+  const parts = portInput.trim() ? portInput.split(',').map(p => p.trim()) : [];
+  if (parts.some(p => !/^\d+$/.test(p) || Number(p) < 1 || Number(p) > 65535)) {
+    toast('warn', 'Invalid ports', 'Enter comma-separated TCP ports from 1 to 65535.');
+    return;
+  }
+  const ports = [...new Set(parts.map(Number))];
   try {
     const res = await api('/api/session/new', {
       method: 'POST',
-      body: { target, name: `Session ${new Date().toLocaleString()}` },
+      body: { target, name: `Session ${new Date().toLocaleString()}`, scope: {targets: [target], exclusions: [], ...(ports.length ? {ports} : {})} },
     });
     if (res && res.session_id) {
       switchSession(res);

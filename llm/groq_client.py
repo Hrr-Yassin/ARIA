@@ -4,6 +4,7 @@ PentestAI v8 — Groq Client
 import time
 import httpx
 from llm.base_llm import BaseLLMClient, usage_metrics
+from llm.request_metrics import RequestMetrics, token_components
 
 
 class GroqClient(BaseLLMClient):
@@ -14,33 +15,47 @@ class GroqClient(BaseLLMClient):
         self.base_url = "https://api.groq.com/openai/v1/chat/completions"
 
     async def query(self, prompt: str, system: str = "") -> dict:
+        timing = RequestMetrics()
+        metrics = {**usage_metrics({}), **token_components({})}
+        def finish(result):
+            return timing.finish({**result, **metrics, 'latency_ms': timing.values['provider_attempt_ms']})
         if not self.api_key:
-            return {"success": False, "content": "", "error": "no_key"}
+            return finish({"success": False, "content": "", "error": "no_key"})
 
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        start = time.monotonic()
+        payload = {"model": self.model, "messages": messages, "temperature": self.temperature, "max_tokens": 4096}
+        timing.values['request_construction_ms'] = (time.monotonic_ns() - timing.started) / 1e6
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                r = await client.post(
+            async with httpx.AsyncClient(timeout=60.0, trust_env=False, follow_redirects=False) as client:
+                r = await timing.post(client,
                     self.base_url,
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                    json={"model": self.model, "messages": messages, "temperature": self.temperature, "max_tokens": 4096},
+                    json=payload,
                 )
-                latency = int((time.monotonic() - start) * 1000)
-
-                if r.status_code == 429:
-                    return {"success": False, "content": "", "error": "rate_limited", "latency_ms": latency}
-                r.raise_for_status()
-
-                data = r.json()
-                content = data["choices"][0]["message"]["content"]
-                metrics = usage_metrics(data.get("usage") or {})
-                return {"success": True, "content": content, **metrics, "latency_ms": latency}
+                with timing.phase('response_processing_ms'):
+                    if r.status_code == 429:
+                        result = {"success": False, "content": "", "error": "rate_limited"}
+                    else:
+                        r.raise_for_status()
+                        data = r.json()
+                        usage = data.get('usage')
+                        usage = usage if isinstance(usage, dict) else {}
+                        metrics = {**usage_metrics(usage), **token_components(usage)}
+                        if data['choices'][0].get('finish_reason') == 'length':
+                            result = {'success': False, 'content': '', 'error': 'model_output_truncated'}
+                        else:
+                            content = data["choices"][0]["message"]["content"]
+                            if not isinstance(content, str) or not content.strip():
+                                raise ValueError('Invalid model content')
+                            result = {"success": True, "content": content}
+        except httpx.TimeoutException:
+            result = {"success": False, "content": "", "error": "provider_timeout"}
         except httpx.HTTPStatusError as e:
-            return {"success": False, "content": "", "error": f"http_{e.response.status_code}", "latency_ms": int((time.monotonic()-start)*1000)}
-        except Exception as e:
-            return {"success": False, "content": "", "error": "provider_request_failed", "latency_ms": int((time.monotonic()-start)*1000)}
+            result = {"success": False, "content": "", "error": f"http_{e.response.status_code}"}
+        except Exception:
+            result = {"success": False, "content": "", "error": "provider_request_failed"}
+        return finish(result)

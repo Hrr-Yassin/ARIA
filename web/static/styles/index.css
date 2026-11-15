@@ -855,7 +855,7 @@ input:focus, textarea:focus, select:focus {
   background: var(--bg-base);
   color: var(--text-primary);
   border-radius: 4px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 12rem;
 }
 .approval-actions { display: flex; gap: 8px; flex-shrink: 0; }
 

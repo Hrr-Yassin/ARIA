@@ -384,6 +384,11 @@ class WorkerJobs:
                 caps = await self.client.capabilities()
             if not isinstance(caps, dict):
                 raise HTTPException(409, 'Worker capability information is unavailable')
+            from orchestrator.worker_preflight import worker_preflight
+            preflight = worker_preflight(command, job['scope'], caps)
+            await self.store.update(job_id, {'worker_preflight': preflight}, expected={'prepared'})
+            if preflight['status'] == 'blocked':
+                raise HTTPException(409, {'code': preflight['reason_code'], 'message': preflight['message']})
             if command.startswith('aria-tool '):
                 from security_tools.adapters import decode
                 adapter, _ = decode(command)

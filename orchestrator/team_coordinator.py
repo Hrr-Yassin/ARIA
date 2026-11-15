@@ -90,7 +90,8 @@ class TeamCoordinator:
             except Exception:  # noqa: BLE001 - recovery remains fail-closed.
                 pass
             raise
-        model_token = engagement_context.set({'session_id': sid, 'owner': owner})
+        from llm.engagement_budget import bound_model_context
+        model_token = engagement_context.set(bound_model_context(sid, owner))
         task_token = task_context.set({'id': task_id, 'run_id': request_id})
         try:
             view = preview
@@ -98,9 +99,17 @@ class TeamCoordinator:
                 view = await team_store.view(sid, owner)
             evidence = [entry for entry in view['evidence'] if entry['id'] in task['evidence_inputs']]
             specialist = self.specialists()[task['owner_role']]
-            related = [item for item in view.get('research_hypotheses', [])
-                if set(item['supporting_evidence']) & set(task['evidence_inputs'])][:3]
+            from memory.research import hypothesis_current
+            evidence_index = {entry['id']: entry for entry in view.get('evidence', [])}
+            model = next(iter(view.get('research_models', [])), {})
+            candidates = [item for item in view.get('research_hypotheses', [])
+                if set(item['supporting_evidence']) & set(task['evidence_inputs'])]
+            current = [item for item in candidates
+                if hypothesis_current(item, model, evidence_index, view.get('scope', {}))]
+            related = current[:3]
             research_context = {
+                'omitted_stale_hypotheses': len(candidates) - len(current),
+                'omitted_current_hypotheses': max(0, len(current) - len(related)),
                 'hypotheses':[{key:item[key] for key in ('id','claim','alternative_explanations',
                     'positive_controls','negative_controls','uncertainty','state')} for item in related],
                 'responsibility':('Challenge the discovery claims and explain missing independent controls; model agreement cannot verify a finding.'

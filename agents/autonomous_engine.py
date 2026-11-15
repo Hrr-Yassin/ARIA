@@ -35,6 +35,7 @@ from typing import AsyncGenerator, Dict, List, Optional, Any
 
 import httpx
 import structlog
+from fastapi import HTTPException
 
 from config.settings import settings
 from memory.execution_authorization import execution_authorization
@@ -59,6 +60,15 @@ from memory.knowledge_store import knowledge_store, scope_identity_digest
 from memory.parsers import dispatch_parser
 
 log = structlog.get_logger("autonomous_engine")
+
+
+class InvestigationReviewError(ValueError):
+    """A receipt-bound review failed closed; messages never contain model data."""
+
+    def __init__(self, code: str, message: str, *, structured_validation_ms: float | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.structured_validation_ms = structured_validation_ms
 
 
 def _objective_text(value) -> str:
@@ -138,6 +148,8 @@ class ApprovalRequest:
     risk_color: str
     purpose: str
     created_at: float = field(default_factory=time.time)
+    created_monotonic_ns: int = field(default_factory=time.monotonic_ns, repr=False)
+    decided_monotonic_ns: Optional[int] = field(default=None, repr=False)
     decision: Optional[str] = None      # None | "approve" | "reject" | "modify"
     modified_command: str = ""
 
@@ -183,6 +195,11 @@ class SessionRunState:
     objective_truncated: bool = False
     started_at: float = field(default_factory=time.time)
     run_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    snapshot_revision: int = 0
+    snapshot_generation: int = 0
+    event_sequence: int = 0
+    persistence_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    event_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     auth_revision: int = 0
     worker_epoch: int = 0
     subscribers: set = field(default_factory=set, repr=False)
@@ -197,6 +214,7 @@ class SessionRunState:
     evidence_job_ids: list = field(default_factory=list)
     completed_observations: list = field(default_factory=list)
     observation_job_ids: dict = field(default_factory=dict)
+    reviewed_evidence_job_ids: list = field(default_factory=list)
     executed_commands: list = field(default_factory=list)
     executed_command_hashes: list = field(default_factory=list)
     model_calls: int = 0
@@ -206,6 +224,7 @@ class SessionRunState:
     pending_approval: Optional[ApprovalRequest] = None
     stop_requested: bool = False
     pause_requested: bool = False
+    cancellation_confirmed: Optional[bool] = None
     event_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     activity_log: List[dict] = field(default_factory=list)
     owner_id: str = ""  # Session owner; may differ from an admin actor in user_id.
@@ -261,7 +280,8 @@ class AutonomousEngine:
         async with self._start_locks.setdefault(session_id, asyncio.Lock()):
             task = self._tasks.get(session_id)
             if task is not None and not task.done():
-                return {"status": "already_running"}
+                state = self._runs.get(session_id)
+                return {"status": "already_running", "run_id": state.run_id if state else None}
             return await self._start(session_id, user_id, **kwargs)
 
     async def _start(self, session_id: str, user_id: str,
@@ -276,6 +296,7 @@ class AutonomousEngine:
         execution_authorization._validate("searchsploit scope-check", context)
         if session_id in self._runs and self._runs[session_id].active:
             return {"status": "already_running",
+                    "run_id": self._runs[session_id].run_id,
                     "steps_taken": self._runs[session_id].steps_taken}
 
         original_objective = _normalize_objective(objective)
@@ -363,6 +384,7 @@ class AutonomousEngine:
                  session=session_id, goal=goal, target=target)
         return {
             "status": "started", "session_id": session_id,
+            "run_id": state.run_id,
             "goal": goal, "target": target, "max_steps": state.max_steps,
             "original_objective": state.objective,
         }
@@ -388,6 +410,10 @@ class AutonomousEngine:
                 "run_state": state.run_state}
 
     async def request_stop(self, session_id: str, user_id: str = "") -> dict:
+        async with self._start_locks.setdefault(session_id, asyncio.Lock()):
+            return await self._request_stop(session_id, user_id)
+
+    async def _request_stop(self, session_id: str, user_id: str) -> dict:
         await execution_authorization._context(user_id, session_id, allow_blocked=True)
         state = self._runs.get(session_id)
         if state:
@@ -396,10 +422,19 @@ class AutonomousEngine:
                 state.run_state = "cancelling"
             await self._persist(state)
         cancellation = await worker_jobs.cancel_session(user_id, session_id)
+        if state:
+            state.cancellation_confirmed = not cancellation['pending']
+            await self._persist(state)
         task = self._tasks.get(session_id)
         if task and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+        if state and state.run_state not in TERMINAL:
+            state.run_state = 'blocked'
+            state.reason_code = 'cancelled'
+            state.reason = 'Run cancelled; completed evidence was retained. Inspect worker termination status.'
+            state.active = False
+            await self._persist(state)
         return {"status": "cancellation_pending" if cancellation['pending'] else "stopped", **cancellation}
 
     async def detach_session(self, session_id):
@@ -429,10 +464,14 @@ class AutonomousEngine:
         state = self._runs.get(session_id)
         if not state:
             return {"active": False}
+        typed = state.capabilities.get('typed_adapters')
         return {
             "schema_version": 1,
             "session_id": state.session_id,
             "run_id": state.run_id,
+            "snapshot_revision": state.snapshot_revision,
+            "snapshot_generation": state.snapshot_generation,
+            "event_sequence": state.event_sequence,
             "turn_id": state.run_id,
             "user_id": state.user_id,
             "owner_id": state.owner_id,
@@ -446,6 +485,7 @@ class AutonomousEngine:
             "failure_detail": state.failure_detail,
             "successful_steps": state.successful_steps,
             "evidence_job_ids": list(state.evidence_job_ids),
+            "reviewed_evidence_job_ids": list(state.reviewed_evidence_job_ids),
             "completed_observations": list(state.completed_observations),
             "observation_job_ids": {key: list(value) for key, value in
                                      state.observation_job_ids.items()},
@@ -457,6 +497,10 @@ class AutonomousEngine:
             "required_capabilities": ["nmap", "curl"] if state.goal == "discovery" else ["curl"] if state.goal == "http_check" else ["verified_access"],
             "capabilities": {
                 "tools": list(state.capabilities.get("tools") or []),
+                'typed_adapters': {key: value for key, value in
+                    (typed.items() if isinstance(typed, dict) else [])
+                    if isinstance(key, str) and 0 < len(key) <= 100
+                    and type(value) is int and value == 1},
                 **{name: state.capabilities[name]
                    for name in ("authenticated_http_version",
                                 "specialist_http_version")
@@ -489,6 +533,7 @@ class AutonomousEngine:
                                   if state.pending_approval else None,
             "stop_requested": state.stop_requested,
             "pause_requested": state.pause_requested,
+            "cancellation_confirmed": state.cancellation_confirmed,
             "activity_tail": state.activity_log[-10:],
         }
 
@@ -498,7 +543,11 @@ class AutonomousEngine:
         return await run_store.latest(session_id)
 
     async def _persist(self, state):
-        await run_store.save(self.get_status(state.session_id))
+        async with state.persistence_lock:
+            if self._runs.get(state.session_id) is not state:
+                raise CheckpointConflict('Run state is no longer current', code='run_stale')
+            state.snapshot_revision += 1
+            await run_store.save(self.get_status(state.session_id))
 
     # ────────────────────────────────────────────────────────────────────
     #  Durable checkpoint restoration
@@ -569,8 +618,10 @@ class AutonomousEngine:
             self._runs[session_id] = state
             try:
                 status = self.get_status(session_id)
-                await run_store.commit_restore(session_id, claimed["run_id"],
-                                               claimed["token"], status)
+                committed = await run_store.commit_restore(session_id, claimed["run_id"],
+                                                            claimed["token"], status)
+                state.snapshot_revision = committed.get('snapshot_revision', state.snapshot_revision)
+                state.snapshot_generation = committed.get('snapshot_generation', state.snapshot_generation)
             except Exception:
                 if previous is None:
                     self._runs.pop(session_id, None)
@@ -633,6 +684,12 @@ class AutonomousEngine:
         )
         if checkpoint["session_id"] != claimed.get("session_id"):
             raise CheckpointIntegrityError("Checkpoint row identity is inconsistent")
+        versions = {}
+        for name in ('snapshot_revision', 'snapshot_generation', 'event_sequence'):
+            value = snapshot.get(name, checkpoint.get(name, 0))
+            if type(value) is not int or not checkpoint.get(name, 0) <= value < 2**63:
+                raise CheckpointIntegrityError('Checkpoint update version is inconsistent')
+            versions[name] = value
 
         expected_scope = context.get("scope_digest") or scope_identity_digest(
             context.get("scope") or {}, context.get("target", ""))
@@ -743,7 +800,9 @@ class AutonomousEngine:
             raise CheckpointStateError(
                 "Recorded worker capabilities are insufficient for this goal")
         if checkpoint_state != "completed":
-            if checkpoint["steps_taken"] >= checkpoint["max_steps"]:
+            if (checkpoint["steps_taken"] >= checkpoint["max_steps"]
+                    and not set(checkpoint["required_observations"]).issubset(
+                        checkpoint["completed_observations"])):
                 raise CheckpointStateError("Checkpoint step budget is exhausted")
             if checkpoint["model_calls"] >= self.MAX_MODEL_CALLS:
                 raise CheckpointStateError("Checkpoint model-call budget is exhausted")
@@ -761,6 +820,7 @@ class AutonomousEngine:
             objective=checkpoint["objective"],
             objective_truncated=checkpoint["objective_truncated"],
             started_at=checkpoint["started_at"], run_id=checkpoint["run_id"],
+            **versions,
             auth_revision=checkpoint["auth_revision"],
             worker_epoch=checkpoint["worker_epoch"],
             max_steps=checkpoint["max_steps"],
@@ -772,6 +832,8 @@ class AutonomousEngine:
             capabilities=capabilities,
             successful_steps=checkpoint["successful_steps"],
             evidence_job_ids=list(checkpoint["evidence_job_ids"]),
+            reviewed_evidence_job_ids=list(checkpoint.get("reviewed_evidence_job_ids", [])),
+            cancellation_confirmed=checkpoint.get("cancellation_confirmed"),
             completed_observations=list(checkpoint["completed_observations"]),
             observation_job_ids={key: list(value) for key, value in
                                  checkpoint["observation_job_ids"].items()},
@@ -841,7 +903,7 @@ class AutonomousEngine:
              "tool": a.tool, "risk_color": a.risk_color,
              "purpose": a.purpose, "step_number": a.step_number,
              "created_at": a.created_at,
-             "waiting_seconds": int(time.time() - a.created_at)}
+             "waiting_seconds": max(0, (time.monotonic_ns() - a.created_monotonic_ns) // 1_000_000_000)}
             for a in queue.values() if a.decision is None
         ]
 
@@ -864,6 +926,7 @@ class AutonomousEngine:
             return {"status": "error", "message": "already decided"}
 
         approved = await execution_authorization.decide(user_id, session_id, action_id, decision, modified_command)
+        req.decided_monotonic_ns = time.monotonic_ns()
         req.decision = decision
         if decision == "modify":
             req.modified_command = approved.command
@@ -893,28 +956,33 @@ class AutonomousEngine:
         """The actual autonomous loop. Runs as a background task."""
         # Background tasks may be started by the campaign supervisor rather
         # than an HTTP request; model accounting requires the owner binding.
-        from llm.engagement_budget import engagement_context
+        from llm.engagement_budget import engagement_context, bound_model_context
         engagement_token = engagement_context.set(
-            {"session_id": state.session_id, "owner": state.user_id})
+            bound_model_context(state.session_id, state.user_id, state.run_id))
+        review_validation_ms = None
         try:
-            while state.active and state.steps_taken < state.max_steps:
+            while state.active:
                 if state.stop_requested:
                     break
 
                 context = await execution_authorization._context(state.user_id, state.session_id)
-                if context.get("auth_revision", 0) != state.auth_revision or context.get("worker_epoch", 0) != state.worker_epoch:
+                if context.get("auth_revision", 0) != state.auth_revision:
+                    state.run_state, state.reason_code = 'blocked', 'authorization_changed'
+                    state.reason = 'Engagement authorization changed; completed evidence was retained and no further operation was proposed.'
+                    break
+                if context.get("worker_epoch", 0) != state.worker_epoch:
+                    state.run_state, state.reason_code = 'blocked', 'worker_epoch_changed'
+                    state.reason = 'Worker execution authorization was invalidated; reconcile worker jobs before continuing.'
                     break
                 # 1) Check if goal achieved
                 achieved, reason = await self._check_goal_achieved(state)
                 if achieved and state.successful_steps:
-                    if not await self._run_specialist_phase_guarded(state):
-                        break
-                    state.run_state = "completed"
-                    await self._emit(state, AutoActivityEvent(
-                        type="goal_achieved", step=state.steps_taken,
-                        action=reason, status="done",
-                    ))
-                    attack_kb.mark_goal_achieved(state.session_id, state.goal, reason)
+                    await self._finalize_observations(state, reason)
+                    break
+
+                # The execution budget limits dispatch, not processing of
+                # evidence already recorded by the final authorized operation.
+                if state.steps_taken >= state.max_steps:
                     break
 
                 # 2) Ask the orchestrator/planner for the next step
@@ -988,7 +1056,10 @@ class AutonomousEngine:
                     decision = await self._wait_for_approval(state, req)
                     state.pending_approval = None
 
-                    if decision == "reject" or state.stop_requested:
+                    if state.stop_requested:
+                        self._finalization_stopped(state)
+                        break
+                    if decision == "reject":
                         if state.pause_requested:
                             state.run_state = "blocked"
                             state.reason_code = "run_interrupted"
@@ -1126,14 +1197,9 @@ class AutonomousEngine:
                     break
                 completion = observation_completion(state)
                 if completion["complete"]:
-                    if state.capabilities.get('typed_adapters', {}).get('httpx.http.probe.v1') == 1:
-                        await self._review_investigation(state)
-                    if not await self._run_specialist_phase_guarded(state):
-                        break
-                    state.run_state = "completed"
-                    await self._emit(state, AutoActivityEvent(type="goal_achieved", status="done",
-                        action="Required observations completed with durable worker receipts: "
-                               + ", ".join(completion["satisfied"])))
+                    await self._finalize_observations(state,
+                        "Required observations completed with durable worker receipts: "
+                        + ", ".join(completion["satisfied"]))
                     break
                 # Rate-limit between steps
                 await asyncio.sleep(self.STEP_DELAY)
@@ -1153,28 +1219,49 @@ class AutonomousEngine:
             state.run_state = "blocked"
             state.reason_code, state.reason = "cancelled", "Run cancelled; inspect worker jobs for final cancellation status"
             raise
+        except InvestigationReviewError as exc:
+            state.run_state = "blocked"
+            state.reason_code, state.reason = exc.code, str(exc)
+            review_validation_ms = exc.structured_validation_ms
+            log.warning("investigation review rejected", session=state.session_id,
+                        code=exc.code)
+        except HTTPException as exc:
+            from orchestrator.blockers import http_blocker
+            blocker = http_blocker(exc)
+            state.run_state = "blocked"
+            state.reason_code, state.reason = blocker['reason_code'], blocker['explanation']
+            log.warning("autonomous operation blocked", session=state.session_id,
+                        code=state.reason_code)
         except Exception as exc:  # noqa: BLE001
             state.run_state = "failed"
             state.reason_code, state.reason = "run_error", "Run failed; inspect protected server diagnostics"
-            log.exception("autonomous loop crashed",
-                          session=state.session_id, error=str(exc))
+            log.error("autonomous loop crashed",
+                      session=state.session_id, error_type=type(exc).__name__)
             await self._emit(state, AutoActivityEvent(
                 type="auto_error", step=state.steps_taken,
-                action=f"Loop error: {str(exc)[:200]}", status="failed",
+                action=state.reason, status="failed",
             ))
         finally:
             state.active = False
             if state.run_state not in TERMINAL:
-                state.run_state = "blocked"
-                state.reason_code = state.reason_code or "run_interrupted"
+                if not self._finalization_stopped(state):
+                    state.run_state = "blocked"
+                    state.reason_code = state.reason_code or "run_interrupted"
+                    state.reason = state.reason or 'Run interrupted; completed evidence and pending work were retained.'
             try:
                 await self._emit(state, AutoActivityEvent(type="auto_complete", status=state.run_state,
-                    action=state.reason or "Run ended", extra={"reason_code": state.reason_code}))
+                    action=state.reason or "Run ended", extra={"reason_code": state.reason_code,
+                        "structured_validation_ms": review_validation_ms}))
             finally:
-                if self._runs.get(state.session_id) is state:
-                    attack_kb.unregister_replan_callback(state.session_id)
-                if self._tasks.get(state.session_id) is asyncio.current_task():
-                    self._tasks.pop(state.session_id, None)
+                try:
+                    if self._runs.get(state.session_id) is state:
+                        attack_kb.unregister_replan_callback(state.session_id)
+                    if self._tasks.get(state.session_id) is asyncio.current_task():
+                        self._tasks.pop(state.session_id, None)
+                finally:
+                    # Persistence, subscriber delivery or cleanup may fail;
+                    # never leave accounting bound to this engagement.
+                    engagement_context.reset(engagement_token)
             await self._write_decision_log(
                 state, decision_type="autonomous_stop",
                 reasoning=f"Cycle ended after {state.steps_taken} steps",
@@ -1183,11 +1270,49 @@ class AutonomousEngine:
             )
             log.info("autonomous cycle ended",
                      session=state.session_id, steps=state.steps_taken)
-            engagement_context.reset(engagement_token)
 
     # ────────────────────────────────────────────────────────────────────
     #  Planning / goal checking
     # ────────────────────────────────────────────────────────────────────
+
+    async def _finalize_observations(self, state: SessionRunState, reason: str) -> None:
+        """Apply identical completion gates after execution and restart recovery."""
+        if self._finalization_stopped(state):
+            return
+        if (state.capabilities.get('typed_adapters', {}).get('httpx.http.probe.v1') == 1
+                and set(state.reviewed_evidence_job_ids) != set(state.evidence_job_ids)):
+            await self._review_investigation(state)
+            state.reviewed_evidence_job_ids = list(state.evidence_job_ids)
+            # Retain accepted review progress if later specialist work blocks.
+            await self._persist(state)
+        if self._finalization_stopped(state):
+            return
+        if not await self._run_specialist_phase_guarded(state):
+            return
+        if self._finalization_stopped(state):
+            return
+        state.run_state = "completed"
+        state.reason_code = "required_observations_completed"
+        state.reason = reason
+        await self._emit(state, AutoActivityEvent(
+            type="goal_achieved", step=state.steps_taken,
+            action=reason, status="done", extra={"reason_code": state.reason_code},
+        ))
+        attack_kb.mark_goal_achieved(state.session_id, state.goal, reason)
+
+    @staticmethod
+    def _finalization_stopped(state: SessionRunState) -> bool:
+        """Honor a stop arriving while review or specialist I/O was awaited."""
+        if not state.stop_requested:
+            return False
+        state.run_state = "blocked"
+        if state.pause_requested:
+            state.reason_code = "run_interrupted"
+            state.reason = "Run paused; completed evidence and pending processing were preserved."
+        else:
+            state.reason_code = "cancelled"
+            state.reason = "Run cancelled; inspect worker jobs for final cancellation status"
+        return True
 
     async def _plan_next_step(self, state: SessionRunState) -> Optional[dict]:
         """
@@ -1308,6 +1433,7 @@ class AutonomousEngine:
         required = set(required_observations(state.goal))
         missing_observations = required.difference(state.completed_observations)
         observation_by_tool = {"nmap": "port_discovery", "curl": "http_response", "httpx": "http_response"}
+        worker_rejection = None
         for command in commands:
             try:
                 if not isinstance(command, dict):
@@ -1329,10 +1455,19 @@ class AutonomousEngine:
                 if observation not in missing_observations:
                     raise ValueError(f'{checked.tool} cannot satisfy a missing observation; outstanding: '
                                      + ', '.join(sorted(missing_observations)))
-                return {**command, 'command': checked.command, 'tool': checked.tool, 'risk_color': checked.risk}
+                from orchestrator.worker_preflight import worker_preflight
+                admission = worker_preflight(checked.command, context['scope'], state.capabilities)
+                if admission['status'] == 'blocked':
+                    worker_rejection = admission
+                    feedback.append(admission['message'])
+                    continue
+                return {**command, 'command': checked.command, 'tool': checked.tool,
+                        'risk_color': checked.risk, 'worker_preflight': admission}
             except (ValueError, TypeError) as exc:
                 feedback.append(str(exc)[:250])
                 continue
+        if worker_rejection:
+            state.reason_code, state.reason = worker_rejection['reason_code'], worker_rejection['message']
         return None
 
     # ────────────────────────────────────────────────────────────────────
@@ -1645,10 +1780,113 @@ class AutonomousEngine:
                 state.failure_detail = str(redact(stderr, deployment_secrets()))[:1000]
         return result.get("stdout", ""), result.get("stderr", ""), success
 
+    async def _review_response(self, state: SessionRunState, evidence: list,
+                               follow_ups: dict, schema: dict) -> str:
+        """Journal one logical review and reuse its exact response on recovery."""
+        from agents.orchestrator_agent import orchestrator_agent, record_planner_diagnostic
+        from llm.base_llm import response_schema
+        from memory.investigation_reviews import review_journal, ReviewJournalError, MAX_RESPONSE_CHARS
+        from security.encryption import evidence_cipher
+        from security_tools.adapters import sha256
+        from llm.planner_errors import MESSAGES
+        failures = {
+            **MESSAGES,
+            'review_provider_timeout': 'Evidence review provider timed out; completed observations were retained.',
+            'review_transport_failed': 'Evidence review provider request failed; completed observations were retained.',
+            'review_output_truncated': 'Evidence review response was truncated; no conclusions were accepted.',
+            'review_provider_unavailable': 'Evidence review model unavailable; no conclusions were accepted.',
+            'review_provider_response_invalid': 'Evidence review provider returned an invalid response; no conclusions were accepted.',
+            'review_response_oversized': 'Evidence review response exceeds the bounded journal contract.',
+            'invalid_review_output': 'Evidence review did not match the required schema; no conclusions were accepted.',
+            'model_call_budget': 'Evidence review model-call budget exhausted; completed observations were retained.',
+        }
+        try:
+            claim = await review_journal.acquire(state.session_id, state.owner_id or state.user_id,
+                                                 state.run_id, list(state.evidence_job_ids))
+            if not claim['created']:
+                if claim['state'] == 'response':
+                    return review_journal.response(claim)
+                if claim['state'] == 'failed' and claim.get('reason_code') in failures:
+                    code = claim['reason_code']
+                    raise InvestigationReviewError(code, failures[code])
+                raise InvestigationReviewError('review_outcome_unknown',
+                    'A prior review has no recorded response. Inspect model accounting; no provider call was repeated.')
+        except ReviewJournalError as exc:
+            raise InvestigationReviewError(exc.code, str(exc)) from None
+        except InvestigationReviewError:
+            raise
+        except Exception:
+            raise InvestigationReviewError('review_journal_unavailable',
+                'Review journal is unavailable; no provider call was made.') from None
+
+        async def reject(code: str) -> None:
+            try:
+                await review_journal.fail(claim, code)
+            except Exception:
+                raise InvestigationReviewError('review_journal_unavailable',
+                    'Review failure could not be recorded; no conclusions were accepted.') from None
+            raise InvestigationReviewError(code, failures[code])
+
+        if state.model_calls >= self.MAX_MODEL_CALLS:
+            await reject('model_call_budget')
+        state.model_calls += 1
+        await self._persist(state)
+        token = response_schema.set(schema)
+        try:
+            result = await orchestrator_agent.query_llm_smart(state.user_id,
+                json.dumps({'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}),
+                'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
+                'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
+                'Record alternative explanations and confidence; uncertainty never grants verification. '
+                'A banner, version or open port never proves a vulnerability. '
+                'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
+                'No tool names, commands or larger budgets may be invented. '
+                'Do not claim verified vulnerabilities, credentials or exploitation. No commands execute from this review.',
+                task_type='output_analysis')
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            raise InvestigationReviewError('review_outcome_unknown',
+                'Review provider outcome is unknown. Inspect model accounting; no conclusions were accepted.') from None
+        finally:
+            response_schema.reset(token)
+        if not isinstance(result, dict):
+            await reject('review_provider_response_invalid')
+        if result.get('success') is not True:
+            mapping = {'provider_timeout': 'review_provider_timeout',
+                       'provider_request_failed': 'review_transport_failed',
+                       'local_model_request_failed': 'review_transport_failed',
+                       'model_output_truncated': 'review_output_truncated'}
+            error = result.get('error')
+            await reject(mapping.get(error, error if error in failures else 'review_provider_unavailable')
+                         if isinstance(error, str) else 'review_provider_unavailable')
+        raw = result.get('content', '')
+        try:
+            await record_planner_diagnostic(state.session_id, state.user_id, 'review_response_private',
+                {'run_id': state.run_id, 'response_sha256': sha256(str(raw)),
+                 'response_truncated': len(str(raw)) > MAX_RESPONSE_CHARS,
+                 'evidence_job_ids': sorted(state.evidence_job_ids),
+                 'sealed': evidence_cipher().encrypt(str(raw)[:MAX_RESPONSE_CHARS].encode()).decode()})
+        except Exception:
+            raise InvestigationReviewError('review_diagnostic_unavailable',
+                'Evidence review diagnostic could not be persisted; no conclusions were accepted.') from None
+        if not isinstance(raw, str):
+            await reject('invalid_review_output')
+        if len(raw) > MAX_RESPONSE_CHARS:
+            await reject('review_response_oversized')
+        try:
+            await review_journal.capture(claim, raw)
+        except ReviewJournalError as exc:
+            raise InvestigationReviewError(exc.code, str(exc)) from None
+        except Exception:
+            raise InvestigationReviewError('review_journal_unavailable',
+                'Review response could not be durably recorded; no conclusions were accepted.') from None
+        return raw
+
     async def _review_investigation(self, state: SessionRunState) -> None:
         """Review only current-run, reverified receipts; conclusions remain hypotheses."""
-        from agents.orchestrator_agent import orchestrator_agent, InvestigationReview
-        from llm.base_llm import response_schema
+        from agents.orchestrator_agent import InvestigationReview
+        from pydantic import ValidationError
         evidence = []
         follow_ups = {}
         for job_id in state.evidence_job_ids[-5:]:
@@ -1690,39 +1928,30 @@ class AutonomousEngine:
                                     if name == 'ffuf' else
                                     'Capture the pinned informational single-response observation; it does not establish a vulnerability.')}
             evidence.append({'job_id': job_id, 'output': summary})
-        if state.model_calls >= self.MAX_MODEL_CALLS:
-            raise ValueError('Review model budget exhausted')
-        state.model_calls += 1
-        await self._persist(state)
         allowed = {item['job_id'] for item in evidence}
         schema = InvestigationReview.model_json_schema()
         schema['$defs']['EvidenceHypothesis']['properties']['evidence_job_ids']['items']['enum'] = sorted(allowed)
         schema['$defs']['EvidenceHypothesis']['properties']['follow_up']['enum'] = [*follow_ups, 'none']
-        token = response_schema.set(schema)
+        raw = await self._review_response(state, evidence, follow_ups, schema)
+        validation_started = time.monotonic_ns()
         try:
-            result = await orchestrator_agent.query_llm_smart(state.user_id,
-                json.dumps({'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}),
-                'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
-                'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
-                'Record alternative explanations and confidence; uncertainty never grants verification. '
-                'A banner, version or open port never proves a vulnerability. '
-                'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
-                'No tool names, commands or larger budgets may be invented. '
-                'Do not claim verified vulnerabilities, credentials or exploitation. No commands execute from this review.',
-                task_type='output_analysis')
-        finally:
-            response_schema.reset(token)
-        if not result.get('success'):
-            raise ValueError('Evidence review model unavailable')
-        review = InvestigationReview.model_validate_json(result['content'])
+            review = InvestigationReview.model_validate_json(raw)
+        except (ValidationError, TypeError):
+            raise InvestigationReviewError('invalid_review_output',
+                'Evidence review did not match the required schema; no conclusions were accepted. Inspect the private review diagnostic.',
+                structured_validation_ms=(time.monotonic_ns() - validation_started) / 1e6) from None
+        validation_ms = (time.monotonic_ns() - validation_started) / 1e6
+        processing_started = time.monotonic_ns()
         if any(not set(h.evidence_job_ids).issubset(allowed) for h in review.hypotheses):
-            raise ValueError('Review cited unknown evidence')
+            raise InvestigationReviewError('invalid_review_evidence', 'Review cited unknown evidence; no conclusions were accepted.',
+                structured_validation_ms=validation_ms)
         proposals = []
         for hypothesis in review.hypotheses:
             key = hypothesis.follow_up
             if key != 'none':
                 if key not in follow_ups or follow_ups[key]['evidence_job_id'] not in hypothesis.evidence_job_ids:
-                    raise ValueError('Review follow-up is unavailable or lacks supporting HTTP evidence')
+                    raise InvestigationReviewError('invalid_review_follow_up', 'Review follow-up is unavailable or lacks supporting HTTP evidence',
+                        structured_validation_ms=validation_ms)
                 proposals.append(follow_ups[key])
         facts = [{'job_id':item['job_id'], **observation} for item in evidence
                  if isinstance(item['output'],list) for observation in item['output']]
@@ -1738,8 +1967,13 @@ class AutonomousEngine:
                    'verification': 'unverified',
                    'evidence_job_ids': sorted(allowed), 'proposed_investigations': proposals}
         from memory.research import research_store
+        preparation_ms = (time.monotonic_ns() - processing_started) / 1e6
+        persistence_started = time.monotonic_ns()
         payload['persistent_hypothesis_ids'] = await research_store.ingest_review(
             state.session_id, state.user_id, state.run_id, payload)
+        payload['metrics'] = {'structured_validation_ms': validation_ms,
+            'result_preparation_ms': preparation_ms,
+            'projection_persistence_ms': (time.monotonic_ns() - persistence_started) / 1e6}
         await self._emit(state, {'type': 'investigation_review', 'status':'done',
             'action':'Evidence reviewed; follow-up investigations remain proposals', 'review': payload})
         await self._write_decision_log(state, decision_type='investigation_review',
@@ -1752,8 +1986,27 @@ class AutonomousEngine:
     async def _wait_for_approval(self, state: SessionRunState,
                                   req: ApprovalRequest) -> str:
         """Block until human responds (or stop is requested)."""
+        started = time.monotonic_ns()
         while req.decision is None and not state.stop_requested:
             await asyncio.sleep(0.5)
+        released = time.monotonic_ns()
+        # These are controller-clock gate measurements, not a claim about
+        # human deliberation or browser delivery. Anchors are process-local;
+        # pending approval identities/timers are never renewed on restoration.
+        decided = req.decided_monotonic_ns
+        accepted = (req.decision is not None and decided is not None
+                    and req.created_monotonic_ns <= decided <= released)
+        await self._emit(state, {
+            "type": "approval_wait_measured", "step": req.step_number,
+            "action_id": req.action_id,
+            "status": "stopped" if state.stop_requested else "decided",
+            "timings": {
+                "approval_gate_pending_ms": (released - req.created_monotonic_ns) / 1e6,
+                "approval_poll_loop_ms": (released - started) / 1e6,
+                "approval_decision_accepted_ms": (decided - req.created_monotonic_ns) / 1e6 if accepted else None,
+                "approval_release_after_decision_ms": (released - decided) / 1e6 if accepted else None,
+            },
+        })
         return req.decision or "reject"
 
     # ────────────────────────────────────────────────────────────────────
@@ -1763,10 +2016,17 @@ class AutonomousEngine:
     async def _emit(self, state: SessionRunState,
                      event: "AutoActivityEvent | dict"):
         """Push an event into the stream queue + tail buffer."""
+        async with state.event_lock:
+            state.event_sequence += 1
+            await self._emit_ordered(state, event)
+
+    async def _emit_ordered(self, state: SessionRunState,
+                            event: "AutoActivityEvent | dict"):
         ev_dict = event.to_dict() if isinstance(event, AutoActivityEvent) else event
         from security.redaction import redact
         ev_dict = redact(ev_dict)
-        ev_dict = {**ev_dict, "session_id": state.session_id, "run_id": state.run_id, "run_state": state.run_state}
+        ev_dict = {**ev_dict, "session_id": state.session_id, "run_id": state.run_id,
+                   "run_state": state.run_state, "event_sequence": state.event_sequence}
         state.activity_log.append(ev_dict)
         await self._persist(state)
         # Keep tail bounded
@@ -1775,7 +2035,9 @@ class AutonomousEngine:
         for queue in list(state.subscribers):
             if queue.full():
                 queue.get_nowait()
-                queue.put_nowait({"type": "stream_gap", "reconnect": True})
+                # Keep the newest transition (especially terminal state) and
+                # tell the consumer to reconcile the omitted history.
+                queue.put_nowait({**ev_dict, "stream_gap": True, "reconnect": True})
             else:
                 queue.put_nowait(ev_dict)
 

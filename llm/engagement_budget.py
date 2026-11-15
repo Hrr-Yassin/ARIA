@@ -7,6 +7,7 @@ provider quotes; other hosted providers retain owner-entered conservative rates.
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import json
+import re
 import uuid
 from typing import Literal
 
@@ -22,6 +23,18 @@ from memory.team_tasks import Strict
 
 engagement_context = ContextVar('aria_model_engagement', default=None)
 task_context = ContextVar('aria_model_task', default=None)
+model_request_context = ContextVar('aria_model_request', default=None)
+
+
+def bound_model_context(sid: str, owner: str, run_id: str | None = None) -> dict:
+    """Carry correlation only within the same owner/session; grant no authority."""
+    parent = engagement_context.get()
+    if run_id is None and isinstance(parent, dict) and parent.get('session_id') == sid and parent.get('owner') == owner:
+        run_id = parent.get('run_id')
+    result = {'session_id': sid, 'owner': owner}
+    if isinstance(run_id, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,100}', run_id):
+        result['run_id'] = run_id
+    return result
 
 STOP_REASONS = frozenset({'', 'provider_overrun', 'unknown_usage',
                           'accounting_inconsistent'})
@@ -179,11 +192,11 @@ class ModelAccounting:
                 state = materialize(await team_store._events(db, sid))
                 record = state['tasks'].get(task['id'])
                 if not record or record['state'] != 'running' or record.get('run_id') != task['run_id']:
-                    raise HTTPException(409, 'Task cancelled or superseded before provider call')
+                    raise HTTPException(409, {'code': 'task_not_running', 'message': 'Task cancelled or superseded before provider call'})
                 task_used = dict((used.get('tasks') or {}).get(task['id']) or {})
                 if (task_used.get('calls', 0) + 1 > record['budget']['max_model_calls']
                         or task_used.get('reserved_tokens', 0) + tokens > record['budget']['max_tokens']):
-                    raise HTTPException(429, 'Task model budget exhausted')
+                    raise HTTPException(429, {'code': 'task_model_budget_exhausted', 'message': 'Task model budget exhausted'})
                 if check_only:
                     return {'ready': True}
                 task_used.update(calls=task_used.get('calls', 0) + 1,
@@ -198,14 +211,22 @@ class ModelAccounting:
             session.metadata_ = metadata
             attempt = {'id': str(uuid.uuid4()), 'session_id': sid, 'owner': owner,
                        'campaign_id': campaign_id, 'task_id': task['id'] if task else None,
+                       'run_id': bound_model_context(sid, owner).get('run_id'),
+                       'task_run_id': task['run_id'] if task else None,
                        'provider': provider, 'model': model,
                        'reserved_tokens': tokens, 'reserved_cost_microusd': cost,
                        'timestamp': datetime.now(timezone.utc).isoformat(), 'state': 'reserved'}
+            logical = model_request_context.get()
+            if isinstance(logical, dict):
+                attempt['logical_request_id'] = logical['id']
+                attempt['attempt_index'] = logical['reserved_attempts'] + 1
             if quote:
                 attempt['tariff'] = quote
             db.add(DecisionLog(id=attempt['id'], session_id=sid, user_id=owner,
                                decision_type='model_attempt', metadata_=attempt))
             await db.commit()  # Required before physical provider I/O.
+            if isinstance(logical, dict):
+                logical['reserved_attempts'] = attempt['attempt_index']
             return attempt
 
     async def settle(self, attempt: dict, result: dict) -> None:
@@ -274,6 +295,13 @@ class ModelAccounting:
                              'reported_tokens': tokens, 'reported_cost_microusd': cost,
                              'provider_usage': result.get('provider_usage'),
                              'finished_at': datetime.now(timezone.utc).isoformat()}
+            from llm.request_metrics import safe_timings
+            def token_count(key):
+                count = result.get(key)
+                return count if type(count) is int and count >= 0 else None
+            row.metadata_.update(input_tokens=token_count('input_tokens'),
+                output_tokens=token_count('output_tokens'),
+                timings=safe_timings(result.get('timings')))
             await db.commit()
 
     async def usage_summary(self, sid: str, owner: str) -> dict:
@@ -313,7 +341,9 @@ class ModelAccounting:
                 DecisionLog.created_at.desc()).limit(MAX_ATTEMPTS))).scalars().all()
             metadata = session.metadata_ or {}
             return {'limits': ModelLimits.model_validate(metadata.get('model_limits', {})).model_dump(),
-                    'configured_selection': {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL},
+                    'configured_selection': ({'provider': 'local', 'model': settings.LOCAL_LLM_MODEL}
+                        if settings.LLM_ROUTING == 'local' else
+                        {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL}),
                     'tariff_quotes': metadata.get('model_tariffs', {}),
                     'approved_at': metadata.get('model_budget_approved_at'),
                     'usage': metadata.get('model_usage', {}),

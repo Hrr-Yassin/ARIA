@@ -180,6 +180,7 @@ class ExecutionTests(OfflineCase):
     async def test_autonomous_mislabeled_red_action_blocks(self):
         engine = AutonomousEngine()
         state = SessionRunState('engagement', 'owner', 'initial_access', '192.0.2.1', 'expert', max_steps=1)
+        engine._runs[state.session_id] = state
         engine._approvals['engagement'] = {}
         with patch('agents.autonomous_engine.execution_authorization', self.service), \
              patch.object(engine, '_check_goal_achieved', AsyncMock(return_value=(False, ''))), \

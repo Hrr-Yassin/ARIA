@@ -9,6 +9,73 @@ from security_tools.adapters import ADAPTERS, decode
 
 
 class IntelligenceTests(OfflineCase):
+    def record_review_timing(self, case, metrics):
+        import os
+        from pathlib import Path
+        directory = os.environ.get('ARIA_RELIABILITY_ARTIFACT_DIR')
+        if directory:
+            path = Path(directory) / 'review-timing-fixtures.jsonl'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open('a') as file:
+                file.write(json.dumps({'case': case, 'metrics': metrics}) + '\n')
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.review_diagnostics = self.enterContext(patch(
+            'agents.orchestrator_agent.record_planner_diagnostic', AsyncMock()))
+
+    async def test_review_schema_rejection_keeps_response_private_without_retry(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState, InvestigationReviewError
+        from security.encryption import evidence_cipher
+        state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
+        # Exact misspelled field observed in the live failure, with synthetic content.
+        raw = json.dumps({'observations': [], 'hypotheses': [{
+            'description': 'Unverified candidate', 'evidence_job_ids': ['unknown-job'],
+            'follow_up': 'none', 'validation_criterion': 'Compare a controlled response',
+            'alternative_explanforations': ['private-response-sentinel']}], 'limitations': []})
+        engine = AutonomousEngine()
+        with patch.object(engine, '_persist', AsyncMock()), patch.object(engine, '_emit', AsyncMock()) as emit, patch.object(orchestrator_agent, 'query_llm_smart', AsyncMock(return_value={'success': True, 'content': raw})) as query:
+            with self.assertRaises(InvestigationReviewError) as rejected:
+                await engine._review_investigation(state)
+        self.assertEqual(rejected.exception.code, 'invalid_review_output')
+        self.assertGreaterEqual(rejected.exception.structured_validation_ms, 0)
+        self.record_review_timing('invalid_schema', {'structured_validation_ms': rejected.exception.structured_validation_ms})
+        self.assertNotIn('private-response-sentinel', str(rejected.exception))
+        self.assertNotIn('alternative_explanforations', str(rejected.exception))
+        query.assert_awaited_once()
+        emit.assert_not_awaited()
+        diagnostic = self.review_diagnostics.await_args.args
+        self.assertEqual(diagnostic[:3], ('engagement', 'owner', 'review_response_private'))
+        self.assertEqual(diagnostic[3]['run_id'], state.run_id)
+        self.assertEqual(evidence_cipher().decrypt(diagnostic[3]['sealed'].encode()).decode(), raw)
+        self.assertIsNone(response_schema.get())
+
+    async def test_review_diagnostic_failure_prevents_acceptance(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState, InvestigationReviewError
+        state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
+        engine = AutonomousEngine()
+        self.review_diagnostics.side_effect = RuntimeError('storage-private-sentinel')
+        with patch.object(engine, '_persist', AsyncMock()), patch.object(engine, '_emit', AsyncMock()) as emit, patch.object(orchestrator_agent, 'query_llm_smart', AsyncMock(return_value={'success': True, 'content': '{"observations":[],"hypotheses":[],"limitations":[]}'})):
+            with self.assertRaises(InvestigationReviewError) as rejected:
+                await engine._review_investigation(state)
+        self.assertEqual(rejected.exception.code, 'review_diagnostic_unavailable')
+        self.assertNotIn('storage-private-sentinel', str(rejected.exception))
+        emit.assert_not_awaited()
+
+    async def test_loop_errors_do_not_publish_exception_input(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState, InvestigationReviewError
+        errors = [(RuntimeError('private-exception-sentinel'), 'failed', 'run_error'),
+                  (InvestigationReviewError('invalid_review_output', 'Review schema rejected'), 'blocked', 'invalid_review_output')]
+        for error, terminal, code in errors:
+            with self.subTest(code=code):
+                engine = AutonomousEngine()
+                state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
+                with patch('agents.autonomous_engine.execution_authorization._context', AsyncMock(return_value={})), patch.object(engine, '_check_goal_achieved', AsyncMock(side_effect=error)), patch.object(engine, '_persist', AsyncMock()), patch.object(engine, '_write_decision_log', AsyncMock()):
+                    await engine._run_loop(state)
+                self.assertEqual(state.run_state, terminal)
+                self.assertEqual(state.reason_code, code)
+                self.assertNotIn('private-exception-sentinel', json.dumps(state.activity_log))
+                self.assertFalse(state.active)
+
     async def test_generic_json_is_not_a_plan_and_never_dispatched(self):
         for content in ['{}', '{"tool":"nmap","command":"nmap -p 80 192.0.2.1"}', '{"commands":[]}', '{"commands":[']:
             with self.subTest(content=content), patch.object(orchestrator_agent, 'query_llm_smart', AsyncMock(return_value={'success':True,'content':content})):
@@ -212,6 +279,10 @@ class IntelligenceTests(OfflineCase):
         with patch.object(worker_jobs.store,'get',AsyncMock(return_value=job)), patch.object(worker_jobs.client,'status',AsyncMock(return_value=snapshot)), patch.object(worker_jobs,'verify_receipt',AsyncMock()), patch.object(engine,'_persist',AsyncMock()), patch.object(orchestrator_agent,'query_llm_smart',AsyncMock(return_value={'success':True,'content':json.dumps(output)})), patch.object(engine,'_emit',AsyncMock()) as emit, patch.object(engine,'_write_decision_log',AsyncMock()):
             await engine._review_investigation(state)
         report=emit.await_args.args[1]['review']
+        self.assertGreaterEqual(report['metrics']['structured_validation_ms'], 0)
+        self.assertGreaterEqual(report['metrics']['result_preparation_ms'], 0)
+        self.assertGreaterEqual(report['metrics']['projection_persistence_ms'], 0)
+        self.record_review_timing('accepted_schema', report['metrics'])
         self.assertEqual(len(report['observations']),1)
         self.assertEqual(report['observations'][0]['kind'],'http')
         self.assertIn('query parameter',report['hypotheses'][0]['model_validation_criterion'])

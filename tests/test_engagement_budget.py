@@ -150,6 +150,52 @@ class EngagementBudgets(OfflineCase):
         self.assertIsNone(usage_metrics({'total_tokens':True,'cost':'NaN'})['tokens_used'])
         self.assertGreater(reservation_ceiling('🔬','',1000000)[0],4096)
 
+    async def test_attempt_ledger_preserves_components_and_sanitized_timings(self):
+        from llm.engagement_budget import engagement_context, bound_model_context
+        engagement_context.set(bound_model_context('engagement', 'owner', 'mission-run'))
+        await self.configure()
+        attempt = await self.accounting.reserve('owner', 'groq', 'test', 'x', '')
+        self.assertEqual(attempt['run_id'], 'mission-run')
+        row = next(row for row in self.rows if row.id == attempt['id'])
+        self.db.get = AsyncMock(return_value=row)
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: self.session))
+        await self.accounting.settle(attempt, {'success': False, 'tokens_used': 5,
+            'input_tokens': 0, 'output_tokens': 5, 'cost_microusd': 1,
+            'timings': {'provider_attempt_ms': 14.5, 'http_attempts': 1,
+                        'private-sentinel': 'secret', 'structured_validation_ms': float('nan')}})
+        self.assertEqual(row.metadata_['input_tokens'], 0)
+        self.assertEqual(row.metadata_['output_tokens'], 5)
+        self.assertEqual(row.metadata_['timings']['provider_attempt_ms'], 14.5)
+        self.assertIsNone(row.metadata_['timings']['structured_validation_ms'])
+        self.assertNotIn('private-sentinel', str(row.metadata_))
+
+    def test_correlation_is_preserved_only_for_the_same_owner_and_session(self):
+        from llm.engagement_budget import engagement_context, bound_model_context
+        token = engagement_context.set({'session_id': 'one', 'owner': 'owner', 'run_id': 'mission-one'})
+        try:
+            self.assertEqual(bound_model_context('one', 'owner')['run_id'], 'mission-one')
+            self.assertNotIn('run_id', bound_model_context('two', 'owner'))
+            self.assertNotIn('run_id', bound_model_context('one', 'outsider'))
+            self.assertNotIn('run_id', bound_model_context('one', 'owner', 'untrusted\nvalue'))
+        finally:
+            engagement_context.reset(token)
+
+    async def test_logical_request_groups_attempts_without_inventing_physical_calls(self):
+        from llm.engagement_budget import model_request_context
+        await self.configure()
+        logical = {'id': 'fixture-logical-request', 'reserved_attempts': 0}
+        token = model_request_context.set(logical)
+        try:
+            first = await self.accounting.reserve('owner', 'groq', 'test', 'x', '')
+            second = await self.accounting.reserve('owner', 'groq', 'test', 'x', '')
+            self.assertEqual([first['attempt_index'], second['attempt_index']], [1, 2])
+            self.assertEqual(first['logical_request_id'], second['logical_request_id'])
+            self.assertEqual(logical['reserved_attempts'], 2)
+            self.assertNotIn('physical_provider_calls', first)
+            self.assertNotIn('physical_provider_calls', second)
+        finally:
+            model_request_context.reset(token)
+
     async def test_task_limits_and_cancelled_runs_deny_further_provider_calls(self):
         await self.configure()
         task_context.set({'id':'task-one','run_id':'run-one'})

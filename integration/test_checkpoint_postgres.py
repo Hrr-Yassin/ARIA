@@ -145,6 +145,53 @@ class CheckpointPostgres(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(committed["checkpoint"]["remaining_steps"], 11)
         self.assertEqual(committed["checkpoint"]["remaining_model_calls"], 19)
 
+    async def test_delayed_snapshot_cannot_reopen_a_terminal_run(self):
+        from memory.autonomous_runs import RunStore, CheckpointConflict
+        owner, sid = await self._session()
+        old = await self._snapshot(owner, sid)
+        old['snapshot_revision'] = 1
+        store = RunStore()
+        await store.save(old)
+        terminal = {**old, 'snapshot_revision': 2, 'run_state': 'failed',
+                    'active': False, 'reason_code': 'run_error', 'reason': 'Synthetic failure'}
+        await store.save(terminal)
+        with self.assertRaises(CheckpointConflict):
+            await store.save(old)
+        final = await store.latest(sid)
+        self.assertEqual(final['run_state'], 'failed')
+        self.assertEqual(final['reason_code'], 'run_error')
+        with self.assertRaises(CheckpointConflict) as invalid:
+            await store.save({**old, 'snapshot_revision': 3})
+        self.assertEqual(invalid.exception.code, 'checkpoint_state')
+
+    async def test_save_cannot_rebind_a_run_to_another_owned_session(self):
+        from memory.autonomous_runs import RunStore, CheckpointAccessError
+        owner, sid = await self._session()
+        other_owner, other_sid = await self._session()
+        store = RunStore()
+        original = await self._snapshot(owner, sid)
+        await store.save(original)
+        forged = await self._snapshot(other_owner, other_sid, run_id=original['run_id'])
+        with self.assertRaises(CheckpointAccessError):
+            await store.save(forged)
+        self.assertEqual((await store.latest(sid))['owner_id'], owner)
+
+    async def test_out_of_order_writes_retain_highest_revision(self):
+        from memory.autonomous_runs import RunStore, CheckpointConflict
+        owner, sid = await self._session()
+        snapshot = await self._snapshot(owner, sid)
+        store = RunStore()
+        await store.save({**snapshot, 'snapshot_revision': 1})
+        results = await asyncio.gather(*[
+            store.save({**snapshot, 'snapshot_revision': revision, 'model_calls': revision,
+                        'remaining_model_calls': 20 - revision})
+            for revision in [5, 3, 4, 2]], return_exceptions=True)
+        self.assertTrue(all(not isinstance(item, Exception) or isinstance(item, CheckpointConflict)
+                            for item in results))
+        saved = await store.latest(sid)
+        self.assertEqual(saved['snapshot_revision'], 5)
+        self.assertEqual(saved['model_calls'], 5)
+
     async def test_concurrent_restore_claims_have_exactly_one_winner(self):
         from memory.autonomous_runs import CheckpointConflict, RunStore
         owner, session_id = await self._session()
@@ -254,6 +301,9 @@ class CheckpointPostgres(unittest.IsolatedAsyncioTestCase):
         store = RunStore()
         first = await self._snapshot(owner, session_id, run_id="spec11-old-" + self.token)
         await store.save(first)
+        # An explicit reconciliation closes the old active record before a
+        # later run is created; ordinary saves cannot create two active runs.
+        await store.recover()
         await asyncio.sleep(0.02)
         second = await self._snapshot(owner, session_id, run_id="spec11-new-" + self.token)
         await store.save(second)
@@ -266,3 +316,30 @@ class CheckpointPostgres(unittest.IsolatedAsyncioTestCase):
         claim = await store.claim_restore(session_id)
         self.assertEqual(claim["run_id"], second["run_id"])
         await store.release_restore(session_id, claim["run_id"], claim["token"])
+
+    async def test_duplicate_delivery_is_idempotent_and_restore_fences_old_writer(self):
+        from memory.autonomous_runs import RunStore, CheckpointConflict
+        owner, sid = await self._session()
+        initial = await self._snapshot(owner, sid)
+        initial['snapshot_revision'] = 1
+        store = RunStore()
+        await store.save(initial)
+        before = await store.latest(sid)
+        await store.save(initial)
+        duplicate = await store.latest(sid)
+        self.assertEqual(duplicate['checkpointed_at'], before['checkpointed_at'])
+        self.assertEqual(duplicate['transitions'], before['transitions'])
+        await store.recover()
+        reconciled = await store.latest(sid)
+        claim = await store.claim_restore(sid)
+        restored = await store.commit_restore(sid, claim['run_id'], claim['token'],
+            {**reconciled, 'run_state': 'planning', 'active': True})
+        self.assertGreater(restored['snapshot_generation'], before['snapshot_generation'])
+        with self.assertRaises(CheckpointConflict):
+            await store.save({**initial, 'snapshot_revision': 99})
+        with self.assertRaises(CheckpointConflict):
+            await store.save(await self._snapshot(owner, sid))
+        current = {**restored, 'snapshot_revision': restored['snapshot_revision'] + 1,
+                   'model_calls': 2, 'remaining_model_calls': 18}
+        await store.save(current)
+        self.assertEqual((await store.latest(sid))['model_calls'], 2)

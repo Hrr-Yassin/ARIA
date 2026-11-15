@@ -26,6 +26,7 @@ model than fail.
 """
 import time
 import asyncio
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
@@ -279,7 +280,17 @@ class LLMPoolManager:
         from security.redaction import redact, deployment_secrets
         from memory.access_scope import owned_session_ids
         from memory.attack_knowledge_base import attack_kb
+        queued = time.monotonic_ns()
         async with self._request_slots, self._locks.setdefault(user_id, asyncio.Lock()):
+            preparing = time.monotonic_ns()
+            queue_ms = (preparing - queued) / 1e6
+            context_ms = None
+            def finish(result):
+                timing = {'queue_wait_ms': queue_ms, 'request_context_ms': context_ms
+                    if context_ms is not None else (time.monotonic_ns() - preparing) / 1e6}
+                log.info('model_request_timing', logical_request_id=result.get('logical_request_id'),
+                         queue_wait_ms=timing['queue_wait_ms'], request_context_ms=timing['request_context_ms'])
+                return {**result, 'request_timings': timing}
             try:
                 await self.refresh_user_keys(user_id)
                 secrets = deployment_secrets()
@@ -293,11 +304,12 @@ class LLMPoolManager:
                             secrets.extend([credential.get('password', ''), credential.get('hash_value', '')])
                 prompt = '<untrusted_engagement_data>\n' + redact(prompt, secrets) + '\n</untrusted_engagement_data>'
                 system = redact(system, secrets)
-                return await self._query_for_task(user_id, task_type, prompt, system)
+                context_ms = (time.monotonic_ns() - preparing) / 1e6
+                return finish(await self._query_for_task(user_id, task_type, prompt, system))
             except HTTPException as exc:
-                return {'success': False, 'content': '', 'error': budget_error(exc)}
+                return finish({'success': False, 'content': '', 'error': budget_error(exc)})
             except Exception:
-                return {'success': False, 'content': '', 'error': 'provider_authorization_or_storage_unavailable'}
+                return finish({'success': False, 'content': '', 'error': 'provider_authorization_or_storage_unavailable'})
 
     def _model_for(self, provider, task_type):
         configured = {'groq': settings.GROQ_MODEL, 'gemini': settings.GEMINI_MODEL,
@@ -338,6 +350,18 @@ class LLMPoolManager:
 
     async def _query_for_task(self, user_id: str, task_type: str,
                              prompt: str, system: str = "") -> dict:
+        from llm.engagement_budget import model_request_context
+        logical = {'id': str(uuid.uuid4()), 'reserved_attempts': 0}
+        token = model_request_context.set(logical)
+        try:
+            result = await self._route_for_task(user_id, task_type, prompt, system)
+            return {**result, 'logical_request_id': logical['id'],
+                    'reserved_attempts': logical['reserved_attempts']}
+        finally:
+            model_request_context.reset(token)
+
+    async def _route_for_task(self, user_id: str, task_type: str,
+                             prompt: str, system: str = "") -> dict:
         """
         Route the query to the best model for this task type.
 
@@ -368,11 +392,18 @@ class LLMPoolManager:
                 return {'success': False, 'content': '', 'error': 'validation_budget_exhausted'}
             attempt = await model_accounting.reserve(user_id, 'local', settings.LOCAL_LLM_MODEL, prompt, system)
             result = {'success': False, 'error': 'local_model_request_failed'}
+            attempt_started = time.monotonic_ns()
             try:
                 result = await LocalClient(model=settings.LOCAL_LLM_MODEL, temperature=settings.LLM_TEMPERATURE).query(prompt, system)
                 if budget is not None:
                     budget.record(result.get('tokens_used', 0))
             finally:
+                from llm.request_metrics import safe_timings
+                if not isinstance(result, dict):
+                    result = {'success': False, 'content': '', 'error': 'local_model_request_failed'}
+                result['timings'] = {**safe_timings(result.get('timings')),
+                    'pool_attempt_ms': (time.monotonic_ns() - attempt_started) / 1e6}
+                result['attempt_id'] = attempt['id']
                 await model_accounting.settle(attempt, result)
             return {**result, 'provider': 'local', 'model': settings.LOCAL_LLM_MODEL, 'task_type': task_type, 'tier': tier}
 
@@ -436,6 +467,7 @@ class LLMPoolManager:
                 if key_state.provider == 'openrouter':
                     client.tariff = attempt.get('tariff')
                 result = {'success': False, 'content': '', 'error': 'provider_request_failed'}
+                attempt_started = time.monotonic_ns()
                 try:
                     result = await client.query(prompt, system)
                     if budget is not None:
@@ -448,6 +480,12 @@ class LLMPoolManager:
                 finally:
                     # A failed settlement denies further failover. The durable
                     # reservation remains charged even if this coroutine dies.
+                    from llm.request_metrics import safe_timings
+                    if not isinstance(result, dict):
+                        result = {'success': False, 'content': '', 'error': 'provider_request_failed'}
+                    result['timings'] = {**safe_timings(result.get('timings')),
+                        'pool_attempt_ms': (time.monotonic_ns() - attempt_started) / 1e6}
+                    result['attempt_id'] = attempt['id']
                     await model_accounting.settle(attempt, result)
 
                 if result.get("success"):

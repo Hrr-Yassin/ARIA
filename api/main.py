@@ -134,16 +134,25 @@ app.add_middleware(
 @app.middleware("http")
 async def request_correlation(request: Request, call_next):
     import uuid
+    import time
     from structlog.contextvars import bound_contextvars
     from memory.campaign_observability import correlation_scope
     # Generate locally: arbitrary caller headers never become log fields.
     request_id = uuid.uuid4().hex
+    started = time.monotonic_ns()
     with bound_contextvars(request_id=request_id), correlation_scope(
             f"http-{request_id[:24]}"):
-        response = await call_next(request)
-        log.info("http_request", method=request.method, status=response.status_code)
+        status = None
+        try:
+            response = await call_next(request)
+            status = response.status_code
+        finally:
+            duration_ms = (time.monotonic_ns() - started) / 1e6
+            log.info("http_request", method=request.method, status=status,
+                     handler_ms=duration_ms)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-ARIA-Build"] = SERVER_BUILD
+    response.headers["X-ARIA-Handler-Ms"] = f"{duration_ms:.6f}"
     return response
 
 

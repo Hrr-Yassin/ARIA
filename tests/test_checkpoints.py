@@ -299,6 +299,79 @@ class CheckpointTests(OfflineCase):
         calls["loop"].assert_awaited_once()
         await engine.shutdown()
 
+    async def test_review_receipt_marker_and_objective_survive_restart(self):
+        snapshot = make_snapshot()
+        snapshot['reviewed_evidence_job_ids'] = ['job-nmap']
+        objective = 'Preserve the owner objective; follow-up hypotheses remain pending.'
+        snapshot['original_objective'] = objective
+        store, backend = make_store(snapshot)
+        await store.save(snapshot)
+        await store.recover()
+        knowledge = FakeKnowledge({'job-nmap': ('port_discovery', 'run-1')})
+        engine, result, calls = await self._restore_engine(store, knowledge, resume=False)
+        self.assertEqual(result['status'], 'restored')
+        restored_status = engine.get_status('s1')
+        self.assertEqual(restored_status['original_objective'], objective)
+        self.assertEqual(restored_status['reviewed_evidence_job_ids'], ['job-nmap'])
+        self.assertEqual(engine._runs['s1'].objective, objective)
+        calls['loop'].assert_not_awaited()
+        calls['submit'].assert_not_awaited()
+        checkpoint = backend.rows['run-1']['snapshot']['checkpoint']
+        self.assertEqual(checkpoint['reviewed_evidence_job_ids'], ['job-nmap'])
+        validate_checkpoint(checkpoint)
+        await engine.shutdown()
+
+    async def test_review_receipt_marker_rejects_foreign_and_malformed_identities(self):
+        checkpoint = build_checkpoint(make_snapshot())
+        for reviewed in (True, ['foreign-job'], ['job-nmap', 'job-nmap'], [1]):
+            with self.subTest(reviewed=reviewed):
+                corrupted = copy.deepcopy(checkpoint)
+                corrupted['reviewed_evidence_job_ids'] = reviewed
+                corrupted['digest'] = _payload_digest(corrupted)
+                with self.assertRaises(CheckpointIntegrityError):
+                    validate_checkpoint(corrupted)
+        legacy = copy.deepcopy(checkpoint)
+        legacy.pop('reviewed_evidence_job_ids')
+        legacy['digest'] = _payload_digest(legacy)
+        validate_checkpoint(legacy)
+
+    async def test_pause_and_cancellation_acknowledgement_are_durable_and_strict(self):
+        snapshot = make_snapshot()
+        snapshot.update(pause_requested=True, cancellation_confirmed=False)
+        store, backend = make_store(snapshot)
+        await store.save(snapshot)
+        await store.recover()
+        saved = await store.latest('s1')
+        self.assertTrue(saved['checkpoint']['pause_requested'])
+        self.assertIs(saved['checkpoint']['cancellation_confirmed'], False)
+        validate_checkpoint(saved['checkpoint'])
+        for field, value in [('pause_requested', 'yes'), ('cancellation_confirmed', 1)]:
+            with self.subTest(field=field):
+                corrupted = copy.deepcopy(saved['checkpoint'])
+                corrupted[field] = value
+                corrupted['digest'] = _payload_digest(corrupted)
+                with self.assertRaises(CheckpointIntegrityError):
+                    validate_checkpoint(corrupted)
+
+    async def test_final_step_checkpoint_can_restore_processing_without_dispatch(self):
+        snapshot = make_snapshot(
+            steps=2, max_steps=2,
+            completed=('port_discovery', 'http_response'),
+            jobs=(('job-nmap', 'port_discovery'), ('job-curl', 'http_response')),
+            executed=('nmap -p 80 192.0.2.1', 'curl -I http://192.0.2.1'))
+        store, _ = make_store(snapshot)
+        await store.save(snapshot)
+        await store.recover()
+        knowledge = FakeKnowledge({'job-nmap': ('port_discovery', 'run-1'),
+                                   'job-curl': ('http_response', 'run-1')})
+        engine, result, calls = await self._restore_engine(store, knowledge, resume=False)
+        self.assertEqual(result['status'], 'restored')
+        self.assertEqual(result['remaining_steps'], 0)
+        self.assertTrue(engine.get_status('s1')['completion']['complete'])
+        for name in ('execute', 'propose', 'worker_execute', 'submit', 'planner', 'loop'):
+            calls[name].assert_not_awaited()
+        await engine.shutdown()
+
     async def test_replay_guard_survives_redacted_display_commands(self):
         state = SessionRunState("s1", "alice", "discovery", TARGET, "expert")
         state.executed_commands = ["curl -H Authorization:[REDACTED] http://192.0.2.1"]

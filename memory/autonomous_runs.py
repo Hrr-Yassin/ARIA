@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Text, cast, or_, select
 
 from config.settings import settings
-from memory.database_models import AutonomousRun, async_session
+from memory.database_models import AutonomousRun, PentestSession, async_session
 from security.redaction import redact
 
 TERMINAL = {"completed", "blocked", "failed"}
@@ -55,6 +55,14 @@ CHECKPOINT_FIELDS = (
 RUN_STATES = {
     "planning", "awaiting_approval", "executing", "completed", "blocked",
     "failed", "cancelling", "restored",
+}
+RUN_TRANSITIONS = {
+    'planning': {'planning', 'awaiting_approval', 'executing', 'completed', 'blocked', 'failed', 'cancelling'},
+    'awaiting_approval': {'awaiting_approval', 'executing', 'planning', 'blocked', 'failed', 'cancelling'},
+    'executing': {'executing', 'planning', 'completed', 'blocked', 'failed', 'cancelling'},
+    'cancelling': {'cancelling', 'blocked', 'failed'},
+    'restored': {'restored', 'blocked', 'failed', 'cancelling'},
+    'completed': {'completed'}, 'blocked': {'blocked'}, 'failed': {'failed'},
 }
 RISK_THRESHOLDS = {"green_only", "green_orange", "manual"}
 RESTORABLE_BLOCKED_REASONS = {
@@ -206,6 +214,8 @@ def build_checkpoint(snapshot: dict) -> dict:
         "completed_observations": _bounded_list(snapshot.get("completed_observations"), 20, 50),
         "observation_job_ids": observation_job_ids,
         "evidence_job_ids": evidence_job_ids,
+        "reviewed_evidence_job_ids": _bounded_list(
+            snapshot.get("reviewed_evidence_job_ids"), MAX_COMMANDS, MAX_JOB_TEXT),
         "executed_commands": executed_commands,
         "executed_command_hashes": hashes,
         "steps_taken": steps_taken,
@@ -222,6 +232,9 @@ def build_checkpoint(snapshot: dict) -> dict:
         "checkpointed_at": datetime.utcnow().isoformat(),
         "auth_revision": max(0, _int(snapshot.get("auth_revision"))),
         "worker_epoch": max(0, _int(snapshot.get("worker_epoch"))),
+        "snapshot_revision": max(0, _int(snapshot.get("snapshot_revision"))),
+        "snapshot_generation": max(0, _int(snapshot.get("snapshot_generation"))),
+        "event_sequence": max(0, _int(snapshot.get("event_sequence"))),
         "capabilities": {"tools": tools, **capability_versions,
                          **({'typed_adapters':typed_versions} if typed_versions else {})},
         "risk_threshold": _clean_text(
@@ -235,6 +248,8 @@ def build_checkpoint(snapshot: dict) -> dict:
         "specialist_phase_done": bool(snapshot.get("specialist_phase_done", False)),
         "specialist_investigation_ids": specialist_investigation_ids,
         "active": bool(snapshot.get("active", False)),
+        "pause_requested": bool(snapshot.get("pause_requested", False)),
+        "cancellation_confirmed": snapshot.get("cancellation_confirmed"),
         # A checkpoint never carries an approval/authorization identifier.
         "pending_authorization": None,
     }
@@ -357,6 +372,16 @@ def validate_checkpoint(checkpoint, *, expected_run_id: str = "",
     _require(set(indexed_jobs) == set(checkpoint["evidence_job_ids"]),
              "Checkpoint evidence index is inconsistent")
 
+    # Optional for older checkpoints: absence means review remains unfinished.
+    reviewed = checkpoint.get("reviewed_evidence_job_ids", [])
+    _require(isinstance(reviewed, list) and len(reviewed) <= MAX_COMMANDS,
+             "Checkpoint reviewed evidence list is malformed")
+    _require(all(isinstance(item, str) and 0 < len(item) <= MAX_JOB_TEXT
+                 for item in reviewed), "Checkpoint reviewed evidence identity is malformed")
+    _require(len(set(reviewed)) == len(reviewed)
+             and set(reviewed).issubset(checkpoint["evidence_job_ids"]),
+             "Checkpoint reviewed evidence is inconsistent")
+
     hashes = checkpoint["executed_command_hashes"]
     _require(isinstance(hashes, list), "Invalid checkpoint command digest list")
     _require(len(hashes) == len(checkpoint["executed_commands"]),
@@ -431,7 +456,50 @@ def validate_checkpoint(checkpoint, *, expected_run_id: str = "",
     _require(type(checkpoint["active"]) is bool, "Checkpoint active flag is invalid")
     _require(type(checkpoint["objective_truncated"]) is bool,
              "Checkpoint objective flag is invalid")
+    _require(type(checkpoint.get("pause_requested", False)) is bool,
+             "Checkpoint pause flag is invalid")
+    _require(checkpoint.get("cancellation_confirmed") is None
+             or type(checkpoint["cancellation_confirmed"]) is bool,
+             "Checkpoint cancellation acknowledgement is invalid")
+    for name in ('snapshot_revision', 'snapshot_generation', 'event_sequence'):
+        _require(type(checkpoint.get(name, 0)) is int and 0 <= checkpoint.get(name, 0) < 2**63,
+                 f'Checkpoint {name} is invalid')
     return checkpoint
+
+
+def snapshot_fingerprint(snapshot: dict) -> str:
+    """Identify a delivery retry independently of transport/checkpoint metadata."""
+    ignored = {'checkpoint', 'checkpoint_digest', 'checkpointed_at', 'restore_lease',
+               'transitions', 'snapshot_revision', 'snapshot_generation',
+               'snapshot_fingerprint', 'elapsed_seconds'}
+    return canonical_digest(redact({key: value for key, value in snapshot.items() if key not in ignored}))
+
+
+def _version(snapshot: dict, name: str) -> int:
+    value = snapshot.get(name, 0)
+    if type(value) is not int or not 0 <= value < 2**63:
+        raise CheckpointIntegrityError(f'Invalid {name}')
+    return value
+
+
+def validate_snapshot_update(current: dict, incoming: dict) -> None:
+    """Ordinary saves cannot restore, rebind or discard accepted progress."""
+    for field in ('owner_id', 'goal', 'target', 'original_objective', 'max_steps',
+                  'scope_digest', 'auth_revision', 'worker_epoch'):
+        if current.get(field) != incoming.get(field):
+            raise CheckpointConflict('Run identity or policy changed during a save', code='checkpoint_binding')
+    if incoming.get('run_state') not in RUN_TRANSITIONS.get(current.get('run_state'), set()):
+        raise CheckpointConflict('Invalid run state transition; explicit restore is required', code='checkpoint_state')
+    for field in ('steps_taken', 'successful_steps', 'model_calls', 'event_sequence'):
+        if _version(incoming, field) < _version(current, field):
+            raise CheckpointConflict('Checkpoint progress cannot regress', code='checkpoint_stale')
+    for field in ('evidence_job_ids', 'executed_command_hashes', 'reviewed_evidence_job_ids'):
+        before, after = current.get(field, []), incoming.get(field, [])
+        if (not isinstance(before, list) or not isinstance(after, list)
+                or any(not isinstance(value, str) for value in [*before, *after])):
+            raise CheckpointIntegrityError('Checkpoint evidence index is invalid')
+        if not set(before).issubset(after):
+            raise CheckpointConflict('Accepted evidence cannot disappear', code='checkpoint_stale')
 
 
 def _prepare_snapshot(existing, snapshot: dict) -> dict:
@@ -460,16 +528,51 @@ class SQLRunBackend:
         self._session_factory = session_factory or async_session
 
     async def save(self, snapshot):
+        revision = _version(snapshot, 'snapshot_revision')
+        generation = _version(snapshot, 'snapshot_generation')
+        fingerprint = snapshot_fingerprint(snapshot)
         async with self._session_factory() as db:
-            row = await db.get(AutonomousRun, snapshot["run_id"])
+            session = (await db.execute(select(PentestSession).where(
+                PentestSession.id == snapshot['session_id']).with_for_update())).scalar_one_or_none()
+            if session is None or session.user_id != snapshot.get('owner_id'):
+                raise CheckpointAccessError('Checkpoint session owner does not match')
+            row = await db.get(AutonomousRun, snapshot["run_id"], with_for_update=True)
+            latest = (await db.execute(select(AutonomousRun).where(
+                AutonomousRun.session_id == snapshot['session_id']).order_by(
+                AutonomousRun.updated_at.desc(), AutonomousRun.id.desc()).limit(1))).scalar_one_or_none()
             if row is None:
+                if latest is not None:
+                    if (latest.snapshot or {}).get('restore_lease'):
+                        raise CheckpointConflict('A restore is in progress', code='restore_in_progress')
+                    if (latest.snapshot or {}).get('active'):
+                        raise CheckpointConflict('Another run is active', code='run_active')
                 row = AutonomousRun(id=snapshot["run_id"],
                                     session_id=snapshot["session_id"])
                 db.add(row)
+                revision = revision or 1
+            else:
+                if row.session_id != snapshot['session_id']:
+                    raise CheckpointAccessError('Checkpoint run belongs to another session')
+                current = row.snapshot or {}
+                if latest is None or latest.id != row.id:
+                    raise CheckpointConflict('A newer run exists', code='checkpoint_stale')
+                if current.get('restore_lease'):
+                    raise CheckpointConflict('A restore is in progress', code='restore_in_progress')
+                if generation != _version(current, 'snapshot_generation'):
+                    raise CheckpointConflict('Checkpoint writer was fenced by recovery', code='checkpoint_stale')
+                old_revision = _version(current, 'snapshot_revision')
+                if revision <= old_revision:
+                    if revision in {0, old_revision} and fingerprint == current.get('snapshot_fingerprint'):
+                        return current  # Identical delivery; no new history/timestamp.
+                    raise CheckpointConflict('Checkpoint revision is stale', code='checkpoint_stale')
+                validate_snapshot_update(current, snapshot)
             row.state = snapshot["run_state"]
-            row.snapshot = _prepare_snapshot(row.snapshot, snapshot)
+            row.snapshot = _prepare_snapshot(row.snapshot, {**snapshot,
+                'snapshot_revision': revision, 'snapshot_generation': generation,
+                'snapshot_fingerprint': fingerprint})
             row.updated_at = datetime.utcnow()
             await db.commit()
+            return row.snapshot
 
     async def latest(self, session_id):
         async with self._session_factory() as db:
@@ -491,6 +594,8 @@ class SQLRunBackend:
                 # lease on an already-blocked row.  Reconciliation must clear
                 # it, not only leases on rows it still marks blocked.
                 snapshot.pop("restore_lease", None)
+                snapshot['snapshot_revision'] = _version(snapshot, 'snapshot_revision') + 1
+                snapshot['snapshot_generation'] = _version(snapshot, 'snapshot_generation') + 1
                 if row.state not in TERMINAL:
                     snapshot.update({
                         "active": False, "run_state": "blocked",
@@ -501,6 +606,7 @@ class SQLRunBackend:
                                    "A validated checkpoint can be restored explicitly."),
                     })
                     row.state = "blocked"
+                snapshot['snapshot_fingerprint'] = snapshot_fingerprint(snapshot)
                 row.snapshot = snapshot
                 row.updated_at = datetime.utcnow()
             await db.commit()
@@ -516,6 +622,8 @@ class SQLRunBackend:
         """
         token = token or str(uuid.uuid4())
         async with self._session_factory() as db:
+            await db.execute(select(PentestSession.id).where(
+                PentestSession.id == session_id).with_for_update())
             rows = (await db.execute(select(AutonomousRun).where(
                 AutonomousRun.session_id == session_id).order_by(
                 AutonomousRun.updated_at.desc(), AutonomousRun.id.desc()
@@ -560,6 +668,8 @@ class SQLRunBackend:
     async def commit_restore(self, session_id: str, run_id: str, token: str,
                              snapshot: dict) -> dict:
         async with self._session_factory() as db:
+            await db.execute(select(PentestSession.id).where(
+                PentestSession.id == session_id).with_for_update())
             row = (await db.execute(select(AutonomousRun).where(
                 AutonomousRun.id == run_id).with_for_update())).scalar_one_or_none()
             current = dict((row.snapshot if row else None) or {})
@@ -568,14 +678,23 @@ class SQLRunBackend:
                     or not isinstance(lease, dict) or lease.get("token") != token):
                 raise CheckpointConflict("Checkpoint restore claim was lost",
                                          code="restore_conflict")
+            if (_version(snapshot, 'snapshot_revision') != _version(current, 'snapshot_revision')
+                    or _version(snapshot, 'snapshot_generation') != _version(current, 'snapshot_generation')):
+                raise CheckpointConflict('Checkpoint changed during restore', code='restore_conflict')
+            restored = {**snapshot,
+                        'snapshot_revision': _version(current, 'snapshot_revision') + 1,
+                        'snapshot_generation': _version(current, 'snapshot_generation') + 1}
+            restored['snapshot_fingerprint'] = snapshot_fingerprint(restored)
             row.state = snapshot["run_state"]
-            row.snapshot = _prepare_snapshot(current, snapshot)
+            row.snapshot = _prepare_snapshot(current, restored)
             row.updated_at = datetime.utcnow()
             await db.commit()
             return row.snapshot
 
     async def release_restore(self, session_id: str, run_id: str, token: str) -> None:
         async with self._session_factory() as db:
+            await db.execute(select(PentestSession.id).where(
+                PentestSession.id == session_id).with_for_update())
             row = (await db.execute(select(AutonomousRun).where(
                 AutonomousRun.id == run_id).with_for_update())).scalar_one_or_none()
             if row is None or row.session_id != session_id:

@@ -1,12 +1,28 @@
 """Hosted transport must send real schemas and preserve unknown usage."""
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
+import httpx
 from llm.base_llm import response_schema
 from llm.openrouter_client import OpenRouterClient, provider_receipt
 from tests.support import OfflineCase
 
 
 class OpenRouterTransport(OfflineCase):
+    async def test_timeout_retains_attempt_duration_and_safe_reason(self):
+        client = AsyncMock()
+        client.post.side_effect = httpx.ReadTimeout('private-sentinel')
+        cm = AsyncMock()
+        cm.__aenter__.return_value = client
+        with patch('llm.openrouter_client.httpx.AsyncClient', return_value=cm):
+            result = await OpenRouterClient(api_key='offline').query('question')
+        self.assertEqual(result['error'], 'provider_timeout')
+        self.assertNotIn('private-sentinel', str(result))
+        self.assertIsNone(result['input_tokens'])
+        self.assertIsNone(result['output_tokens'])
+        self.assertEqual(result['timings']['http_attempts'], 1)
+        self.assertGreaterEqual(result['timings']['provider_attempt_ms'], 0)
+        self.assertIsNone(result['timings']['response_processing_ms'])
+
     async def test_schema_output_cap_and_usage(self):
         schema={'type':'object','properties':{'answer':{'type':'string'}},'required':['answer'],'additionalProperties':False}
         response=SimpleNamespace(status_code=200,raise_for_status=lambda:None,

@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from memory.research import (ApplicationModel, CreateHypothesis, Hypothesis,
     ModelNode, ModelEdge, ResearchStore, ResearchTransition, priority)
-from memory.team_tasks import TeamStore, digest, materialize
+from memory.team_tasks import TeamStore, CreateTask, TaskSpec, team_store, digest, materialize
 from tests.support import OfflineCase
 
 
@@ -173,3 +173,24 @@ class ResearchLifecycle(OfflineCase):
                 patch.object(self.store,'create',AsyncMock()) as create:
             await self.store.sync_specialists('engagement','owner',['cancelled'])
         create.assert_not_awaited()
+
+    async def test_specialist_context_omits_stale_research_and_marks_current_as_unverified(self):
+        from agents.result_contract import AgentResult
+        from orchestrator.team_coordinator import TeamCoordinator
+        current = await self.create()
+        stale = {**current, 'id': 'stale', 'scope_digest': digest({'targets': ['old.test']})}
+        self.events.append({'collection': 'research_hypotheses', 'entity_id': 'stale',
+            'sequence': len(self.events) + 1, 'id': str(uuid.uuid4()), 'data': stale})
+        task = (await team_store.create('engagement', 'owner', CreateTask(
+            request_id=uuid.uuid4(), task=TaskSpec(owner_role='correlation',
+                objective='Review only current saved research', evidence_inputs=['e1'],
+                expected_output='Evidence-linked uncertainty', completion_criteria=['State limitations']))))['data']
+        specialist = SimpleNamespace(process=AsyncMock(return_value={'agent_result': AgentResult(
+            interpreted_request=task['objective'], uncertainty=['No finding verified']).model_dump()}))
+        coordinator = TeamCoordinator()
+        with patch.object(coordinator, 'specialists', return_value={'correlation': specialist}):
+            await coordinator.run('engagement', 'owner', task['id'], str(uuid.uuid4()), 'expert')
+        context = specialist.process.await_args.args[2]['research_context']
+        self.assertEqual([item['id'] for item in context['hypotheses']], [current['id']])
+        self.assertEqual(context['omitted_stale_hypotheses'], 1)
+        self.assertIn('untrusted research assertions', context['verification'])
