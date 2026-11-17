@@ -1,0 +1,34 @@
+{
+  "schema": "aria.competence.cases.v1",
+  "split": "development",
+  "author": "engineering agent; not an independent human assessor",
+  "sources": [
+    "https://www.rfc-editor.org/rfc/rfc6750#section-2.1",
+    "https://www.rfc-editor.org/rfc/rfc7519#section-3",
+    "https://www.rfc-editor.org/rfc/rfc9110#section-10.2.4"
+  ],
+  "scoring": "One exact expected classification per case; ten cases per component, one point each. No model calls or statistical generalization.",
+  "cases": [
+    {"id":"auth-opaque-bearer","component":"http_auth","requirement":"C15-03","input":{"headers":{"Authorization":"Bearer opaque-token"},"cookies":{}},"expected":"bearer"},
+    {"id":"auth-jwt-format","component":"http_auth","requirement":"C15-03","input":{"headers":{"Authorization":"Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.c2ln"},"cookies":{}},"expected":"bearer"},
+    {"id":"auth-bearer-boundary","component":"http_auth","requirement":"C15-03","input":{"headers":{"Authorization":"BearerFake token"},"cookies":{}},"expected":"unknown"},
+    {"id":"auth-basic","component":"http_auth","requirement":"C15-03","input":{"headers":{"Authorization":"Basic dXNlcjpwYXNz"},"cookies":{}},"expected":"basic"},
+    {"id":"auth-api-key","component":"http_auth","requirement":"C15-03","input":{"headers":{"X-API-Key":"fixture"},"cookies":{}},"expected":"apikey"},
+    {"id":"auth-session-hint","component":"http_auth","requirement":"C15-03","input":{"headers":{},"cookies":{"session":"fixture"}},"expected":"session"},
+    {"id":"auth-absent","component":"http_auth","requirement":"C15-03","input":{"headers":{},"cookies":{}},"expected":"none"},
+    {"id":"auth-unrelated-oauth-word","component":"http_auth","requirement":"C15-03","input":{"headers":{"X-Comment":"client_id and oauth guide"},"cookies":{}},"expected":"none"},
+    {"id":"auth-case-whitespace","component":"http_auth","requirement":"C15-03","input":{"headers":{"AUTHORIZATION":"  bEaReR  fixture  "},"cookies":{}},"expected":"bearer"},
+    {"id":"auth-invalid-value","component":"http_auth","requirement":"C15-03","input":{"headers":{"authorization":23},"cookies":{}},"expected":"unknown"},
+    {"id":"tech-php-header","component":"http_technology","requirement":"C15-03","input":{"headers":{"X-Powered-By":"PHP/8.2"},"body":""},"expected":["php"]},
+    {"id":"tech-express-header","component":"http_technology","requirement":"C15-03","input":{"headers":{"x-powered-by":"Express"},"body":""},"expected":["express"]},
+    {"id":"tech-apache-banner","component":"http_technology","requirement":"C15-03","input":{"headers":{"Server":"Apache"},"body":""},"expected":["apache"]},
+    {"id":"tech-nginx-banner","component":"http_technology","requirement":"C15-03","input":{"headers":{"SERVER":"nginx/1.24"},"body":""},"expected":["nginx"]},
+    {"id":"tech-body-prose","component":"http_technology","requirement":"C15-03","input":{"headers":{},"body":"Our guide compares nginx, Apache and IIS."},"expected":[]},
+    {"id":"tech-unrelated-header","component":"http_technology","requirement":"C15-03","input":{"headers":{"X-Comment":"apache"},"body":""},"expected":[]},
+    {"id":"tech-iis-banner","component":"http_technology","requirement":"C15-03","input":{"headers":{"Server":"Microsoft-IIS/10.0"},"body":""},"expected":["iis"]},
+    {"id":"tech-aspnet-header","component":"http_technology","requirement":"C15-03","input":{"headers":{"X-AspNet-Version":"4.0"},"body":""},"expected":["asp.net"]},
+    {"id":"tech-multi","component":"http_technology","requirement":"C15-03","input":{"headers":{"Server":"Apache","X-Powered-By":"PHP/8"},"body":""},"expected":["apache","php"]},
+    {"id":"tech-absent","component":"http_technology","requirement":"C15-03","input":{"headers":{},"body":"Welcome"},"expected":[]}
+  ],
+  "limitations":["Bearer is a transport scheme; token format and cryptographic verification are separate.","Technology labels are advertised hints, not verified installed products or versions.","No authentication success, vulnerability, exploitability or general intelligence is established."]
+}

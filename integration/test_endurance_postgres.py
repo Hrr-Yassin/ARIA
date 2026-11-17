@@ -6,9 +6,9 @@ helpers, the real campaign execution guard and the real engagement accounting
 against a disposable database ending in ``*_test``.  They make no network
 requests, no provider calls and no real worker submissions.
 
-Simulated time starts on a future Monday so the durable leases written by the
-simulation are always ahead of wall-clock time; a test is an accelerated
-simulation of the workflow, not evidence of real-time eight-hour reliability.
+Campaign creation and lease validation share the fixture's simulated Monday.
+The checks do not depend on that Monday remaining ahead of today's wall clock.
+This is accelerated simulation, not real-time eight-hour reliability evidence.
 
 Usage:
     ARIA_INTEGRATION=1 DATABASE_URL=postgresql+asyncpg://.../aria_test \
@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import json
 import os
 import subprocess
@@ -49,7 +50,7 @@ from orchestrator.campaign_execution import (
 from orchestrator.campaign_supervisor import CampaignSupervisor
 from tests.endurance_harness import (
     EnginePlan, PostgresAccounting, SimulatedClock, SyntheticEngine,
-    SyntheticWorker, monday_start, simulated_runtime_settings,
+    SyntheticWorker, monday_start, simulated_runtime_settings, simulated_datetime,
 )
 
 # Importing the offline tests package sets its own isolated defaults.  Restore
@@ -223,9 +224,12 @@ class CampaignEndurancePostgres(unittest.IsolatedAsyncioTestCase):
             scope=self.scope, digest=self.digest,
             plan=plan or EnginePlan(), **overrides)
 
+    @contextmanager
     def _simulation(self, rig: PostgresRig):
-        return simulated_runtime_settings(
-            tick_seconds=rig.TICK_SECONDS, lease_seconds=rig.LEASE_SECONDS)
+        with simulated_runtime_settings(tick_seconds=rig.TICK_SECONDS,
+                lease_seconds=rig.LEASE_SECONDS), \
+             simulated_datetime(rig.clock, campaign_store=True):
+            yield
 
     async def _tick_until(self, rig: PostgresRig, predicate, *,
                           limit: int = 8) -> None:

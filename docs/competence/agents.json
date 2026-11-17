@@ -1,0 +1,270 @@
+{
+  "schema": "aria.agent-audit.v1",
+  "grading": "source inspection and retained historical public answers; not independent human assessment",
+  "agents": [
+    {
+      "agent": "recon",
+      "class": "ReconAgent",
+      "source": "agents/recon_agent.py",
+      "source_sha256": "c280a59b4fb34c159e489ac42354ee797fe5824c11594ca45d9b7b27f576aad5",
+      "responsibility": "Smallest requested profiling observation",
+      "technical_knowledge": "HTTP HEAD vs GET, product vs protocol versions, scope and advertised tool limits",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "Target plus session vector context; shared owned evidence/objective/capabilities prefix",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON commands array, optional explanation; shared AgentResult",
+      "previous_answer_quality": "Proposed WHOIS/DNS and GET despite header objective; policy rejected unsupported actions",
+      "known_failure_patterns": "Explicit HEAD guidance and incomplete JSON blocker; no fresh model measurement",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Small structured planner only after fresh role evaluation",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "scan",
+      "class": "ScanAgent",
+      "source": "agents/scan_agent.py",
+      "source_sha256": "31ce01136e8dc420635feea4bcd7233362430da53314da829b33398bb8b48d75",
+      "responsibility": "Requested bounded TCP observation",
+      "technical_knowledge": "Connect scan states, numeric port selection, observed service vs guessed port-name",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "Target, scan preference, saved vector intel plus shared constraints",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON commands array; shared AgentResult",
+      "previous_answer_quality": "Proposed scripts and broader enumeration outside TCP80 request",
+      "known_failure_patterns": "Supported connect profile guidance retained; no new flags/capabilities",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Structured planner; capability compliance remains unmeasured after changes",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "vuln",
+      "class": "VulnAgent",
+      "source": "agents/vuln_agent.py",
+      "source_sha256": "a595edf93c47dc5202e1fd46ffde15d80b3a00bfeb429c20d4625014b982ff86",
+      "responsibility": "Conditional vulnerability applicability review",
+      "technical_knowledge": "Advisory applicability, configuration, controls, false positives and remediation",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "Cached services, vector intel and shared owned evidence; team objective prefix",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON assessments and required commands array; assessments always candidates",
+      "previous_answer_quality": "Confused HTTP protocol and Apache versions, proposed shell chaining; no CVE invented",
+      "known_failure_patterns": "Removed unavailable scanner instructions and automatic fallback; no verification from banners",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Needs stronger technical analysis and reliable structured output; current suitability unproven",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "planner",
+      "class": "AttackPlannerAgent",
+      "source": "agents/attack_planner_agent.py",
+      "source_sha256": "39a4b67891567e659acc0c08ce7c1d2097bf943b301edd90bbee43058725e725",
+      "responsibility": "Plan prerequisites and evidence steps for the original goal",
+      "technical_knowledge": "Scope, dependencies, completion criteria, historical-playbook limitations",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "KB goal/hosts, owner-filtered similar cases and playbooks, mode and shared constraints",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON primary_path, blocked readiness; proposed commands undergo shared policy",
+      "previous_answer_quality": "0.8B timeout; no usable planning answer in prior cohort",
+      "known_failure_patterns": "Incomplete model plans previously yielded template actions. The fallback now records blocked readiness with an empty action list.",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Needs structured planning within budget; timeout prevents selection",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "orchestrator",
+      "class": "OrchestratorAgent",
+      "source": "agents/orchestrator_agent.py",
+      "source_sha256": "41d03f03ce7b6b3df6edc98a9bcf5640ea53e36dbafb179610e35d9a19dc088a",
+      "responsibility": "Bounded one-observation planner; separate interactive/tool-output analysis",
+      "technical_knowledge": "Receipt-backed observations, command schemas, parser uncertainty, CVE evidence",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "Bounded: objective, completed observations, authorized artifacts, scope and typed operations; interactive: KB/history/vector/similar cases",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "Strict Pydantic one-operation schema in bounded mode; interactive AgentResult; analysis candidate findings",
+      "previous_answer_quality": "Repeated port discovery, missing executable and unsupported flags",
+      "known_failure_patterns": "Incomplete interactive plans previously produced default actions. The current response records the missing valid plan and proposes no action.",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Structured output reliability essential; no post-fix actual-model score",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "coordinator",
+      "class": "CoordinatorAgent",
+      "source": "agents/coordinator_agent.py",
+      "source_sha256": "a3dc6e3c5e0e92ae0b7ad210910da76c1bed747eb379f63f06e3d6491ba6e1e4",
+      "responsibility": "Select a review specialist without dispatch authority",
+      "technical_knowledge": "Responsibility separation, prerequisites, HTTP evidence review, contradiction routing",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "User request, KB hosts/shells/credentials, tools_done, goal and mode; shared context when process used",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON selected_agent and reason; deterministic fast path for clear requests",
+      "previous_answer_quality": "Non-escalating prerequisite planning was an appropriate decision in historical case",
+      "known_failure_patterns": "Saved HTTP evidence routes to web_intel without a network prerequisite; unavailable post/exploit described honestly",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Simple routing can use deterministic rules; ambiguous model quality unproven",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "web_intel",
+      "class": "WebIntelAgent",
+      "source": "agents/web_intel_agent.py",
+      "source_sha256": "5af54ad35e361b36e02067cdf222c4cf04317c3c050635e13631980dd575d788",
+      "responsibility": "Passive interpretation of recorded HTTP evidence",
+      "technical_knowledge": "Bearer vs JWT, authentication vs authorization, cookies, technology hints and public responses",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "HTTP data and KB; shared process ownership/evidence prefix. Secondary call_llm checks ownership; not the full process wrapper",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON evidence-linked public rationale, findings/hypotheses and optional commands; saved-evidence mode returns attributed deterministic interpretations with no commands or confirmed findings.",
+      "previous_answer_quality": "Recognized absent private/auth content but suggested exploitation and denied established service evidence",
+      "known_failure_patterns": "Bearer and technology defects corrected against frozen fixtures; removed private reasoning request in secondary entry; recorded-evidence mode now reviews owned Burp records without a provider call, explaining HTTP/auth/cookie/CORS limits.",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Deterministic hints assist, never authenticate or verify; fresh specialist model validation blocked",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "correlation",
+      "class": "CorrelationAgent",
+      "source": "agents/correlation_agent.py",
+      "source_sha256": "5cd7667acc90abe596d3f3fc815fb6b5649093478db4a508edb85d09397f723e",
+      "responsibility": "Challenge attributed claims and identify missing independent controls",
+      "technical_knowledge": "Provenance, duplicate sources, contradictory evidence, falsifiability and alternative explanations",
+      "prompt_structure": "Role instructions and role JSON example; shared evidence guidance on model calls",
+      "context_received": "Recent20analyst entries with stable analyst IDs/roles/source citations, target relevance filtering, unverified labels, explicit omission counts and deterministic provenance/contradiction review; plus owned evidence.",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "JSON correlations, conceptual conditional chains, gaps; shared unverified AgentResult",
+      "previous_answer_quality": "Actual collaboration response unavailable: accounting gate denied before provider call",
+      "known_failure_patterns": "Prompt no longer treats repeated analyst claims as confirmation; deterministic handoff review planned C20",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "Review ability cannot be inferred from agreement; actual-model comparison blocked",
+      "fresh_model_evaluation": "BLOCKED"
+    },
+    {
+      "agent": "report",
+      "class": "ReportAgent",
+      "source": "agents/report_agent.py",
+      "source_sha256": "890ab39752fbb26ce589fcbfc070124004af06ba8e3f24bb714c4ec691fe3740",
+      "responsibility": "Compile evidence-attributed reports and artifacts",
+      "technical_knowledge": "Escaping, provenance, severity/verification distinction, limitations and defensive reporting",
+      "prompt_structure": "No operational model prompt in current mode",
+      "context_received": "Authorized session/findings, vector/cache data and Burp/worker manifest",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "HTML/Markdown/LaTeX/PDF artifacts, owner-bound hashes; legacy observations labelled uncertified",
+      "previous_answer_quality": "Template path; no actual model inference or intelligence grade",
+      "known_failure_patterns": "Existing report provenance preserved; competence report will separately disclose candidate status",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "No model needed for current compiler path; human assessment of report quality unavailable",
+      "fresh_model_evaluation": "NOT_APPLICABLE"
+    },
+    {
+      "agent": "post",
+      "class": "PostExploitationAgent",
+      "source": "agents/post_exploitation_agent.py",
+      "source_sha256": "11c7cc8099f7a9313919aba9ce7d0f9006617cf4fe42f39dee009f9d6f369919",
+      "responsibility": "Return explicit unavailable-post-access blocker",
+      "technical_knowledge": "Verified access vs reported shell, separate authorization/capability prerequisites",
+      "prompt_structure": "No operational model prompt in current mode",
+      "context_received": "Shared owner/session/scope checks; legacy process body never reached through wrapped process",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "Blocked AgentResult, no commands and no model call",
+      "previous_answer_quality": "Not evaluated as intelligence; disabled functionality has no expertise score",
+      "known_failure_patterns": "Prompt now matches blocked entry point and preserves audit evidence",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "No inference/model suitable for an unavailable execution role",
+      "fresh_model_evaluation": "NOT_APPLICABLE"
+    },
+    {
+      "agent": "engine",
+      "class": "AutonomousEngine",
+      "source": "agents/autonomous_engine.py",
+      "source_sha256": "5ab1fa30da75490e6ab0fffcf19598b54aefe4049161d3b7f000b622275468f2",
+      "responsibility": "Bounded execution/recovery coordinator, not an LLM specialist",
+      "technical_knowledge": "Durable receipts, completion, authorization and budget invariants",
+      "prompt_structure": "No operational model prompt in current mode",
+      "context_received": "Authoritative session and campaign checkpoint, planner contracts and durable worker state",
+      "tool_descriptions": "Server-advertised worker_tools only; inventory facts are not execution authorization",
+      "expected_output_contract": "Bounded run states and durable observations",
+      "previous_answer_quality": "Prior reliability phases separately verified; no standalone intelligence score",
+      "known_failure_patterns": "Reliability source preserved in this program",
+      "runtime_memory_requirements": {
+        "topology": "single API process; agents are in-process classes",
+        "per_agent_peak_rss_bytes": null,
+        "per_agent_latency_ms": null,
+        "limits": "Evidence selection bounded by memory/evidence_context.py; provider non-schema60s/schema180s; shared durable accounting; no isolated per-agent heap measurements"
+      },
+      "model_suitability": "No independent model; uses Orchestrator through existing accounting",
+      "fresh_model_evaluation": "NOT_APPLICABLE"
+    },
+    {
+      "agent": "coding",
+      "class": "CodingAgent",
+      "source": "agents/coding_agent.py",
+      "source_sha256": "cc3cee9f81fde3718c0e6f2aa6f2fdb1ca638d64fa6e2101c8d0f341a126f5ac",
+      "responsibility": "Generate review-only Python, tests and documentation; no target executor",
+      "technical_knowledge": "Python3.11 typing, deterministic negative/edge tests, data validation, evidence/log parsing, static analysis and dependency limits",
+      "prompt_structure": "Closed CodingSubmission schema; standard-library/local-only artifacts; no execution claims",
+      "context_received": "Explicitly supplied bounded text plus owned evidence/objective; credentials redacted at existing pool boundary",
+      "tool_descriptions": "Fixed trusted static AST parser subprocess only; no shell/network/file-reader/deployer tool",
+      "expected_output_contract": "Unique simple .py/README artifacts, no dependencies, citations, validation plan, limitations, requires_human_review; no commands",
+      "previous_answer_quality": "No actual model-generation output exists; all samples handcrafted provider fixtures",
+      "known_failure_patterns": "Static checks cannot prove behavior, useful tests or secure code; dynamic language behavior and third-party dependencies outside profile",
+      "runtime_memory_requirements": {
+        "per_agent_peak_rss_bytes": null,
+        "validator_limits": "CPU2s/address space256MiB/file size0/open files32/wall3s/minimal environment/isolated Python",
+        "max_input_bytes": 65536,
+        "max_artifact_payload_bytes": 131072
+      },
+      "model_suitability": "Needs structured code-generation evaluation under existing code_generation routing; no suitable model independently selected",
+      "fresh_model_evaluation": "BLOCKED"
+    }
+  ]
+}

@@ -30,7 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def manifest():
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for folder in ('api', 'agents', 'memory', 'orchestrator', 'llm', 'config', 'security', 'web')
+        for folder in ('api', 'agents', 'memory', 'orchestrator', 'llm', 'config', 'security', 'web',
+                       'integration', 'worker', 'security_tools')
         for p in sorted((ROOT / folder).rglob('*'))
         if p.is_file() and p.suffix in {'.py', '.js', '.html', '.css'}}
 
@@ -84,6 +85,9 @@ def guarded_app():
             return await call_next(request)
         finally:
             current_budget.reset(token)
+    if os.environ.get('ARIA_RELIABILITY_STREAM') == '1':
+        from integration.reliability_stream import configure_fixture
+        configure_fixture(app, Path(os.environ['ARIA_RELIABILITY_OUTPUT']))
     return app
 
 
@@ -246,6 +250,7 @@ async def inspect_owner(session_id):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--visible', action='store_true')
+    parser.add_argument('--stream', action='store_true', help='Measure passive synthetic WebSocket events through the real UI')
     parser.add_argument('--prepare', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--output')
     parser.add_argument('--inspect-owner', action='store_true', help='Read-only graphical inspection of the original owner deployment')
@@ -278,6 +283,7 @@ def main():
         username, password = 'reliability-' + uuid.uuid4().hex[:12], secrets.token_urlsafe(32)
         env = {**os.environ, 'DATABASE_URL': url, 'ARIA_INTEGRATION': '1',
                'ARIA_RELIABILITY_BROWSER': '1', 'ARIA_BROWSER_USERNAME': username,
+               'ARIA_RELIABILITY_STREAM': '1' if args.stream else '0', 'ARIA_RELIABILITY_OUTPUT': str(directory),
                'ARIA_BROWSER_PASSWORD': password, 'SECRET_KEY': secrets.token_urlsafe(48),
                'KALI_AGENT_TOKEN': secrets.token_urlsafe(48), 'KALI_AGENT_URL': '',
                'REDIS_URL': 'redis://127.0.0.1:1/0', 'LLM_ROUTING': 'local',
@@ -310,7 +316,11 @@ def main():
                     time.sleep(.1)
                 else:
                     raise TimeoutError('Disposable application readiness deadline')
-            result.update(asyncio.run(browser_acceptance(base, directory, username, password)))
+            if args.stream:
+                from integration.reliability_stream import browser_acceptance as acceptance
+            else:
+                acceptance = browser_acceptance
+            result.update(asyncio.run(acceptance(base, directory, username, password)))
         result['source_unchanged_during_acceptance'] = source == manifest()
         if not result['source_unchanged_during_acceptance']:
             result['status'] = 'FAILED'

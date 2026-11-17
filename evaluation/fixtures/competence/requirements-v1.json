@@ -1,0 +1,125 @@
+{
+  "schema": "aria.competence.requirements.v1",
+  "requirements": [
+    {
+      "id": "C15-01",
+      "scope": "Individual agent and context audit",
+      "acceptance_criterion": "Every existing agent has responsibility, knowledge, prompt/context/tool/output contracts, prior quality, failure patterns, resource needs and model suitability traced to source."
+    },
+    {
+      "id": "C15-02",
+      "scope": "Frozen competence baseline",
+      "acceptance_criterion": "Freeze cases, expected results and scoring before corrections; preserve failing outputs and distinguish software, replay and actual inference."
+    },
+    {
+      "id": "C15-03",
+      "scope": "Prompt and interpretation corrections",
+      "acceptance_criterion": "Reproduce and correct technical contradictions at actual entry points without altering execution/ownership/budget gates; focused checks pass."
+    },
+    {
+      "id": "C15-04",
+      "scope": "Fresh per-agent intelligence",
+      "acceptance_criterion": "Evaluate each callable model role on identical frozen inputs, retaining all raw answers, timeouts and raw-policy distinctions."
+    },
+    {
+      "id": "C16-01",
+      "scope": "Tool inventory and installed metadata",
+      "acceptance_criterion": "Inventory existing and relevant tools with purpose, official docs, version, license, OS, formats, dependencies, resources, limitations, security and independent installed/integrated/tested/operational states."
+    },
+    {
+      "id": "C16-02",
+      "scope": "Version-aware technical catalog",
+      "acceptance_criterion": "Agents receive bounded applicable official tool facts with version provenance and uncertainty; catalog presence cannot grant execution."
+    },
+    {
+      "id": "C16-03",
+      "scope": "Offline tool literacy",
+      "acceptance_criterion": "Frozen questions and recorded/synthetic outputs measure supported flags, evidence meaning and unavailable capability without target traffic."
+    },
+    {
+      "id": "C17-01",
+      "scope": "Coding agent isolation contract",
+      "acceptance_criterion": "Design an explicit review-only code-artifact contract with no shell/deployment, credential access or target-execution path."
+    },
+    {
+      "id": "C17-02",
+      "scope": "Coding/test agent implementation",
+      "acceptance_criterion": "Implement bounded structured Python/test/defensive artifacts with documentation, dependency policy and evidence references through existing ownership and accounting."
+    },
+    {
+      "id": "C17-03",
+      "scope": "Deterministic code validation",
+      "acceptance_criterion": "Validate frozen valid/invalid artifacts using deterministic checks, static lint, dependency checks and resource/input bounds; no candidate code executes in the API."
+    },
+    {
+      "id": "C17-04",
+      "scope": "Independent generated-code review",
+      "acceptance_criterion": "Independent human reviewer assesses generated code quality and reproducibility; fresh model code is separately measured."
+    },
+    {
+      "id": "C18-01",
+      "scope": "Burp integration coverage",
+      "acceptance_criterion": "Trace Proxy/history/Repeater/Target/site map/Decoder/Comparer/session/transport/import by actual APIs and edition, with implemented/tested/unsupported distinctions."
+    },
+    {
+      "id": "C18-02",
+      "scope": "Burp evidence correctness",
+      "acceptance_criterion": "Synthetic imports verify ownership, authentication, framing, integrity, redaction, errors and recovery; correct reproduced defects without enabling requests."
+    },
+    {
+      "id": "C18-03",
+      "scope": "Installed Burp compatibility",
+      "acceptance_criterion": "Record installed Burp version and demonstrate compatible extension behavior with synthetic evidence, or retain exact missing runtime prerequisite."
+    },
+    {
+      "id": "C19-01",
+      "scope": "Frozen security analysis cases",
+      "acceptance_criterion": "Cover authentication, authorization, sessions, input validation, crypto, access-control design, API/network/business logic and architecture with source-grounded expected answers and explicit independence limits."
+    },
+    {
+      "id": "C19-02",
+      "scope": "Evidence interpretation quality",
+      "acceptance_criterion": "Improve actual analysis code against frozen evidence, preserving facts/hypotheses/unknowns, false-positive controls, missing information, remediation and report provenance."
+    },
+    {
+      "id": "C20-01",
+      "scope": "Collaboration review contracts",
+      "acceptance_criterion": "Frozen handoffs measure attribution, contradictions, unsupported/repeated claims, context relevance and detection of analytical errors; immutable ownership and review gates persist."
+    },
+    {
+      "id": "C20-02",
+      "scope": "Actual specialist complementarity",
+      "acceptance_criterion": "Compare actual specialist/peer outputs on identical recorded evidence with retained distinct contributions and error detection."
+    },
+    {
+      "id": "C21-01",
+      "scope": "Model diagnostics and comparison protocol",
+      "acceptance_criterion": "Diagnose historical Qwen/0.8B timeouts from retained timing/context/resources; freeze identical-input model rubric with latency/tokens/cost/failures and unavailable metrics."
+    },
+    {
+      "id": "C21-02",
+      "scope": "Actual admissible model comparison",
+      "acceptance_criterion": "Run admissible models on identical frozen inputs under existing budgets and report response-bound accuracy, structure, latency, tokens, cost and resources."
+    },
+    {
+      "id": "C22-01",
+      "scope": "Honest acceptance scoring/verifier",
+      "acceptance_criterion": "Every evaluated component exposes requirement, case, expected/actual, evidence, method, n, limitations and confidence; immutable expected answers, missing scores and development/evaluation separation are enforced."
+    },
+    {
+      "id": "C22-02",
+      "scope": "Independent senior assessment",
+      "acceptance_criterion": "Independent human assesses blinded frozen cases before senior equivalence can be claimed."
+    },
+    {
+      "id": "C23-01",
+      "scope": "Graphical and structured audit",
+      "acceptance_criterion": "Generate requested HTML and JSON/CSV with all phase matrices, before/current, corrections, false positives, measured performance/cost and explicit missing capabilities."
+    },
+    {
+      "id": "C23-02",
+      "scope": "Independent artifact validation",
+      "acceptance_criterion": "Recompute source/evidence hashes and scoring from retained outputs; validate report/data consistency and rendered desktop/mobile report without fabricated results."
+    }
+  ]
+}

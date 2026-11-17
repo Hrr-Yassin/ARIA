@@ -1,0 +1,106 @@
+{
+  "schema": "aria.burp-audit.v1",
+  "extension_source": "burp-community/src/aria/CommunityExtension.java",
+  "backend_sources": [
+    "api/routers/burp.py",
+    "memory/burp_community.py",
+    "memory/web_actions.py"
+  ],
+  "coverage": [
+    {
+      "feature": "Proxy",
+      "coverage": "Partial",
+      "actual_behavior": "Montoya api.proxy().history(); in-scope TCP80 pairs only; no general interception control",
+      "verification": "Historical runtime proxy capture plus current synthetic import tests"
+    },
+    {
+      "feature": "HTTP history",
+      "coverage": "Implemented bounded selection",
+      "actual_behavior": "Last100history entries, max20selected; HMAC capture IDs; validates exact selection and HTTP framing",
+      "verification": "Current ASGI/provider fixtures; historical2025.2native import"
+    },
+    {
+      "feature": "Repeater",
+      "coverage": "Passive staging",
+      "actual_behavior": "api.repeater().sendToRepeater creates a tab; native requests need manual Send. Separate signed replay boundary exists and is never inferred from staging",
+      "verification": "Synthetic capability and receipt checks plus retained loopback-only Community 2025.2 passive staging"
+    },
+    {
+      "feature": "Target and site map",
+      "coverage": "Partial scope only",
+      "actual_behavior": "api.scope().isInScope/includeInScope used; ARIA endpoint map represents imported pairs. No Burp siteMap API integration",
+      "verification": "Source inspection; no native site-map runtime claim"
+    },
+    {
+      "feature": "Decoder",
+      "coverage": "Unsupported integration",
+      "actual_behavior": "Transport Base64 decoding is not Burp Decoder control",
+      "verification": "No api.decoder() call"
+    },
+    {
+      "feature": "Comparer",
+      "coverage": "Unsupported integration",
+      "actual_behavior": "ARIA comparison records byte equality/preview; no Burp Comparer API control",
+      "verification": "No api.comparer() call"
+    },
+    {
+      "feature": "Session metadata",
+      "coverage": "Partial",
+      "actual_behavior": "Owner/session UUID, authentication labels and keyed fingerprints; no Burp session-rule/macro synchronization or authenticated-success proof",
+      "verification": "Existing owner/redaction tests; synthetic captures"
+    },
+    {
+      "feature": "Extension communication",
+      "coverage": "Implemented bounded protocol",
+      "actual_behavior": "Direct loopback, fixed connector account, bearer secret, rejects Origin; signed exact replay with one-use IDs, expiry, scope/budget and durable restart state",
+      "verification": "Current real JVM controlled-sender4tests/6.671s; no target sender"
+    },
+    {
+      "feature": "Evidence import/display",
+      "coverage": "Implemented restricted HTTP1",
+      "actual_behavior": "Encrypted byte-preserving originals, redacted previews, duplicate header preservation, status/framing, dedup digest; absent responses explicit",
+      "verification": "Frozen10cases3/10before to10/10after; current44offline/2.047s"
+    },
+    {
+      "feature": "Community vs Professional",
+      "coverage": "Community-only connector",
+      "actual_behavior": "Extension refuses Professional edition; Scanner API unused. Community manual tools do not imply API integration. No license bypass",
+      "verification": "Pinned Montoya 2025.2 compilation and isolated native Community build 36507"
+    }
+  ],
+  "compatibility": {
+    "desktop_launcher": "/usr/local/bin/burp",
+    "desktop_jar": "/home/hryassin/BurpSuiteCommunity/burpsuite_community.jar",
+    "desktop_jar_exists": false,
+    "retained_jar": ".local-lab/burpsuite-community-2025.2.jar",
+    "retained_jar_sha256": "99ed987f1c2be6e56fc75b2359f326ba49b3d3ff6862456162bd5deff160749a",
+    "manifest_implementation_version": "36507",
+    "release_label": "Community 2025.2-36507 from the isolated runtime version API",
+    "compile_api": ".local-lab/montoya-api-2025.2.jar",
+    "compile_api_sha256": "8da5acbdab1ad64f26e2151aa292b7afdcbee917f57d07442087d9bef0e7f29f",
+    "current_compile": "passed with Java21 --release17",
+    "native_runtime_evidence": ".local-lab/burp-runtime/report.json (historical; target actions not repeated)",
+    "retained_passive_runtime": {
+      "result": ".local-lab/competence/cycle02/native-community-corrected/runtime/result.json",
+      "scope": "Headless native runtime using the retained Community JAR in a loopback-only namespace",
+      "conditions_passed": 11,
+      "burp_http_dispatches": 0,
+      "elapsed_seconds": 24.03923240899894
+    },
+    "current_installed_desktop": "BLOCKED: launcher jar path absent; no installation/desktop change authorized"
+  },
+  "new_target_requests": 0,
+  "new_model_calls": 0,
+  "limitations": [
+    "TCP80, literal IPv4 and one final HTTP/1response only; no HTTPS/HTTP2/3/interim/upgraded captures in this import profile.",
+    "Close-delimited capture assumes retained body complete; no original socket/transport closure evidence.",
+    "Native compatibility evidence covers the retained Community artifact and passive behavior only.",
+    "All approvals, private retention and request budgets remain separate.",
+    "Unknown unlabelled secret detection is not guaranteed."
+  ],
+  "official_references": [
+    "https://portswigger.net/burp/documentation/desktop/tools",
+    "https://portswigger.github.io/burp-extensions-montoya-api/javadoc/burp/api/montoya/repeater/Repeater.html",
+    "https://www.rfc-editor.org/rfc/rfc9112"
+  ]
+}

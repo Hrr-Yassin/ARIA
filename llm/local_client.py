@@ -5,7 +5,7 @@ import httpx
 import structlog
 from config.settings import settings
 from llm.base_llm import BaseLLMClient, usage_metrics, response_schema, output_limit
-from llm.request_metrics import RequestMetrics, token_components
+from llm.request_metrics import RequestMetrics, token_components, native_provider_timings
 
 logger = structlog.get_logger(__name__)
 
@@ -71,6 +71,8 @@ class LocalClient(BaseLLMClient):
                     data = response.json()
                     if not isinstance(data, dict):
                         raise ValueError('Provider response must be an object')
+                    if self._ollama_base:
+                        timing.values.update(native_provider_timings(data))
                     prompt_count = data.get('prompt_eval_count')
                     output_count = data.get('eval_count')
                     native_usage = {'prompt_tokens': prompt_count, 'completion_tokens': output_count,

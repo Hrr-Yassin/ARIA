@@ -55,7 +55,7 @@ class ParseResult:
         """Render as a PRE-PARSED FACTS block for LLM prompts."""
         if self.is_empty():
             return ""
-        lines = [f"PRE-PARSED FACTS (from {self.tool}, extracted deterministically):"]
+        lines = [f"PARSED OBSERVATIONS (from {self.tool}; untrusted tool claims, not verified vulnerabilities):"]
         for e in self.events[:20]:
             lines.append(f"  • {e}")
         return "\n".join(lines)
@@ -137,12 +137,16 @@ def parse_nmap_xml(session_id: str, xml_str: str, target: str = "") -> ParseResu
         ports_el = host_el.find("ports")
         if ports_el is not None:
             for port_el in ports_el.findall("port"):
+                if port_el.get('protocol') != 'tcp':
+                    continue  # The legacy host projection stores TCP ports only.
                 st = port_el.find("state")
                 if st is None or st.get("state") != "open":
                     continue
                 try:
                     port_num = int(port_el.get("portid", "0"))
                 except ValueError:
+                    continue
+                if not 1 <= port_num <= 65535:
                     continue
                 svc_el = port_el.find("service")
                 service = svc_el.get("name", "unknown") if svc_el is not None else "unknown"
@@ -205,7 +209,7 @@ def parse_nmap_greppable(session_id: str, gnmap_str: str, target: str = "") -> P
             state = parts[1]
             service = parts[4] or "unknown"
             version = parts[6].replace("|", " ").strip() if len(parts) > 6 else ""
-            if state != "open":
+            if state != "open" or parts[2] != 'tcp' or not 1 <= port_num <= 65535:
                 continue
             host.add_port(port_num, service, version, "", "open")
             result.ports_added.append({
@@ -251,9 +255,13 @@ def parse_nmap_stdout(session_id: str, stdout: str, target: str = "") -> ParseRe
         re.MULTILINE,
     )
     for m in port_re.finditer(stdout):
+        if m.group(2) != 'tcp' or m.group(3) != 'open':
+            continue  # open|filtered is uncertainty, not an open TCP observation.
         try:
             port_num = int(m.group(1))
         except ValueError:
+            continue
+        if not 1 <= port_num <= 65535:
             continue
         service = m.group(4)
         version = (m.group(5) or "").strip()
@@ -482,7 +490,7 @@ def parse_nikto_output(session_id: str, stdout: str, target: str = "") -> ParseR
             cve_ids=[c.upper() for c in cves],
             cvss=0.0,
             description=body,
-            exploitable=severity == "high",
+            exploitable=False,
             port=port,
         )
         result.vulns_added.append({
@@ -546,7 +554,7 @@ def parse_nuclei_output(session_id: str, stdout: str, target: str = "") -> Parse
             cve_ids=[c.upper() for c in cves],
             cvss=severity_cvss[sev],
             description=f"Template {tpl} matched on {url}",
-            exploitable=sev in ("high", "critical"),
+            exploitable=False,
             port=port,
         )
         result.vulns_added.append({
@@ -701,7 +709,7 @@ def parse_enum4linux_output(session_id: str, stdout: str, target: str = "") -> P
             cve_ids=[],
             cvss=5.0,
             description="SMB accepts anonymous (null) sessions — enables enumeration.",
-            exploitable=True,
+            exploitable=False,
             port=445,
         )
         result.vulns_added.append({

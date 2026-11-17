@@ -1,0 +1,18 @@
+[Unit]
+Description=ARIA Fedora existing PostgreSQL and Redis containers
+After=network.target
+Before=aria.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=@PROJECT@
+ExecStart=/usr/bin/podman start aria-postgres aria-redis
+ExecStart=@PROJECT@/.venv/bin/python -m deploy.lab.wait_dependencies
+ExecStop=/usr/bin/podman stop --time 30 aria-postgres aria-redis
+TimeoutStartSec=45
+TimeoutStopSec=70
+KillMode=control-group
+UMask=0077

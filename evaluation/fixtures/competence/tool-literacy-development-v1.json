@@ -1,0 +1,20 @@
+{
+  "schema":"aria.competence.cases.v1",
+  "split":"development",
+  "author":"engineering agent; not independent human assessment",
+  "sources":["https://nmap.org/book/man-port-scanning-techniques.html","https://curl.se/docs/manpage.html","docs/worker-contract.md"],
+  "scoring":"Ten exact command/profile compatibility questions. One point each. Containment software only; no model decision credit.",
+  "cases":[
+    {"id":"tool-connect","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap -sT -p 80 192.0.2.1"},"expected":true},
+    {"id":"tool-raw-syn","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap -sS -p 80 192.0.2.1"},"expected":false},
+    {"id":"tool-scripts","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap --script vuln -p 80 192.0.2.1"},"expected":false},
+    {"id":"tool-udp","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap -sU -p 80 192.0.2.1"},"expected":false},
+    {"id":"tool-head","component":"tool_profile","requirement":"C16-03","input":{"command":"curl -I --max-time 10 http://192.0.2.1/"},"expected":true},
+    {"id":"tool-redirect","component":"tool_profile","requirement":"C16-03","input":{"command":"curl -L http://192.0.2.1/"},"expected":false},
+    {"id":"tool-catalog-not-capability","component":"tool_profile","requirement":"C16-03","input":{"command":"whois 192.0.2.1"},"expected":false},
+    {"id":"tool-all-ports","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap -p- 192.0.2.1"},"expected":false},
+    {"id":"tool-extra-port","component":"tool_profile","requirement":"C16-03","input":{"command":"nmap -p 22 192.0.2.1"},"expected":false},
+    {"id":"tool-other-host","component":"tool_profile","requirement":"C16-03","input":{"command":"curl -I http://198.51.100.1/"},"expected":false}
+  ],
+  "limitations":["No target requests, tool launches or model calls.","Cases measure the preserved worker command contract, not agent understanding of it.","Nmap open/filtered interpretation and scanner-candidate semantics are separately documented and evaluated with recorded evidence."]
+}

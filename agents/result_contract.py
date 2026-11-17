@@ -44,6 +44,12 @@ def professional_result(agent, request, result, scope, evidence, capabilities):
         evidence_references=[entry['id'] for entry in evidence], observations=observations,
         completion_criteria=['Every observation cites saved evidence', 'Proposed actions remain within requested hosts and ports',
             'Verification requires reproducible execution evidence; missing prerequisites remain explicit'])
+    # Explicit specialist blockers cannot silently become successful analysis.
+    # These entries can deny work but never grant an action or authority.
+    explicit_rejections = result.get('rejections')
+    for rejection in (explicit_rejections if isinstance(explicit_rejections, list) else [])[:20]:
+        if isinstance(rejection, dict) and isinstance(rejection.get('code'), str) and isinstance(rejection.get('detail'), str):
+            contract.rejections.append({'code': rejection['code'][:80], 'detail': rejection['detail'][:500]})
     if not evidence:
         contract.uncertainty.append('No durable execution evidence is available; findings remain candidates')
     hypotheses = result.get('hypotheses') or result.get('vulnerability_assessment') or result.get('correlations') or result.get('findings') or []
@@ -99,7 +105,7 @@ def professional_result(agent, request, result, scope, evidence, capabilities):
                 'evidence_references':contract.evidence_references})
         except (ValueError, TypeError) as exc:
             contract.rejections.append({'code':'unsupported_or_out_of_scope_action', 'detail':str(exc)[:250]})
-    if commands and not contract.proposed_actions:
+    if (commands or contract.rejections) and not contract.proposed_actions:
         contract.status = 'blocked'
     elif contract.proposed_actions:
         contract.status = 'proposed'

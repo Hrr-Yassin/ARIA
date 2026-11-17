@@ -1,8 +1,10 @@
 # ARIA Burp Community connector (release gate disabled)
 
 This extension uses Montoya selected-request context menus and Repeater staging.
-It does not call Burp Scanner, the Professional request engine, interception
-certificate installation, or automatic HTTP replay in Burp.
+It does not call Burp Scanner or the Professional request engine. A separate
+signed, request-bound replay protocol uses the existing explicit approvals,
+scope, deadline, concurrency and budget checks; staging a Repeater tab grants
+no replay authority. No interception certificate installation is performed.
 
 Compile with Java 17+ and an official Montoya API JAR:
 
@@ -11,8 +13,12 @@ bash burp-community/build.sh /absolute/path/to/montoya-api-2025.2.jar
 ```
 
 Load `burp-community/build/aria-community.jar` as a Java extension in Burp Community.
-Runtime desktop validation is pending; compilation passed. Do not enable the API
-feature until the [release register](../docs/aria-upgrade-validation.md) gaps close.
+Historical Community2025.2 runtime validation is retained in the release register.
+The current competence audit recompiles against the pinned2025.2Montoya API and
+exercises the Java protocol with a controlled sender. It does not repeat target
+requests. The Fedora desktop launcher currently references an absent JAR; current
+desktop compatibility remains BLOCKED. See [actual coverage](../docs/competence/burp.json).
+Feature gates are not changed by compilation or this audit.
 
 When staging validation is ready, configure `BURP_COMMUNITY_ENABLED=true` and a
 private `BURP_CONNECTOR_TOKEN` of at least 32 characters in the ARIA test deployment.

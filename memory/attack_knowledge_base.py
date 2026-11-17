@@ -216,6 +216,9 @@ class AttackKnowledgeBase:
         })
 
     def add_vulnerability(self, session_id: str, ip: str, **kwargs):
+        # This legacy projection stores candidates. Independent human finding
+        # verification is owned by memory.finding_verification, not scanner flags.
+        kwargs['exploitable'] = False
         host = self.get_or_create_host(session_id, ip)
         host.add_vulnerability(**kwargs)
 

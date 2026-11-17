@@ -80,6 +80,47 @@ class MissionStatePostgres(unittest.IsolatedAsyncioTestCase):
                 completion_criteria=['Cite the saved fixture or explain uncertainty'],
                 dependencies=list(dependencies), evidence_inputs=[self.evidence])))
 
+    async def test_expired_human_gate_persists_blocker_without_a_decision_or_dispatch(self):
+        from dataclasses import replace
+        import time
+        from fastapi import HTTPException
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState
+        from memory.execution_authorization import ExecutionAuthorization
+        service = ExecutionAuthorization()
+        async def expired_proposal(*args, **kwargs):
+            proposal = await service.propose(*args, **kwargs)
+            expired = replace(proposal, expires_at=time.time() - 1)
+            self.assertTrue(await service.store.transition(proposal, expired))
+            return expired
+        engine_fixture = AutonomousEngine()
+        state = SessionRunState(self.sid, self.owner, 'discovery', '192.0.2.1', 'expert',
+            owner_id=self.owner, risk_threshold='manual',
+            objective='Observe the authorized synthetic fixture; stop on expired authorization')
+        engine_fixture._runs[self.sid] = state
+        engine_fixture._approvals[self.sid] = {}
+        with patch('agents.autonomous_engine.execution_authorization.propose', AsyncMock(side_effect=expired_proposal)) as propose, \
+             patch.object(engine_fixture, '_plan_next_step', AsyncMock(return_value={
+                 'tool': 'curl', 'command': 'curl -I http://192.0.2.1:80'})) as plan, \
+             patch.object(engine_fixture, '_execute_command', AsyncMock()) as execute:
+            await engine_fixture._run_loop(state)
+        execute.assert_not_awaited()
+        propose.assert_awaited_once()
+        plan.assert_awaited_once()
+        saved = await self.runs.latest(self.sid)
+        self.assertEqual(saved['run_state'], 'blocked')
+        self.assertEqual(saved['reason_code'], 'authorization_expired_or_invalid')
+        self.assertEqual(saved['original_objective'], state.objective)
+        self.assertEqual(saved['evidence_job_ids'], [])
+        self.assertFalse(saved['waiting_approval'])
+        action_id = next(iter(engine_fixture._approvals[self.sid]))
+        proposal = await service.store.get(action_id)
+        self.assertEqual(proposal.status, 'pending')
+        self.assertEqual(proposal.decision, '')
+        self.assertLess(proposal.expires_at, time.time())
+        with self.assertRaises(HTTPException) as denied:
+            await service.decide(self.owner, self.sid, action_id, 'approve')
+        self.assertEqual(denied.exception.status_code, 403)
+
     async def test_pending_work_survives_recovery_and_a_fresh_process(self):
         from orchestrator.mission_status import mission_status
         task = await self.create_task()

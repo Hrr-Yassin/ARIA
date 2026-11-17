@@ -32,6 +32,7 @@ from api.routers import programs as programs_router
 from api.routers import burp as burp_router
 from api.routers import tool_registry as tool_registry_router
 from api.routers import tool_operations as tool_operations_router
+from api.routers import coding as coding_router
 from config.settings import settings
 from memory.database_models import init_db
 from memory.session_manager import session_manager
@@ -50,6 +51,54 @@ def _source_build_id():
 
 SERVER_BUILD = _source_build_id()
 log = structlog.get_logger(__name__)
+
+
+async def _shutdown_resources(retention_task: asyncio.Task) -> None:
+    """Attempt every cleanup stage; failed reconciliation never means success."""
+    from agents.autonomous_engine import autonomous_engine
+    from orchestrator.browser_mapping import browser_mapping
+    from orchestrator.campaign_supervisor import campaign_supervisor
+    from memory.worker_jobs import worker_jobs
+    from memory.vector_store import vector_store
+
+    failures = []
+    cancelled = False
+
+    async def attempt(name, operation):
+        nonlocal cancelled
+        try:
+            await operation()
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception as error:
+            failures.append(name)
+            log.error("shutdown_stage_failed", stage=name, error_type=type(error).__name__)
+
+    async def stop_retention():
+        retention_task.cancel()
+        await asyncio.gather(retention_task, return_exceptions=True)
+
+    await attempt('campaign_supervisor', campaign_supervisor.stop)
+    await attempt('retention', stop_retention)
+    await attempt('browser', browser_mapping.close)
+    await attempt('autonomous_engine', autonomous_engine.shutdown)
+    # Reconciliation preserves uncertain outcomes. Its failure must not skip
+    # already scheduled cancellation cleanup or closing local connections.
+    await attempt('worker_reconciliation', worker_jobs.recover)
+    await attempt('worker_cleanup', worker_jobs.drain_cleanup)
+    if session_manager._redis:
+        try:
+            await vector_store.persist(session_manager._redis)
+        except Exception:
+            log.warning("vector_cache_flush_failed")
+        except asyncio.CancelledError:
+            cancelled = True
+    await attempt('session_connections', session_manager.close)
+    if cancelled:
+        raise asyncio.CancelledError
+    if failures:
+        raise RuntimeError('ARIA shutdown incomplete: ' + ', '.join(failures))
+    log.info("ARIA shutdown")
 
 
 @asynccontextmanager
@@ -96,23 +145,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await campaign_supervisor.stop()
-        retention_task.cancel()
-        await asyncio.gather(retention_task, return_exceptions=True)
-
-    from agents.autonomous_engine import autonomous_engine
-    from orchestrator.browser_mapping import browser_mapping
-    await browser_mapping.close()
-    await autonomous_engine.shutdown()
-    await worker_jobs.recover()
-    await worker_jobs.drain_cleanup()
-    if session_manager._redis:
-        try:
-            await vector_store.persist(session_manager._redis)
-        except Exception:
-            log.warning("vector_cache_flush_failed")
-    await session_manager.close()
-    log.info("ARIA shutdown")
+        await _shutdown_resources(retention_task)
 
 
 app = FastAPI(
@@ -164,6 +197,7 @@ app.include_router(programs_router.router, prefix="/api/programs", tags=["progra
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])
 app.include_router(tool_registry_router.router, prefix="/api", tags=["tool-registry"])
 app.include_router(tool_operations_router.router, prefix="/api", tags=["tool-operations"])
+app.include_router(coding_router.router, prefix="/api/coding", tags=["coding-review"])
 app.include_router(pentest_router.router, prefix="/api", tags=["pentest"])
 app.include_router(sessions_router.router, prefix="/api/session", tags=["sessions"])
 app.include_router(reports_router.router, prefix="/api/report", tags=["reports"])
@@ -268,7 +302,9 @@ async def readiness():
                 await conn.execute(text("SELECT 1"))
     except Exception:
         return JSONResponse({"status": "unavailable", "database": False}, status_code=503)
-    return {"status": "ready", "database": True, "version": settings.APP_VERSION}
+    cache = await session_manager.cache_available()
+    return {"status": "ready", "database": True, "cache": cache,
+            "cache_optional": True, "degraded": not cache, "version": settings.APP_VERSION}
 
 
 class ProfileUpdate(BaseModel):

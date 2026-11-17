@@ -14,6 +14,7 @@ from memory.database_models import async_session, PentestSession, ChatLog
 from security.encryption import evidence_cipher
 from security.redaction import redact
 from worker.policy import validate_worker_command
+from security.http_messages import headers as parse_headers, content_length, response_metadata
 
 LOCKS = {}
 
@@ -34,28 +35,33 @@ def inspect_pair(url, request_b64, response_b64, scope, auth_context='anonymous'
         raise ValueError('Unsupported request line')
     expected = (parts.path or '/') + ('?'+parts.query if parts.query else '')
     if path != expected: raise ValueError('Request target differs from evidence URL')
-    headers = []
-    for line in lines[1:]:
-        name, value = line.split(':',1)
-        if not name or name.strip()!=name or any(c.isspace() for c in name): raise ValueError('Invalid header name')
-        headers.append((name.lower(), value.strip()))
+    headers = parse_headers(lines[1:])
     hosts = [v for k,v in headers if k=='host']
     if len(hosts)!=1 or hosts[0] not in {parts.hostname, parts.hostname+':80'}: raise ValueError('Host does not match target')
     if any(k in {'transfer-encoding','proxy-authorization'} for k,v in headers):
         raise ValueError('Ambiguous framing or proxy headers are unsupported')
-    lengths = [v for k,v in headers if k=='content-length']
-    if len(lengths)>1 or (lengths and int(lengths[0])!=len(body)) or (body and not lengths):
+    length = content_length(headers)
+    if (length is not None and length!=len(body)) or (body and length is None):
         raise ValueError('Invalid request body length')
+    if sum(k == 'authorization' for k,v in headers) > 1:
+        raise ValueError('Ambiguous captured authorization fields')
+    response_info = response_metadata(response, method)
     authenticated = any(k in {'authorization','cookie','x-api-key'} for k,v in headers)
     auth_fingerprint = hmac.new(settings.SECRET_KEY.encode(), json.dumps([(k,v) for k,v in headers if k in {'authorization','cookie','x-api-key'}]).encode(), hashlib.sha256).hexdigest()[:16] if authenticated else 'anonymous'
     digest = hashlib.sha256(raw+b'\0'+response+b'\0'+auth_fingerprint.encode()).hexdigest()
-    secrets = credential_values(raw)
-    summary = redact({'url':url, 'method':method, 'endpoint':parts.path or '/',
+    secrets = credential_values(raw) + credential_values(response)
+    from security.redaction import SENSITIVE
+    response_info['response_headers'] = [
+        {'name': key, 'value': '[REDACTED]' if SENSITIVE.search(key) else redact(value,secrets)}
+        for key,value in response_info['response_headers']]
+    endpoint = parts.path or '/'
+    display_url = f'{parts.scheme}://{parts.netloc}{endpoint}'
+    summary = redact({'url':display_url, 'method':method, 'endpoint':endpoint,
         'parameters':sorted(parse_qs(parts.query)), 'authentication_context':auth_fingerprint,
         'authentication_label':auth_context, 'request_headers':dict(headers),
-        'response_preview':response.decode('iso-8859-1')[:16000]},secrets)
-    # Never disclose a raw query string in the public endpoint map.
-    summary['url'] = parts.scheme+'://'+parts.netloc+(parts.path or '/')
+        'response_preview':response.decode('iso-8859-1')[:16000], **response_info},secrets)
+    presented = next((v.split(None,1)[0].lower() for k,v in headers if k=='authorization' and v), None)
+    summary['authentication_scheme'] = presented if presented in {'bearer','basic'} else 'other' if presented else 'not_observed'
     return {'digest':digest, 'summary':summary, 'authenticated':authenticated,
         'original':{'url':url, 'request_b64':request_b64, 'response_b64':response_b64}}
 
@@ -116,7 +122,8 @@ def credential_values(raw):
         if SENSITIVE.search(key):
             secrets.append(value.strip())
             if key.lower()=='authorization': secrets.append(value.strip().split(' ',1)[-1])
-            if key.lower()=='cookie': secrets.extend(part.split('=',1)[-1].strip() for part in value.split(';'))
+            if key.lower() in {'cookie','set-cookie'}:
+                secrets.extend(part.split('=',1)[-1].strip() for part in value.split(';') if '=' in part)
     for key,values in parse_qs(body.decode('utf-8',errors='replace')).items():
         if SENSITIVE.search(key): secrets.extend(values)
     try:

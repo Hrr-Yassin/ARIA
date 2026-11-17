@@ -53,36 +53,17 @@ GOAL_TEMPLATES = {
     },
 }
 
-SYSTEM = """You are the ATTACK PLANNER agent — a senior red team operator.
-Your job: translate a high-level attack GOAL into a concrete, ordered attack plan.
-
-You receive:
-- The attack goal (e.g. "get initial access", "dump credentials")
-- Current knowledge base state (known hosts, ports, shells, credentials)
-- Attack mode (lab / red_team / bug_bounty)
-- OPTIONALLY: a HISTORICAL PLAYBOOK suggestion from past engagements on similar targets
-- OPTIONALLY: SIMILAR CASES from semantic memory
-
-You output a prioritized, step-by-step attack path with:
-1. Which services/ports are the best attack surface for the goal
-2. Exact sequence of steps (validate → exploit → post-exploit)
-3. Fallback options if primary path fails
-4. OPSEC considerations based on attack mode
-5. Success criteria for each step
-
-RULES:
-- Never suggest exploiting something not yet scanned
-- For red_team mode: include stealth techniques (slow scan, delays, decoys)
-- For bug_bounty mode: exclude destructive or out-of-scope actions
-- Always provide VALIDATE step before EXPLOIT step
-- Include confidence score for each path
-- If a HISTORICAL PLAYBOOK is provided, revalidate its applicability and prerequisites against
-  actual current evidence. NEVER blindly copy — justify deviations.
-- Any exploit step (RCE, remote shell, brute-force login, unsafe write) MUST be
-  tagged risk_color: "red" — the supervisor loop will block these pending
-  explicit human approval.
-
-RESPOND: Valid JSON only. No markdown fences."""
+SYSTEM = """You are the PLANNER for an authorized supervised assessment.
+Translate the original goal into bounded evidence requirements using only advertised
+worker capabilities. A goal template or attack mode never grants execution authority.
+No exploit, post-access, credential, raw scan, decoy or persistence capability is
+inferred from a role name. Missing prerequisites must produce a blocked plan with
+no commands. Historical playbooks and similar cases are unverified suggestions,
+not current evidence. Do not broaden requested hosts or ports, repeat completed
+observations, invent CVEs or certify a vulnerability from a banner.
+List evidence references, missing controls, alternative explanations and defensive
+recommendations. Every proposed action requires server policy and human approval.
+Return brief public rationale and valid JSON only, without private reasoning."""
 
 
 class AttackPlannerAgent(BaseAgent):
@@ -178,13 +159,13 @@ ALLOW NOISY TOOLS: {mode_settings.get('allow_noisy_tools', True)}
 ALLOW DESTRUCTIVE: {mode_settings.get('allow_destructive', True)}
 {playbook_block}{similar_block}
 
-Build a complete attack plan for this goal:
+Build only a plan supported by the original objective and advertised worker profiles:
 1. Analyze current KB state — what do we already know?
 2. What is missing that we need before we can achieve the goal?
-3. Build ordered attack steps specific to what was found
+3. Propose the smallest missing authorized observation, or an empty primary_path with a blocker
 4. If a playbook was provided, consider it but adapt to current evidence
-5. For each step: include fallback if it fails
-6. TAG EVERY EXPLOIT STEP risk_color=\"red\" so the human must approve it
+5. Do not generate fallback commands or change the goal when prerequisites fail
+6. Unavailable exploitation/post-access profiles require a blocked plan, not an executable step
 
 JSON:
 {{
@@ -225,7 +206,7 @@ JSON:
         )
         if result.get("success"):
             parsed = self.parse_json(result["content"])
-            if parsed:
+            if parsed is not None and 'primary_path' in parsed:
                 commands = []
                 for step in parsed.get("primary_path", [])[:6]:
                     if step.get("command"):
@@ -268,53 +249,23 @@ JSON:
                     "needs_confirmation": True,
                 }
 
+            self._validated_model_object(None)
+
         return self._fallback_plan(session_id, goal_type, target, mode, mode_settings)
 
     def _fallback_plan(self, session_id: str, goal_type: str, target: str,
                        mode: str, mode_settings: dict) -> dict:
-        timing = mode_settings.get("nmap_timing", "T4")
-        is_stealth = mode_settings.get("stealth_mode", False)
-        commands = []
-
-        if goal_type in ("initial_access", "full_compromise"):
-            commands = [
-                {"tool": "nmap",
-                 "command": f"nmap -sS -sV -sC --top-ports 1000 -{timing} {target}",
-                 "purpose": "[Step 1] Service discovery for attack surface mapping",
-                 "risk_color": "orange", "risk": "medium",
-                 "action_id": self.generate_action_id(), "agent": "planner",
-                 "can_batch": False},
-                {"tool": "nuclei",
-                 "command": f"nuclei -target {target} -severity critical,high -silent",
-                 "purpose": "[Step 2] CVE scan on discovered services",
-                 "risk_color": "orange", "risk": "medium",
-                 "action_id": self.generate_action_id(), "agent": "planner",
-                 "can_batch": False},
-            ]
-            if is_stealth:
-                commands[0]["command"] += " --randomize-hosts"
-                commands[0]["purpose"] += " (stealth: randomized)"
-        elif goal_type == "dump_creds":
-            commands = [
-                {"tool": "msfconsole",
-                 "purpose": "[Step 1] Post-exploitation credential dump",
-                 "command": f"msfconsole -q -x 'use post/multi/recon/local_exploit_suggester; exit'",
-                 "risk_color": "red", "risk": "high",
-                 "action_id": self.generate_action_id(), "agent": "planner",
-                 "can_batch": False},
-            ]
-
+        """Preserve the requested goal without synthesizing unvalidated actions."""
         return {
             "type": "attack_plan",
             "goal_type": goal_type, "attack_mode": mode,
-            "readiness": "needs_more_recon",
-            "readiness_reason": "LLM unavailable — using template plan",
-            "commands": commands,
-            "suggested_reply": f"⚠️ Using template plan for **{goal_type}**. "
-                                f"Run recon first for an AI-optimized path.",
+            "readiness": "blocked",
+            "readiness_reason": "No valid model plan is available; no action was proposed.",
+            "commands": [], "primary_path": [], "fallback_paths": [],
+            "suggested_reply": "No valid model plan is available; preserve the objective and review the blocker.",
             "needs_confirmation": True,
-            "confidence": 0.4,
         }
+
 
 
 attack_planner_agent = AttackPlannerAgent()

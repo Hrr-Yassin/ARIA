@@ -2,6 +2,8 @@
 [Unit]
 Description=ARIA API (single process)
 After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,6 +13,7 @@ ExecStartPre=%h/aria/.venv/bin/python -c "import asyncio; from memory.database_m
 ExecStart=%h/aria/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
 NoNewPrivileges=true
 UMask=0077
 

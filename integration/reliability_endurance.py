@@ -68,17 +68,22 @@ async def child_run(args) -> int:
         raise RuntimeError('Fresh disposable reliability database required')
     directory = Path(args.output)
     started, cpu_started = time.monotonic(), time.process_time()
+    boot_started = time.clock_gettime(time.CLOCK_BOOTTIME)
     stop = asyncio.Event()
     reason = {'code': ''}
     loop = asyncio.get_running_loop()
     def stopped(signum):
-        reason['code'] = 'operator_cancelled'
+        reason['code'] = 'process_signalled'
+        summary['stop_signal'] = signal.Signals(signum).name
+        summary['cancellation_source'] = 'Process signal observed; sender and operator intent unavailable.'
         stop.set()
     for signum in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(signum, stopped, signum)
     summary = {'schema': 'aria.reliability.endurance.v1', 'status': 'IN_PROGRESS',
                'synthetic': True, 'application_transport': 'in_process_ASGI',
                'requested_seconds': args.seconds, 'started_at': timestamp(), 'pid': os.getpid(),
+               'boot_id': Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+               'duration_clock': 'CLOCK_MONOTONIC; suspended time excluded',
                'completed_batches': 0, 'recorded_operations': 0, 'expected_faults': {},
                'availability_samples': 0, 'availability_failures': 0, 'batch_failures': 0,
                'physical_external_provider_calls': 0, 'actual_tools_executed': 0,
@@ -91,6 +96,8 @@ async def child_run(args) -> int:
     samples, batches = [], []
     def checkpoint():
         summary['elapsed_seconds'] = time.monotonic() - started
+        summary['boot_elapsed_seconds'] = time.clock_gettime(time.CLOCK_BOOTTIME) - boot_started
+        summary['suspended_seconds'] = max(0, summary['boot_elapsed_seconds'] - summary['elapsed_seconds'])
         summary['cpu_seconds'] = time.process_time() - cpu_started
         summary['current_rss_kb'] = rss_kb()
         summary['rss_growth_kb'] = (summary['current_rss_kb'] - summary['initial_rss_kb']
@@ -178,7 +185,7 @@ async def child_run(args) -> int:
         await monitor
         checkpoint()
         summary['reason_code'] = reason['code']
-        if reason['code'] == 'operator_cancelled':
+        if reason['code'] == 'process_signalled':
             summary['status'] = 'CANCELLED'
         elif reason['code'] == 'resource_headroom_exhausted':
             summary['status'] = 'BLOCKED'

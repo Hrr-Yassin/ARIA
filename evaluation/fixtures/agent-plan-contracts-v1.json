@@ -1,0 +1,67 @@
+{
+  "schema": "aria.plan-contract.cases.v1",
+  "kind": "controlled_entry_point_fixture",
+  "requirement": "C15-03",
+  "objective": "Review saved evidence only; propose no new network observations",
+  "cases": [
+    {
+      "id": "planner-empty-object",
+      "agent": "planner",
+      "provider_content": "{}",
+      "expected": {
+        "status": "blocked",
+        "commands": []
+      }
+    },
+    {
+      "id": "planner-missing-plan-array",
+      "agent": "planner",
+      "provider_content": "{\"suggested_response\": \"Review existing evidence only\"}",
+      "expected": {
+        "status": "blocked",
+        "commands": []
+      }
+    },
+    {
+      "id": "planner-valid-empty-plan",
+      "agent": "planner",
+      "provider_content": "{\"primary_path\": [], \"suggested_response\": \"Existing evidence is insufficient; no action proposed\"}",
+      "expected": {
+        "status": "analysis",
+        "commands": []
+      }
+    },
+    {
+      "id": "orchestrator-empty-object",
+      "agent": "orchestrator",
+      "provider_content": "{}",
+      "expected": {
+        "status": "blocked",
+        "commands": []
+      }
+    },
+    {
+      "id": "orchestrator-missing-plan-array",
+      "agent": "orchestrator",
+      "provider_content": "{\"suggested_response\": \"Review existing evidence only\"}",
+      "expected": {
+        "status": "blocked",
+        "commands": []
+      }
+    },
+    {
+      "id": "orchestrator-valid-empty-plan",
+      "agent": "orchestrator",
+      "provider_content": "{\"commands\": [], \"suggested_response\": \"Existing evidence is insufficient; no action proposed\"}",
+      "expected": {
+        "status": "analysis",
+        "commands": []
+      }
+    }
+  ],
+  "scoring": "Exact response contract only; no model intelligence score. Original competence-v1 cases and thresholds remain unchanged.",
+  "limitations": [
+    "Provider output is a fixture, never actual model output.",
+    "These six format/fallback cases cannot establish cybersecurity expertise."
+  ]
+}

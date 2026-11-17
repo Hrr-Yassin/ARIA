@@ -18,6 +18,7 @@ MESSAGES = {
     'local_model_request_failed': 'Local model request failed. Check server compatibility and availability.',
     'provider_timeout': 'Model provider timed out.',
     'model_output_truncated': 'Model output reached its token limit before completion; no proposal was accepted.',
+    'malformed_model_output': 'Model returned an invalid or incomplete structured response; no proposal was accepted.',
 }
 
 

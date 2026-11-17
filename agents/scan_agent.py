@@ -7,15 +7,16 @@ from agents.base_agent import BaseAgent
 SYSTEM = """You are the SCAN & ENUMERATION agent in a multi-agent pentest platform.
 Your role: port scanning, service detection, version fingerprinting, creating structured service maps.
 
-Tools you drive: nmap, masscan, rustscan, gobuster, ffuf, enum4linux, smbclient
 Your output feeds into: Vuln Agent (service versions), Correlation Agent (attack surface).
 
 RULES:
-- Adapt scan parameters based on context (stealth vs aggressive)
-- Extract exact version numbers for every service
-- Enumerate: SMB shares, FTP anonymous, NFS exports, web directories
-- Create structured service map
-- Don't just list ports — identify what's interesting and why
+- Follow the server objective and advertised worker_tools; a scan_type label grants no authority.
+- The legacy Nmap worker supports TCP connect scans with an explicit numeric -p port list.
+- Preserve requested hosts and ports; do not add scripts, raw SYN, UDP, OS detection or all-port scans.
+- Select additional service probes only when requested and supported by the worker profile.
+- Record versions as unknown unless saved evidence supplies them; an open port alone is not a vulnerability.
+- If the requested scan is unsupported, return commands: [] and explain the missing prerequisite.
+- Every proposed command requires server validation and approval before execution.
 - Max 4 commands per response
 
 RESPOND: Valid JSON only. {skill_instruction}"""
@@ -34,21 +35,15 @@ class ScanAgent(BaseAgent):
         scan_type = input_data.get("scan_type", "quick")
         context = self.get_context(session_id, "scan ports services")
 
-        scan_configs = {
-            "quick": f"nmap -sS -sV -sC --top-ports 1000 -T4 {target}",
-            "full": f"nmap -sS -sV -sC -p- -T4 {target}",
-            "stealth": f"nmap -sS -sV -T2 --top-ports 100 {target}",
-            "udp": f"nmap -sU -sV --top-ports 50 -T4 {target}",
-        }
-
         prompt = f"""TARGET: {target}
 SCAN TYPE: {scan_type}
 EXISTING INTEL: {context}
 
-Plan {scan_type} scanning. Consider:
-1. What scan technique is best for this context?
-2. What services should we enumerate further?
-3. What specific scripts or flags add value?
+Plan only the server objective within its scope and available worker profiles.
+Use explicit requested TCP ports for a supported Nmap connect observation.
+The scan type is a preference, not permission to expand ports or enable unsupported
+techniques. Explain the smallest missing observation and its expected evidence.
+Do not repeat completed port discovery or invent versions from unknown banners.
 
 JSON:
 {{
@@ -71,7 +66,7 @@ JSON:
         result = await self.query_llm(user_id, prompt, self.get_system_prompt(skill_level))
         if result.get("success"):
             parsed = self.parse_json(result["content"])
-            if parsed:
+            if parsed is not None and "commands" in parsed:
                 for c in parsed.get("commands", []):
                     c["action_id"] = self.generate_action_id()
                     c["agent"] = "scan"
@@ -79,12 +74,11 @@ JSON:
                         "suggested_reply": parsed.get("suggested_response", ""),
                         "needs_confirmation": True}
 
-        cmd = scan_configs.get(scan_type, scan_configs["quick"])
+            self._validated_model_object(None)
+
         return {"type": "plan",
-                "commands": [{"tool": "nmap", "command": cmd, "purpose": f"{scan_type} port scan",
-                              "risk": "medium", "risk_color": "orange", "can_batch": True,
-                              "action_id": self.generate_action_id(), "agent": "scan"}],
-                "suggested_reply": f"Running **{scan_type}** scan on `{target}`.",
+                "commands": [],
+                "suggested_reply": "No valid scan plan is available; no action was proposed.",
                 "needs_confirmation": True}
 
 

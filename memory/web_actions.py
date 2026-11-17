@@ -39,6 +39,7 @@ def replay_spec(data, scope, mutation=None):
         raise HTTPException(403, 'Reviewed programs require the shared budgeted HTTP worker; connector replay is unavailable')
     source = original(data)
     raw = base64.b64decode(source['request_b64'],validate=True)
+    baseline = inspect_pair(source['url'], source['request_b64'], source['response_b64'], scope)
     head, _, body = raw.partition(b'\r\n\r\n')
     lines = head.decode('iso-8859-1').split('\r\n')
     method, path, version = lines[0].split(' ')
@@ -65,7 +66,9 @@ def replay_spec(data, scope, mutation=None):
         parts = urlsplit(url)
         url = urlunsplit((parts.scheme,parts.netloc,path.split('?',1)[0],path.split('?',1)[1] if '?' in path else '', ''))
         raw = (f'{method} {path} {version}\r\n'+'\r\n'.join(f'{key}: {value}' for key,value in headers)+'\r\n\r\n').encode('iso-8859-1')+body
-    checked = inspect_pair(url,base64.b64encode(raw).decode(),source['response_b64'],scope)
+    # The old response belongs to the original request, not the proposed mutation.
+    checked = inspect_pair(url,base64.b64encode(raw).decode(),'',scope)
+    checked['summary']['baseline_response_status'] = baseline['summary'].get('response_status')
     if checked['authenticated'] and scope.get('web_authenticated_replay') is not True:
         raise HTTPException(403,'Authenticated replay requires explicit engagement configuration')
     parts = urlsplit(url)

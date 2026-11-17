@@ -1,0 +1,119 @@
+{
+  "schema": "aria.competence.cases.v1",
+  "split": "development",
+  "author": "engineering agent; primary HTTP framing specification is external; no independent human grading",
+  "sources": [
+    "https://www.rfc-editor.org/rfc/rfc9112#section-5",
+    "https://www.rfc-editor.org/rfc/rfc9112#section-6",
+    "docs/worker-contract.md"
+  ],
+  "scoring": "Ten exact captured-evidence acceptance/redaction checks, one point each. No HTTP request execution.",
+  "cases": [
+    {
+      "id": "burp-valid-pair",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": true
+    },
+    {
+      "id": "burp-invalid-header-name",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nBad(Header: x\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-header-control",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\nX-Data: x\u0000y\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-invalid-response",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "not an HTTP response"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-duplicate-response-length",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-response-length-mismatch",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-negative-request-length",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\nContent-Length: -1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-missing-response",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": ""
+      },
+      "expected": true
+    },
+    {
+      "id": "burp-duplicate-authorization",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\nAuthorization: Bearer aaa\r\nAuthorization: Bearer bbb\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nfixture"
+      },
+      "expected": false
+    },
+    {
+      "id": "burp-reflected-response-cookie",
+      "component": "burp_evidence",
+      "requirement": "C18-02",
+      "input": {
+        "request": "GET / HTTP/1.1\r\nHost: 192.0.2.1\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\nSet-Cookie: session=server-side-fixture-secret; HttpOnly\r\n\r\nserver-side-fixture-secret",
+        "must_redact": "server-side-fixture-secret"
+      },
+      "expected": true
+    }
+  ],
+  "limitations": [
+    "Bounded HTTP/1 TCP80 import only; not a general HTTP2/3 protocol implementation.",
+    "Missing response is retained explicitly and is not a successful response.",
+    "Redaction does not guarantee detection of arbitrary unlabeled secrets."
+  ]
+}

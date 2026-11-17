@@ -8,21 +8,21 @@ from config.tools_registry import CVE_ACCURACY, NOT_DIRECTLY_EXPLOITABLE
 SYSTEM = """You are the VULNERABILITY ANALYSIS agent in a multi-agent pentest platform.
 Your role: map services to CVEs, validate exploitability, assess conditions, confidence scoring.
 
-Tools you drive: nuclei, searchsploit, nikto, nmap --script=vuln
+Only advertised worker_tools can be proposed; this review grants no execution authority.
 Your input comes from: Recon Agent (tech stack), Scan Agent (service versions).
 
 CRITICAL RULES:
-1. Map service versions to REAL CVEs — never invent CVE numbers
+1. Treat product/version matches as candidates. Require authoritative advisories and applicability evidence; leave unknown CVE IDs empty.
 2. For each vulnerability, validate:
    - Is the port OPEN? (check scan results)
    - Does the version MATCH? (exact version check)
    - Are CONDITIONS met? (CGI active? Bash version? Endpoint exists?)
-   - Confidence level: high (>80%), medium (50-80%), low (<50%)
+   - Identify missing controls, alternative explanations and defensive remediation; confidence is not proof.
 3. NEVER claim RCE for:
-   - OpenSSH (user enum only, try hydra)
+   - OpenSSH from a banner alone (version, configuration and advisory applicability remain unknown)
    - Old Apache without specific CVE
    - SSL/TLS issues (weak crypto, not RCE)
-4. Prioritize by EXPLOITABILITY, not just CVSS score
+4. Preserve the original objective; no exploit, shell chaining, credential attack or unsupported scanner.
 5. Cross-correlate with recon and scan findings
 
 {skill_instruction}
@@ -45,7 +45,7 @@ class VulnAgent(BaseAgent):
         open_ports = knowledge_cache.get_open_ports(session_id, target)
         ports_str = "\n".join(
             f"  {p['port']}/{p['service']}: {p['version']}" for p in open_ports
-        ) if open_ports else "  Run nmap first."
+        ) if open_ports else "  No saved service observations; do not infer services or versions."
 
         prompt = f"""TARGET: {target}
 
@@ -56,8 +56,8 @@ SHARED INTELLIGENCE:
 {context}
 
 Analyze vulnerabilities:
-1. Map each service+version to known CVEs
-2. Validate exploitability conditions
+1. Separate saved observations from conditional candidates; HTTP/1.1 is a protocol version, not an Apache version
+2. Identify missing advisory, configuration and reproducible control evidence
 3. Score confidence for each finding
 4. Suggest validation commands (non-destructive)
 
@@ -67,19 +67,22 @@ JSON:
     {{
       "service": "service:version",
       "port": 80,
-      "cve_ids": ["CVE-XXXX-XXXX"],
+      "cve_ids": [],
       "vulnerability": "name",
       "severity": "critical|high|medium|low",
-      "exploitable": true,
+      "exploitable": false,
       "confidence": 0.9,
       "conditions_met": ["condition 1"],
       "conditions_unverified": ["needs checking"],
-      "validation_command": "non-destructive check command"
+      "validation_command": "empty unless explicitly requested and supported",
+      "evidence_references": [],
+      "alternative_explanations": [],
+      "remediation": "defensive recommendation appropriate to the evidence"
     }}
   ],
   "commands": [
     {{
-      "tool": "nuclei",
+      "tool": "advertised tool only",
       "command": "exact command",
       "purpose": "what this validates",
       "risk": "medium",
@@ -94,7 +97,7 @@ JSON:
         result = await self.query_llm(user_id, prompt, self.get_system_prompt(skill_level))
         if result.get("success"):
             parsed = self.parse_json(result["content"])
-            if parsed:
+            if parsed is not None and 'commands' in parsed:
                 for c in parsed.get("commands", []):
                     c["action_id"] = self.generate_action_id()
                     c["agent"] = "vuln"
@@ -114,13 +117,11 @@ JSON:
                         "vulnerability_assessment": parsed.get("vulnerability_assessment", []),
                         "needs_confirmation": True}
 
+            self._validated_model_object(None)
+
         # Fallback
-        cmds = [{"tool": "nuclei",
-                 "command": f"nuclei -target {target} -severity critical,high,medium -silent",
-                 "purpose": "CVE scan", "risk": "medium", "risk_color": "orange",
-                 "can_batch": True, "action_id": self.generate_action_id(), "agent": "vuln"}]
-        return {"type": "plan", "commands": cmds,
-                "suggested_reply": f"Running vulnerability analysis on `{target}`.",
+        return {"type": "plan", "commands": [],
+                "suggested_reply": "No valid evidence review is available; no action was proposed.",
                 "needs_confirmation": True}
 
 

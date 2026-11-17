@@ -1,0 +1,338 @@
+{
+  "schema": "aria.competence.cases.v1",
+  "split": "development",
+  "author": "engineering agent; not independent human assessment",
+  "sources": [
+    "https://docs.python.org/3.11/library/ast.html",
+    "docs/competence/coding-agent.md"
+  ],
+  "scoring": "Ten exact static accept/reject criteria, one point each. No candidate execution or code-generation intelligence score.",
+  "cases": [
+    {
+      "id": "code-reviewable-fixture",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Parse a recorded status line without network access.\"\"\"\n\ndef status_code(line: str) -> int:\n    \"\"\"Return a valid observed status or raise ValueError.\"\"\"\n    parts = line.split()\n    if len(parts) < 2 or parts[0] not in (\"HTTP/1.0\", \"HTTP/1.1\"):\n        raise ValueError(\"Invalid status line\")\n    code = int(parts[1])\n    if not 100 <= code <= 599:\n        raise ValueError(\"Invalid status code\")\n    return code\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": true
+    },
+    {
+      "id": "code-network-import",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\nimport socket\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-dynamic-eval",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\neval(\"1+1\")\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-filesystem-write",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\nopen(\"marker\", \"w\").write(\"executed\")\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-invalid-syntax",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\ndef broken(:\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-missing-annotations",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\ndef identity(value):\n    \"\"\"Identity.\"\"\"\n    return value\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-reflection",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Invalid review fixture.\"\"\"\nx = ().__class__\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-no-assertions",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Parse a recorded status line without network access.\"\"\"\n\ndef status_code(line: str) -> int:\n    \"\"\"Return a valid observed status or raise ValueError.\"\"\"\n    parts = line.split()\n    if len(parts) < 2 or parts[0] not in (\"HTTP/1.0\", \"HTTP/1.1\"):\n        raise ValueError(\"Invalid status line\")\n    code = int(parts[1])\n    if not 100 <= code <= 599:\n        raise ValueError(\"Invalid status code\")\n    return code\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Empty test.\"\"\"\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-unapproved-dependency",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "status_parser.py",
+            "content": "\"\"\"Parse a recorded status line without network access.\"\"\"\n\ndef status_code(line: str) -> int:\n    \"\"\"Return a valid observed status or raise ValueError.\"\"\"\n    parts = line.split()\n    if len(parts) < 2 or parts[0] not in (\"HTTP/1.0\", \"HTTP/1.1\"):\n        raise ValueError(\"Invalid status line\")\n    code = int(parts[1])\n    if not 100 <= code <= 599:\n        raise ValueError(\"Invalid status code\")\n    return code\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [
+          "requests"
+        ],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    },
+    {
+      "id": "code-artifact-traversal",
+      "component": "coding_static",
+      "requirement": "C17-03",
+      "input": {
+        "summary": "Review-only HTTP status parser with negative controls.",
+        "files": [
+          {
+            "name": "../status_parser.py",
+            "content": "\"\"\"Parse a recorded status line without network access.\"\"\"\n\ndef status_code(line: str) -> int:\n    \"\"\"Return a valid observed status or raise ValueError.\"\"\"\n    parts = line.split()\n    if len(parts) < 2 or parts[0] not in (\"HTTP/1.0\", \"HTTP/1.1\"):\n        raise ValueError(\"Invalid status line\")\n    code = int(parts[1])\n    if not 100 <= code <= 599:\n        raise ValueError(\"Invalid status code\")\n    return code\n"
+          },
+          {
+            "name": "test_status_parser.py",
+            "content": "\"\"\"Synthetic behavior and error cases.\"\"\"\nimport unittest\nfrom status_parser import status_code\n\nclass StatusTests(unittest.TestCase):\n    def test_positive(self):\n        self.assertEqual(status_code(\"HTTP/1.1 200 OK\"), 200)\n    def test_error(self):\n        with self.assertRaises(ValueError):\n            status_code(\"not HTTP\")\n"
+          },
+          {
+            "name": "README.md",
+            "content": "Parse explicitly supplied synthetic HTTP status lines only.\nRun unittest in an independently isolated reviewed environment. No network or credentials.\nLimitations: HTTP/2/3 and full message parsing are outside this example.\n"
+          }
+        ],
+        "dependencies": [],
+        "evidence_references": [],
+        "validation_plan": [
+          "Review source and controls, then run python -m unittest discover in an independently isolated environment."
+        ],
+        "limitations": [
+          "Handcrafted fixture; not model-generated code or proof of secure general code."
+        ],
+        "review_status": "requires_human_review"
+      },
+      "expected": false
+    }
+  ],
+  "limitations": [
+    "Handcrafted deterministic artifacts; not actual model output.",
+    "Static acceptance is not semantic correctness, security certification, meaningful test coverage or independent review."
+  ]
+}

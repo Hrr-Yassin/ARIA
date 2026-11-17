@@ -23,7 +23,7 @@ class MissionContinuityTests(OfflineCase):
                 engine = AutonomousEngine()
                 state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
                 req = ApprovalRequest('action', 'engagement', 1, 'fixture', 'curl', 'orange', 'test',
-                    created_monotonic_ns=1_000_000_000)
+                    created_monotonic_ns=1_000_000_000, expires_at=1000)
                 async def decide_or_stop(*args):
                     if stopped:
                         state.stop_requested = True
@@ -31,6 +31,7 @@ class MissionContinuityTests(OfflineCase):
                         req.decided_monotonic_ns = 2_000_000_000
                         req.decision = 'approve'
                 with patch('agents.autonomous_engine.time', SimpleNamespace(
+                        time=lambda: 100,
                         monotonic_ns=iter((1_200_000_000, 2_500_000_000)).__next__)), \
                      patch('agents.autonomous_engine.asyncio.sleep', AsyncMock(side_effect=decide_or_stop)), \
                      patch.object(engine, '_emit', AsyncMock()) as emit:
@@ -47,9 +48,9 @@ class MissionContinuityTests(OfflineCase):
     def test_pending_approval_age_uses_monotonic_clock(self):
         engine = AutonomousEngine()
         req = ApprovalRequest('action', 'engagement', 1, 'fixture', 'curl', 'orange', 'test',
-            created_at=9_999_999_999, created_monotonic_ns=1_000_000_000)
+            created_at=9_999_999_999, created_monotonic_ns=1_000_000_000, expires_at=1000)
         engine._approvals['engagement'] = {'action': req}
-        with patch('agents.autonomous_engine.time', SimpleNamespace(monotonic_ns=lambda: 3_400_000_000)):
+        with patch('agents.autonomous_engine.time', SimpleNamespace(time=lambda: 100, monotonic_ns=lambda: 3_400_000_000)):
             self.assertEqual(engine.get_pending_approvals('engagement')[0]['waiting_seconds'], 2)
 
     async def test_stop_during_approval_wait_is_not_recorded_as_human_rejection(self):
@@ -69,7 +70,8 @@ class MissionContinuityTests(OfflineCase):
             await release_cancel.wait()
             return {'pending': 1, 'cancelled': 0, 'jobs': []}
         command = 'curl -I http://192.0.2.1:80'
-        proposal = SimpleNamespace(id='action', command=command, tool='curl', risk='orange', status='pending')
+        proposal = SimpleNamespace(id='action', command=command, tool='curl', risk='orange', status='pending',
+                                   expires_at=9_999_999_999)
         with patch('agents.autonomous_engine.execution_authorization._context', AsyncMock(return_value={})), \
              patch('agents.autonomous_engine.execution_authorization.propose', AsyncMock(return_value=proposal)), \
              patch('agents.autonomous_engine.worker_jobs.cancel_session', AsyncMock(side_effect=slow_cancellation)), \

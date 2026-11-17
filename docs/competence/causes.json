@@ -1,0 +1,71 @@
+{
+  "schema": "aria.competence.causes.v1",
+  "causes": [
+    {
+      "category": "model_limitations",
+      "evidence": "Wrong actual0.8Bresponses across six usable cases;4Bhas no usable answer",
+      "correction_or_investigation": "Capacity may contribute; no controlled model-only causal isolation",
+      "disposition": "BLOCKED for fresh model comparison"
+    },
+    {
+      "category": "prompt_contradictions",
+      "evidence": "Entry-source role prompts required unavailable discovery/exploit tools or mandatory attack narratives",
+      "correction_or_investigation": "Reproduced source defects corrected C15; post-fix model effect unknown",
+      "disposition": "Software correction verified"
+    },
+    {
+      "category": "missing_technical_knowledge",
+      "evidence": "Protocol/product confusion and generic success overclaims in retained answers; Bearer misclassification in code",
+      "correction_or_investigation": "HTTP helpers corrected and primary-reference tool/evidence guidance supplied",
+      "disposition": "Software cases measured; model knowledge unmeasured"
+    },
+    {
+      "category": "context_construction",
+      "evidence": "Correlation grouped first-five anonymous200character snippets; source attribution/recent evidence lost",
+      "correction_or_investigation": "Bounded recent source/analyst-preserving handoff and explicit omitted counts implemented",
+      "disposition": "Synthetic review contracts verified"
+    },
+    {
+      "category": "unavailable_capabilities",
+      "evidence": "WHOIS/DNS, scripts and shell chaining proposed despite worker profiles",
+      "correction_or_investigation": "Advertised-only tool facts; no new capabilities; raw wrong proposal remains wrong",
+      "disposition": "Containment distinct from intelligence"
+    },
+    {
+      "category": "invalid_formats",
+      "evidence": "Timeouts had no usable output; missing-field JSON could trigger fallback scans",
+      "correction_or_investigation": "Required commands arrays and closed coding schema; malformed responses block",
+      "disposition": "Software failure paths verified; role model structure unmeasured after changes"
+    },
+    {
+      "category": "poor_observation_interpretation",
+      "evidence": "UDP/open-filtered became TCP open; alert severity became exploitable; malformed HTTP evidence accepted",
+      "correction_or_investigation": "Frozen parser/import before3/10each; unchanged cases10/10after",
+      "disposition": "Deterministic correction verified"
+    },
+    {
+      "category": "software_defects",
+      "evidence": "HTTP header dictionary text matching; fallback scans; imported selection/staging receipt gaps",
+      "correction_or_investigation": "Actual helper/API/source corrections with focused and full offline regressions",
+      "disposition": "Verified in defined local scope; not deployed"
+    },
+    {
+      "category": "financial_constraints",
+      "evidence": "196074/200000reserved tokens used;3926remaining below8192minimum; counters not refundable",
+      "correction_or_investigation": "No new allocation/counter reset/provider inference",
+      "disposition": "BLOCKED fresh intelligence/code/complementarity/model quality"
+    },
+    {
+      "category": "infrastructure_constraints",
+      "evidence": "Two non-schema60s deadlines, historical CPU-only report; no retained per-phase server/RSS/CPU telemetry",
+      "correction_or_investigation": "Add closed separately named provider-reported phase fields without changing deadline/retries/cost controls",
+      "disposition": "Causal bottleneck remains unisolated; fresh performance measurement blocked"
+    },
+    {
+      "category": "independent_assessment",
+      "evidence": "Owner confirms no independent senior reviewer",
+      "correction_or_investigation": "Preserve original packet and new input-only reviewer packet",
+      "disposition": "BLOCKED; no AI assessment relabeled human"
+    }
+  ]
+}

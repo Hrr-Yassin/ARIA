@@ -5,8 +5,10 @@ import json
 import shlex
 import time
 import uuid
+from typing import Any
 
 import httpx
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import func, select
 
@@ -15,6 +17,7 @@ from memory.database_models import DecisionLog, PentestSession, async_session
 
 TERMINAL = {'succeeded', 'failed', 'cancelled'}
 STATES = TERMINAL | {'prepared', 'dispatching', 'queued', 'running', 'cancel_requested', 'unknown'}
+log = structlog.get_logger(__name__)
 
 
 class SQLJobStore:
@@ -152,19 +155,57 @@ class WorkerClient:
     def __init__(self, transport=None):
         self.transport = transport
 
-    async def request(self, method, path, payload=None, timeout=10):
+    async def request(self, method: str, path: str, payload: dict | None = None,
+                      timeout: float = 10, *, job_id: str | None = None,
+                      session_id: str | None = None) -> Any:
         if not settings.KALI_AGENT_URL:
             raise HTTPException(503, 'Worker is not configured')
-        async with httpx.AsyncClient(transport=self.transport, timeout=timeout, follow_redirects=False) as client:
-            async with client.stream(method, settings.KALI_AGENT_URL.rstrip('/') + path,
-                    headers={'Authorization': 'Bearer ' + settings.KALI_AGENT_TOKEN}, json=payload) as response:
-                response.raise_for_status()
-                content = bytearray()
-                async for chunk in response.aiter_bytes(chunk_size=65536):
-                    if len(content) + len(chunk) > 1_000_000:
-                        raise ValueError('Worker response exceeds limit')
-                    content.extend(chunk)
-                return json.loads(content)
+        # Closed local diagnostics, independent of worker-supplied receipt fields.
+        # HTTP exchange includes response reading/closure and worker-side work;
+        # it cannot isolate network, container lifecycle or tool execution.
+        operation = {('GET', '/capabilities'): 'capabilities', ('POST', '/jobs'): 'submit',
+                     ('POST', '/execute'): 'legacy_execute'}.get((method, path), 'other')
+        parts = path.split('/')
+        if len(parts) == 3 and parts[1] == 'jobs' and method == 'GET':
+            operation = 'status'
+        elif len(parts) == 4 and parts[1] == 'jobs' and method == 'POST':
+            operation = {'cancel': 'cancel', 'retention': 'retention'}.get(parts[3], 'other')
+        request_id = uuid.uuid4().hex
+        started = time.monotonic_ns()
+        exchange_ms = decode_ms = status = None
+        outcome = 'failed'
+        try:
+            async with httpx.AsyncClient(transport=self.transport, timeout=timeout, follow_redirects=False) as client:
+                exchange_started = time.monotonic_ns()
+                try:
+                    async with client.stream(method, settings.KALI_AGENT_URL.rstrip('/') + path,
+                            headers={'Authorization': 'Bearer ' + settings.KALI_AGENT_TOKEN}, json=payload) as response:
+                        status = response.status_code
+                        response.raise_for_status()
+                        content = bytearray()
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            if len(content) + len(chunk) > 1_000_000:
+                                raise ValueError('Worker response exceeds limit')
+                            content.extend(chunk)
+                finally:
+                    exchange_ms = (time.monotonic_ns() - exchange_started) / 1e6
+                decode_started = time.monotonic_ns()
+                try:
+                    result = json.loads(content)
+                finally:
+                    decode_ms = (time.monotonic_ns() - decode_started) / 1e6
+            outcome = 'response_decoded'
+            return result
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            raise
+        finally:
+            log.info('worker_http_exchange', worker_request_id=request_id,
+                operation=operation, job_id=job_id, session_id=session_id,
+                status=status, outcome=outcome, timings={
+                    'worker_http_exchange_ms': exchange_ms,
+                    'worker_response_decode_ms': decode_ms,
+                    'worker_client_total_ms': (time.monotonic_ns() - started) / 1e6})
 
     @staticmethod
     def snapshot(data, job):
@@ -189,14 +230,16 @@ class WorkerClient:
     async def submit(self, job, command, timeout):
         return self.snapshot(await self.request('POST', '/jobs', {'job_id': job['job_id'],
             'session_id': job['session_id'], 'command': command, 'timeout': timeout,
-            'scope': job.get('scope', {}), **({'protected_http': job['protected_http']} if job.get('protected_http') else {})}, timeout=timeout+5), job)
+            'scope': job.get('scope', {}), **({'protected_http': job['protected_http']} if job.get('protected_http') else {})},
+            timeout=timeout+5, job_id=job['job_id'], session_id=job['session_id']), job)
 
     async def status(self, job):
-        return self.snapshot(await self.request('GET', '/jobs/' + job['job_id']), job)
+        return self.snapshot(await self.request('GET', '/jobs/' + job['job_id'],
+            job_id=job['job_id'], session_id=job['session_id']), job)
 
     async def cancel(self, job):
         return self.snapshot(await self.request('POST', '/jobs/' + job['job_id'] + '/cancel',
-                                               {'session_id': job['session_id']}), job)
+            {'session_id': job['session_id']}, job_id=job['job_id'], session_id=job['session_id']), job)
 
 
 class WorkerJobs:

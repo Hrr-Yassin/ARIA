@@ -10,7 +10,17 @@ import time
 
 TIMING_FIELDS = ('request_construction_ms', 'provider_discovery_ms',
                  'provider_attempt_ms', 'response_processing_ms',
-                 'structured_validation_ms', 'client_total_ms', 'pool_attempt_ms')
+                 'structured_validation_ms', 'client_total_ms', 'pool_attempt_ms',
+                 'provider_load_ms', 'provider_prompt_eval_ms',
+                 'provider_generation_ms', 'provider_reported_total_ms')
+
+
+def native_provider_timings(data):
+    """Ollama-reported nanoseconds; not client-observed inference or CPU time."""
+    mapping={'load_duration':'provider_load_ms','prompt_eval_duration':'provider_prompt_eval_ms',
+             'eval_duration':'provider_generation_ms','total_duration':'provider_reported_total_ms'}
+    return {target: value / 1000000 if type(value := data.get(source)) is int
+            and 0 <= value <= 86400000000000 else None for source,target in mapping.items()}
 
 
 class RequestMetrics:

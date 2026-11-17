@@ -23,7 +23,7 @@ from __future__ import annotations
 import copy
 import json
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -100,14 +100,17 @@ class _SimulatedDateTime(datetime, metaclass=_DateTimeMeta):
 
 
 @contextmanager
-def simulated_datetime(clock: SimulatedClock):
-    """Patch only the guard's ``datetime.now``; all other arithmetic is real."""
+def simulated_datetime(clock: SimulatedClock, *, campaign_store: bool = False):
+    """Use one fixture clock for guard and optionally SQL campaign creation."""
+    previous = _SimulatedDateTime.clock
     _SimulatedDateTime.clock = clock
-    with patch("orchestrator.campaign_execution.datetime", _SimulatedDateTime):
+    with patch("orchestrator.campaign_execution.datetime", _SimulatedDateTime), \
+         (patch("memory.campaign_store.datetime", _SimulatedDateTime)
+          if campaign_store else nullcontext()):
         try:
             yield
         finally:
-            _SimulatedDateTime.clock = None
+            _SimulatedDateTime.clock = previous
 
 
 @contextmanager

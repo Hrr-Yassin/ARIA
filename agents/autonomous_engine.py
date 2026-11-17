@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -152,6 +153,12 @@ class ApprovalRequest:
     decided_monotonic_ns: Optional[int] = field(default=None, repr=False)
     decision: Optional[str] = None      # None | "approve" | "reject" | "modify"
     modified_command: str = ""
+    expires_at: Optional[float] = None
+
+    def authorization_current(self) -> bool:
+        """Display/wait guard only; the durable authorization remains final."""
+        return (type(self.expires_at) in (int, float) and math.isfinite(self.expires_at)
+                and self.expires_at > time.time())
 
 
 @dataclass
@@ -902,9 +909,9 @@ class AutonomousEngine:
             {"action_id": a.action_id, "command": a.command,
              "tool": a.tool, "risk_color": a.risk_color,
              "purpose": a.purpose, "step_number": a.step_number,
-             "created_at": a.created_at,
+             "created_at": a.created_at, "expires_at": a.expires_at,
              "waiting_seconds": max(0, (time.monotonic_ns() - a.created_monotonic_ns) // 1_000_000_000)}
-            for a in queue.values() if a.decision is None
+            for a in queue.values() if a.decision is None and a.authorization_current()
         ]
 
     async def provide_approval_decision(self, session_id: str, action_id: str,
@@ -1027,6 +1034,7 @@ class AutonomousEngine:
                         step_number=state.steps_taken,
                         command=command, tool=tool,
                         risk_color=risk, purpose=purpose,
+                        expires_at=proposal.expires_at,
                     )
                     self._approvals[state.session_id][action_id] = req
                     state.pending_approval = req
@@ -1041,6 +1049,7 @@ class AutonomousEngine:
                         extra={"action_id": action_id,
                                "command": command,
                                "purpose": purpose,
+                               "expires_at": req.expires_at,
                                "reason": ("Risk level requires explicit "
                                           "human validation per project scope.")},
                     ))
@@ -1059,6 +1068,10 @@ class AutonomousEngine:
                     if state.stop_requested:
                         self._finalization_stopped(state)
                         break
+                    if decision == "expired":
+                        # No human decision, new proposal or dispatch occurred.
+                        # Reuse the shared closed blocker and keep prior evidence.
+                        raise HTTPException(403, 'Authorization is absent, expired or no longer valid')
                     if decision == "reject":
                         if state.pause_requested:
                             state.run_state = "blocked"
@@ -1985,9 +1998,13 @@ class AutonomousEngine:
 
     async def _wait_for_approval(self, state: SessionRunState,
                                   req: ApprovalRequest) -> str:
-        """Block until human responds (or stop is requested)."""
+        """Wait for a human decision, explicit stop or the proposal deadline."""
         started = time.monotonic_ns()
+        expired = False
         while req.decision is None and not state.stop_requested:
+            if not req.authorization_current():
+                expired = True
+                break
             await asyncio.sleep(0.5)
         released = time.monotonic_ns()
         # These are controller-clock gate measurements, not a claim about
@@ -1999,7 +2016,8 @@ class AutonomousEngine:
         await self._emit(state, {
             "type": "approval_wait_measured", "step": req.step_number,
             "action_id": req.action_id,
-            "status": "stopped" if state.stop_requested else "decided",
+            "status": ("stopped" if state.stop_requested else
+                       "authorization_expired_or_invalid" if expired else "decided"),
             "timings": {
                 "approval_gate_pending_ms": (released - req.created_monotonic_ns) / 1e6,
                 "approval_poll_loop_ms": (released - started) / 1e6,
@@ -2007,7 +2025,7 @@ class AutonomousEngine:
                 "approval_release_after_decision_ms": (released - decided) / 1e6 if accepted else None,
             },
         })
-        return req.decision or "reject"
+        return "expired" if expired and not state.stop_requested else req.decision or "reject"
 
     # ────────────────────────────────────────────────────────────────────
     #  Event emission

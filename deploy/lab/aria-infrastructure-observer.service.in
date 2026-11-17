@@ -1,0 +1,14 @@
+[Unit]
+Description=ARIA read-only infrastructure observation
+After=aria.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@PROJECT@
+ExecStart=@PROJECT@/.venv/bin/python -m deploy.lab.observe_infrastructure --state @PROJECT@/.local-lab/operational-reliability/supervision/current.json
+TimeoutStartSec=15
+Restart=no
+NoNewPrivileges=true
+UMask=0077
+MemoryMax=128M
+CPUQuota=10%

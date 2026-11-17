@@ -29,28 +29,40 @@ systemctl --user stop aria
 
 ARIA is enabled for your user session; user-service operation before login depends
 on Fedora's user-manager/lingering configuration. The worker was started for this
-manual session and is not enabled at boot. Database/cache startup is now separate
-from the application service so restarting the app does not kill their rootless
-network helpers. From a terminal, start dependencies before both services:
+manual session and is not enabled at boot. The corrected Fedora templates use
+`aria-lab-dependencies.service` to start the existing database/cache containers,
+verify schema/Redis readiness within30seconds,and retain their helpers separately
+from the API. The API requires and starts after that unit; restarting the API
+does not stop its dependencies. Start the API and any separately configured worker:
 
 ```bash
-podman start aria-postgres aria-redis
 systemctl --user start aria-worker aria
 ```
 
 The ARIA service has a checkout override pointing at `/home/hryassin/PFA/pentest-ai-v10`.
-Both service units preserve container helpers when their main API process stops.
-To stop the lab, stop the app and worker before stopping their containers:
+The cycle14 Fedora repair installs separate dependency ordering/readiness and
+five-starts-per300seconds protection. A final containment override sorts after
+`checkout.conf`,setting API `KillMode=control-group`; dependency helpers are in
+their own unit. An actual API restart preserved their PIDs and start times.
+An older checkout without these units still requires manual `podman start
+aria-postgres aria-redis`; do not assume container restart policy handles reboot.
+To stop the lab,stop the API/worker before their dependencies:
 
 ```bash
 systemctl --user stop aria aria-worker
-podman stop aria-postgres aria-redis
+systemctl --user stop aria-lab-dependencies
 ```
 
 Persistent database/cache data is in the rootless Podman volumes `aria-postgres`
 and `aria-redis`; do not remove them to stop the lab. Redis DB 15 and the separate
 PostgreSQL database `aria_test` are disposable integration-test resources. The
 application uses database `aria` and Redis DB 0.
+
+The dependency unit uses only existing named containers/volumes;it does not create
+or migrate data. A failed readiness probe blocks API startup. After correcting a
+dependency failure,inspect its journal and use `systemctl --user reset-failed
+aria-lab-dependencies aria` before an explicit start. No host reboot was performed
+to validate the repair. See [outage evidence and limits](operational-reliability-outage.md).
 
 ## Lab network and machines
 

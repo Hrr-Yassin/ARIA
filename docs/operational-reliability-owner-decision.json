@@ -1,0 +1,19 @@
+{
+  "schema": "aria.owner-endurance-deferral.v1",
+  "decision_id": "owner-2026-11-17-eight-hour-deferral",
+  "decision_date": "2026-11-17",
+  "authority": "explicit_project_owner_instruction_in_conversation",
+  "requirement_id": "P08-04",
+  "duration_seconds": 28800,
+  "disposition": "DEFERRED_BY_OWNER",
+  "reason": "Duration; owner requested moving the eight-hour test to final operational validation.",
+  "deferred_to": "P14-02",
+  "accepted_four_hour_cohort": "endurance-5080b70117b7",
+  "accepted_four_hour_seconds": 14400,
+  "engineering_audit_may_close_with_disclosed_exception": true,
+  "eight_hour_test_verified": false,
+  "full_mission_complete": false,
+  "operational_8_5_readiness_demonstrated": false,
+  "additional_spending_or_target_authorization": false,
+  "owner_instruction": "As the project owner, I explicitly authorize deferring the eight-hour endurance test to the final operational validation phase because of its duration."
+}

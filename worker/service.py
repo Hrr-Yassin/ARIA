@@ -7,6 +7,7 @@ from cryptography.fernet import InvalidToken
 
 from fastapi import HTTPException
 from worker.policy import prepare
+from worker.observability import admission, runtime_stage
 
 TERMINAL = {'succeeded', 'failed', 'cancelled'}
 
@@ -32,7 +33,7 @@ class WorkerService:
         self.profiles = profiles or {}
 
     async def submit(self, request: dict) -> dict:
-        async with self.lock:
+        async with admission(self.lock, 'submit', job_id=request['job_id'], session_id=request['session_id']):
             previous = await self.store.get(request['job_id'])
             if previous:
                 if previous.get('fingerprint') != fingerprint(request):
@@ -112,8 +113,10 @@ class WorkerService:
                 job['deadline'] = min(job['deadline'], datetime.fromisoformat(plan['private_expires_at']).timestamp())
             await self.store.save(job)  # Durable ID precedes ANY container mutation.
             try:
-                await self.runtime.create(job)
-                await self.runtime.start(job)
+                with runtime_stage(job, 'create'):
+                    await self.runtime.create(job)
+                with runtime_stage(job, 'start'):
+                    await self.runtime.start(job)
                 job['state'] = 'running'
                 await self.store.save(job)
             except Exception:
@@ -133,7 +136,8 @@ class WorkerService:
         job.setdefault('cancel_reason', reason)
         await self.store.save(job)  # Intent survives daemon/worker failure.
         try:
-            confirmed = await self.runtime.stop(job)
+            with runtime_stage(job, 'stop'):
+                confirmed = await self.runtime.stop(job)
         except Exception:
             confirmed = False
         if confirmed:
@@ -142,7 +146,7 @@ class WorkerService:
         return snapshot(job)
 
     async def cancel(self, job_id: str, session_id: str) -> dict:
-        async with self.lock:
+        async with admission(self.lock, 'cancel', job_id=job_id, session_id=session_id):
             job = await self.store.get(job_id)
             if job and job['session_id'] != session_id:
                 raise HTTPException(403, 'Job session mismatch')
@@ -163,7 +167,7 @@ class WorkerService:
             cutoff = deadline.astimezone(timezone.utc).isoformat()
         except (ValueError, TypeError):
             raise HTTPException(422, 'Invalid retention deadline') from None
-        async with self.lock:
+        async with admission(self.lock, 'retention', job_id=job_id, session_id=session_id):
             job = await self.store.get(job_id)
             if not job or job['session_id'] != session_id or not job.get('private_expires_at'):
                 raise HTTPException(404, 'Private HTTP job not found')
@@ -181,7 +185,7 @@ class WorkerService:
                     'expired': bool(job.get('private_evidence_expired'))}
 
     async def status(self, job_id: str) -> dict:
-        async with self.lock:
+        async with admission(self.lock, 'status', job_id=job_id):
             job = await self.store.get(job_id)
             if not job:
                 raise HTTPException(404, 'Unknown job')
@@ -191,15 +195,19 @@ class WorkerService:
                 return await self._cancel(job)
             if time.time() >= job['deadline']:
                 return await self._cancel(job, 'Worker job deadline exceeded')
-            state = await self.runtime.inspect(job)
+            with runtime_stage(job, 'inspect'):
+                state = await self.runtime.inspect(job)
             if state is None:
                 return await self._cancel(job, 'Job container is missing')
             # Runtime start/exit transitions are not evidence of cancellation.
             # Wait through created/configured/stopping states, bounded by deadline.
             if not state.get('Running') and state.get('Status') in {'exited', 'dead', 'stopped'}:
-                stdout, stderr = await self.runtime.output(job)
+                with runtime_stage(job, 'output'):
+                    stdout, stderr = await self.runtime.output(job)
                 # Remove the container before saving a terminal receipt.
-                if not await self.runtime.stop(job):
+                with runtime_stage(job, 'stop'):
+                    removed = await self.runtime.stop(job)
+                if not removed:
                     return await self._cancel(job)
                 exit_code = int(state['ExitCode'])
                 if job.get('scope', {}).get('program_policy') or job.get('scope', {}).get('web_authenticated_replay') is True:
@@ -220,14 +228,14 @@ class WorkerService:
             return snapshot(job)
 
     async def recover(self) -> None:
-        async with self.lock:
+        async with admission(self.lock, 'recover'):
             # Never resume/replay jobs after restart, even before their deadline.
             for job in await self.store.active():
                 await self._cancel(job)
 
     async def sweep(self) -> None:
         if hasattr(self.store, 'expire_http'):
-            async with self.lock:
+            async with admission(self.lock, 'sweep'):
                 await self.store.expire_http()
         for job in await self.store.active():
             await self.status(job['job_id'])

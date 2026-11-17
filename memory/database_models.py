@@ -293,7 +293,10 @@ class Playbook(Base):
 
 # ── Database Engine ──────────────────────────────────────────────────────
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=10, max_overflow=20)
+# Validate an idle connection before handing it to a new transaction after a
+# database restart. This never retries a statement or an uncertain transaction.
+engine = create_async_engine(settings.DATABASE_URL, echo=False, pool_size=10,
+                             max_overflow=20, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 

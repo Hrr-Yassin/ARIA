@@ -7,34 +7,18 @@ import re
 from agents.base_agent import BaseAgent
 from memory.attack_knowledge_base import attack_kb
 
-SYSTEM = """You are the COORDINATOR (Brain) of a multi-agent penetration testing platform.
-
-Your sole job: decide which specialist agent to invoke next, and why.
-
-Available agents:
-- planner    → Set/update attack goal, build step-by-step attack path
-- recon      → OSINT, DNS, subdomain enum, tech fingerprinting (passive/active)
-- scan       → Port scanning, service detection, version fingerprinting
-- vuln       → CVE mapping, exploit validation, exploitability assessment
-- exploit    → Orchestrator handles exploitation planning
-- post       → Post-exploitation: privesc, credential dump, lateral movement, persistence
-- web_intel  → Passive HTTP analysis, endpoint scoring, auth detection (bug_bounty + URL targets)
-- correlation → Cross-reference all findings, build kill chains, detect false positives
-- report     → Generate pentest report
-
-DECISION LOGIC:
-1. If no ports known → scan first (never skip to exploit)
-2. If goal not set → planner first
-3. If ports known but no vulns → vuln agent
-4. If vuln confirmed + shell exists → post agent
-5. If multiple contradicting findings → correlation agent
-6. Never call the same agent twice for same data (check KB)
-7. In red_team mode → prefer slow/stealthy options
-8. In bug_bounty mode → ALWAYS use web_intel first if target is URL/domain
-9. If target is URL/domain → web_intel before scan
-10. Never suggest destructive actions in bug_bounty mode
-
-OUTPUT: Single word agent name + brief reason. Valid JSON only."""
+SYSTEM = """You are the COORDINATOR for supervised evidence analysis.
+Select one existing specialist and give a concise public reason. Routing grants no
+execution authority. Preserve the original objective, scope and recorded evidence.
+Available review roles: planner (prerequisites and bounded plan), recon (requested
+observations), scan (authorized TCP observations), vuln (conditional applicability),
+web_intel (saved HTTP/auth/session evidence), correlation (contradictions, alternatives
+and independent controls), report (evidence-attributed reports).
+The post role is blocked; exploitation and post-access execution are unavailable.
+Reviewing saved HTTP or code evidence does not require a new port scan. Do not repeat
+completed observations, escalate from a public page, or treat agent agreement as
+confirmation. Missing evidence or unsupported requests must be explained.
+Output JSON with selected_agent, reason, skip_if and next_after; no private reasoning."""
 
 
 class CoordinatorAgent(BaseAgent):
@@ -85,16 +69,16 @@ KNOWLEDGE BASE STATE:
 HOSTS DISCOVERED: {len(hosts)} | SHELLS ACTIVE: {len(shells)} | CREDS FOUND: {len(creds)}
 TOOLS ALREADY RUN: {', '.join(tools_done) if tools_done else 'none'}
 
-AVAILABLE AGENTS: planner, recon, scan, vuln, post, correlation, report
+AVAILABLE REVIEW AGENTS: planner, recon, scan, vuln, web_intel, correlation, report
 
 Decision rules:
 - Don't re-run tools already done on same target unless new info exists
-- If shells exist + user asks about credentials → post agent
+- Post-access and exploitation roles are unavailable; select prerequisite review, not execution
 - If user explicitly asks for report → report
 - If user sets a goal → planner
 - If contradictions in findings → correlation
 - Bug bounty mode: never send to post agent without explicit permission
-- Red team mode: prefer slower/stealthier approach, add OPSEC notes
+- Attack mode cannot expand capabilities or the original objective
 
 JSON:
 {{
@@ -135,6 +119,11 @@ JSON:
         # Explicit report request
         if any(w in lower for w in ["report", "generate report", "export"]):
             return {"agent": "report", "reason": "User explicitly requested report"}
+
+        # Saved HTTP analysis does not require active discovery.
+        if any(word in lower for word in ('review', 'interpret', 'analyze', 'analyse')) and any(
+                word in lower for word in ('http', 'cookie', 'bearer', 'session management', 'cors')):
+            return {'agent': 'web_intel', 'reason': 'Review the supplied HTTP evidence and its limitations'}
 
         # Explicit goal setting
         if any(p in lower for p in ["goal:", "set goal", "attack goal", "objective:",

@@ -3,20 +3,20 @@ PentestAI v8 — Agent 2: Reconnaissance
 Passive and active recon, technology fingerprinting, target profiling.
 """
 from agents.base_agent import BaseAgent
-from config.tools_registry import TOOL_AGENT_MAP
 
 SYSTEM = """You are the RECONNAISSANCE agent in a multi-agent pentest platform.
 Your role: passive/active recon, technology fingerprinting, initial target profiling.
 
-Tools you drive: whois, dig, subfinder, amass, theHarvester, curl (headers), httpx
 Your output feeds into: Scan Agent (ports), Vuln Agent (tech stack), Correlation Agent.
 
 RULES:
-- Start passive (whois, DNS) then propose active (HTTP headers, subdomains)
-- Extract technology stack from HTTP responses (Server, X-Powered-By, Set-Cookie)
-- Identify CMS, frameworks, languages from response patterns
-- Map subdomains and associated IPs
-- Build structured target profile
+- Follow the server objective and advertised worker_tools; a role name grants no tool capability.
+- For HTTP-header observation, propose a bounded curl HEAD (-I) request to the requested URL and port.
+- Do not add WHOIS, DNS, subdomains or other discovery unless requested and supported by the worker.
+- Preserve the requested scheme, host, port and path; do not infer a software version from an HTTP protocol version.
+- Cite saved evidence for observations; absent versions and untested technology remain unknown.
+- If the requested observation is unsupported, return commands: [] and explain the missing prerequisite.
+- Every proposed command requires server validation and approval before execution.
 
 RESPOND: Valid JSON only. {skill_instruction}"""
 
@@ -36,10 +36,10 @@ class ReconAgent(BaseAgent):
         prompt = f"""TARGET: {target}
 EXISTING INTEL: {context}
 
-Plan reconnaissance for this target. Include:
-1. Passive recon commands (whois, DNS, subdomain enum)
-2. Active fingerprinting (HTTP headers, technology detection)
-3. What to look for in each output
+Plan only the server objective within its scope and available worker profiles.
+Choose the smallest missing observation; do not add a standard reconnaissance checklist.
+For requested headers use HEAD, not a body-only GET. Explain expected evidence,
+uncertainty and any missing prerequisite. Do not repeat an observation already evidenced.
 
 JSON:
 {{
@@ -64,7 +64,7 @@ JSON:
         result = await self.query_llm(user_id, prompt, self.get_system_prompt(skill_level))
         if result.get("success"):
             parsed = self.parse_json(result["content"])
-            if parsed:
+            if parsed is not None and "commands" in parsed:
                 for c in parsed.get("commands", []):
                     c["action_id"] = self.generate_action_id()
                     c["agent"] = "recon"
@@ -72,20 +72,10 @@ JSON:
                         "suggested_reply": parsed.get("suggested_response", ""),
                         "needs_confirmation": True}
 
-        # Fallback
-        cmds = [
-            {"tool": "whois", "command": f"whois {target}", "purpose": "WHOIS lookup",
-             "risk": "low", "risk_color": "green", "can_batch": True,
-             "action_id": self.generate_action_id(), "agent": "recon"},
-            {"tool": "dig", "command": f"dig {target} ANY +short", "purpose": "DNS records",
-             "risk": "low", "risk_color": "green", "can_batch": True,
-             "action_id": self.generate_action_id(), "agent": "recon"},
-            {"tool": "curl", "command": f"curl -I -s --max-time 10 http://{target}",
-             "purpose": "HTTP headers & tech fingerprint", "risk": "low", "risk_color": "green",
-             "can_batch": True, "action_id": self.generate_action_id(), "agent": "recon"},
-        ]
-        return {"type": "plan", "commands": cmds,
-                "suggested_reply": f"Starting passive reconnaissance on `{target}`.",
+            self._validated_model_object(None)
+
+        return {"type": "plan", "commands": [],
+                "suggested_reply": "No valid reconnaissance plan is available; no action was proposed.",
                 "needs_confirmation": True}
 
 

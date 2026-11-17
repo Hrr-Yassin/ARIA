@@ -1,14 +1,17 @@
 [Unit]
 Description=ARIA Fedora manual-test lab
-After=network.target
+Requires=aria-lab-dependencies.service
+After=network.target aria-lab-dependencies.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 WorkingDirectory=@PROJECT@
-ExecStartPre=/usr/bin/podman start aria-postgres aria-redis
 ExecStart=@PROJECT@/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
 UMask=0077
 
 [Install]

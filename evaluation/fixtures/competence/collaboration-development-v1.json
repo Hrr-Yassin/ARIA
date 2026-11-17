@@ -1,0 +1,407 @@
+{
+  "schema": "aria.competence.cases.v1",
+  "split": "development",
+  "author": "engineering-authored synthetic handoffs; not actual specialist conversation or independent human peer review",
+  "sources": [
+    "docs/worker-contract.md",
+    "https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html"
+  ],
+  "scoring": "Ten exact issue-set checks on attributed synthetic handoffs; one point each, no model collaboration credit.",
+  "cases": [
+    {
+      "id": "handoff-attributed",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": []
+    },
+    {
+      "id": "handoff-unattributed",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "unattributed_claim"
+      ]
+    },
+    {
+      "id": "handoff-foreign-citation",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "foreign"
+            ],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "unknown_evidence_reference"
+      ]
+    },
+    {
+      "id": "handoff-duplicate",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          },
+          {
+            "id": "claim2",
+            "agent": "recon",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "duplicate_information",
+        "shared_evidence_not_independent"
+      ]
+    },
+    {
+      "id": "handoff-complementary-same-source",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          },
+          {
+            "id": "claim2",
+            "agent": "web_intel",
+            "text": "Banner alone does not establish CGI configuration",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "shared_evidence_not_independent"
+      ]
+    },
+    {
+      "id": "handoff-contradiction",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "claim2",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e2"
+            ],
+            "assertions": {
+              "server_version": "2.4.50"
+            }
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "contradictory_claims"
+      ]
+    },
+    {
+      "id": "handoff-source-error",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {
+              "server_version": "9.9.9"
+            }
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "source_contradiction"
+      ]
+    },
+    {
+      "id": "handoff-unverified-confirmation",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {},
+            "verified": true
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "unverified_confirmation"
+      ]
+    },
+    {
+      "id": "handoff-no-source-facts",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {
+              "cgi_enabled": true
+            }
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": [
+        "unsupported_assertion"
+      ]
+    },
+    {
+      "id": "handoff-two-independent-inputs",
+      "component": "collaboration_review",
+      "requirement": "C20-01",
+      "input": {
+        "claims": [
+          {
+            "id": "claim1",
+            "agent": "vuln",
+            "text": "Candidate version needs applicability controls",
+            "evidence_references": [
+              "e1"
+            ],
+            "assertions": {}
+          },
+          {
+            "id": "claim2",
+            "agent": "vuln",
+            "text": "A second observed banner needs timestamp reconciliation",
+            "evidence_references": [
+              "e2"
+            ],
+            "assertions": {}
+          }
+        ],
+        "evidence": [
+          {
+            "id": "e1",
+            "facts": {
+              "server_version": "2.4.49"
+            }
+          },
+          {
+            "id": "e2",
+            "facts": {
+              "server_version": "2.4.50"
+            }
+          }
+        ]
+      },
+      "expected": []
+    }
+  ],
+  "limitations": [
+    "Checks source consistency/provenance only; no semantic natural-language reasoning score.",
+    "Different evidence IDs still do not prove independent collection or vulnerability reproduction.",
+    "Actual specialist complementarity remains unavailable."
+  ]
+}

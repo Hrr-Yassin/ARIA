@@ -8,14 +8,14 @@ import re
 from agents.base_agent import BaseAgent
 from memory.attack_knowledge_base import attack_kb
 
-SYSTEM = """You are the WEB INTEL agent — a senior web application security researcher.
-You operate in Bug Bounty mode: passive-first, surgical, human-like. Never noisy.
+SYSTEM = """You are the WEB INTEL agent, reviewing authorized recorded HTTP evidence.
+Analyze saved traffic before proposing any additional observation.
 
 YOUR CAPABILITIES:
 1. Passive HTTP analysis (headers, cookies, tokens, endpoints from traffic)
 2. Technology fingerprinting without active scanning
 3. Auth mechanism detection: JWT, OAuth, Basic, API Key, Session
-4. Endpoint and parameter scoring by vulnerability probability
+4. Endpoint and parameter review priority from names only, never a vulnerability probability
 5. Smart test sequencing — one target at a time, with reasoning before action
 
 OPERATING RULES:
@@ -23,10 +23,11 @@ OPERATING RULES:
 - ALWAYS start passive (observe, analyze) before active testing
 - NEVER suggest automated mass-scanning tools (no nikto -C all, no ffuf wordlists)
 - ONE endpoint at a time — no parallel testing
-- Random delays between requests (simulate human browsing)
-- Suggest manual PoC first, automated tool only as fallback
+- Proposals require the original objective, server scope, capability checks and human approvals.
+- Do not route public-page observations directly to exploitation or claim absent services.
+- List missing controls, plausible alternative explanations and defensive remediation.
 
-VULNERABILITY PRIORITY SCORING (1-10):
+UNVALIDATED REVIEW PRIORITIES (1-10; names alone do not establish risk or likelihood):
 - IDOR on user IDs: 9
 - JWT alg:none / weak secret: 9
 - SQLi in search/filter params: 8
@@ -37,13 +38,13 @@ VULNERABILITY PRIORITY SCORING (1-10):
 - Information disclosure: 4
 
 AUTH DETECTION PATTERNS:
-- Authorization: Bearer → JWT (decode, check alg, exp, claims)
+- Authorization: Bearer → Bearer scheme; opaque or JWT token format remains unverified
 - Authorization: Basic → Basic auth (check default creds)
 - Set-Cookie: session → Session (check flags: Secure, HttpOnly, SameSite)
 - X-API-Key / api_key param → API Key (check rate limit bypass)
 - OAuth2 flow detected → check state param, redirect_uri, PKCE
 
-OUTPUT: Valid JSON only. Include reasoning_chain before any suggestion.
+OUTPUT: Valid JSON only. Include a brief evidence-linked public_rationale before suggestions;do not request or disclose private chain-of-thought.
 """
 
 
@@ -87,15 +88,15 @@ KB CONTEXT: {kb_ctx}
 
 Analyze this HTTP traffic passively. Output JSON:
 {{
-  "reasoning_chain": "step by step analysis",
-  "auth_type": "jwt|oauth|basic|apikey|session|none",
+  "public_rationale": "Brief evidence-linked explanation; no private reasoning.",
+  "auth_type": "bearer|basic|apikey|session|unknown|none",
   "auth_findings": [],
   "endpoint_score": 0-10,
-  "vuln_hypothesis": "most likely vulnerability and why",
-  "suggested_test": "exact manual test to perform first",
+  "vuln_hypothesis": "conditional candidate only, or insufficient evidence",
+  "suggested_test": "missing recorded control evidence; empty when no further action is justified",
   "passive_findings": [],
   "next_step": "what to do next",
-  "opsec_notes": "how to stay stealthy"
+  "limitations": ["missing evidence and alternative explanations"]
 }}"""
 
         result = await self.call_llm(
@@ -111,6 +112,20 @@ Analyze this HTTP traffic passively. Output JSON:
     async def process(self, session_id: str, user_id: str,
                       input_data: dict,
                       skill_level: str = "intermediate") -> dict:
+        if 'recorded_evidence_ids' in input_data:
+            from memory.burp_community import get_evidence
+            from security.evidence_analysis import review_http
+            ids = input_data['recorded_evidence_ids']
+            if not isinstance(ids,list) or len(ids)>20 or any(not isinstance(ref,str) or not 1<=len(ref)<=100 for ref in ids):
+                return {'commands':[], 'rejections':[{'code':'invalid_evidence_selection','detail':'Select at most20owned evidence IDs'}]}
+            interpretations=[]
+            for ref in dict.fromkeys(ids):
+                data=await get_evidence(session_id,ref)
+                interpretations.append(review_http(data['summary'],ref))
+            return {'type':'analysis','agent':'web_intel','commands':[], 'interpretations':interpretations,
+                    'analysis_kind':'deterministic_recorded_http_review','model_calls':0,
+                    'suggested_reply':f'Reviewed{len(interpretations)}recorded HTTP observations. Status, auth and scanner hints do not confirm vulnerabilities; inspect missing controls and remediation.',
+                    'confirmed_vulnerabilities':[]}
         user_input = input_data.get("user_input", "")
         target     = input_data.get("target", "")
         http_data  = input_data.get("http_data", {})
@@ -125,15 +140,15 @@ KB STATE: {kb_ctx}
 
 Respond as WEB INTEL agent. Output JSON:
 {{
-  "reasoning_chain": "...",
+  "public_rationale": "Brief evidence-linked explanation;no private reasoning.",
   "agent": "web_intel",
-  "phase": "reconnaissance|vulnerability_analysis|exploitation",
+  "phase": "reconnaissance|vulnerability_analysis|report",
   "passive_steps": [],
   "active_steps": [],
   "commands": [],
   "findings": [],
   "auth_analysis": {{}},
-  "next_agent": "vuln|exploit|report",
+  "next_agent": "vuln|correlation|report",
   "opsec_notes": "..."
 }}"""
 
@@ -145,36 +160,41 @@ Respond as WEB INTEL agent. Output JSON:
     # ── Fast-path helpers (no LLM) ────────────────────────────────────
 
     def _detect_auth(self, headers: dict, cookies: dict) -> str:
-        h = {k.lower(): v for k, v in headers.items()}
+        h = {str(k).lower(): v for k, v in headers.items()}
         auth = h.get("authorization", "")
-        if auth.lower().startswith("bearer"):
-            return "jwt"
-        if auth.lower().startswith("basic"):
-            return "basic"
+        if not isinstance(auth, str):
+            return "unknown"
+        if auth.strip():
+            parts = auth.strip().split(None, 1)
+            if len(parts) != 2 or not parts[1].strip():
+                return "unknown"
+            scheme = parts[0].lower()
+            return scheme if scheme in {"bearer", "basic"} else "unknown"
         if "x-api-key" in h or "api-key" in h:
             return "apikey"
         if cookies:
             ck = " ".join(cookies.keys()).lower()
             if any(w in ck for w in ["session", "sess", "token", "auth"]):
                 return "session"
-        if "oauth" in str(h).lower() or "client_id" in str(h).lower():
-            return "oauth"
         return "none"
 
     def _detect_tech(self, headers: dict, body: str) -> list:
         found = []
-        h = str(headers).lower()
-        b = str(body).lower()
-        tech_sigs = {
-            "nginx": "nginx", "apache": "apache", "iis": "iis",
-            "php": "x-powered-by: php", "asp.net": "x-aspnet",
-            "django": "csrftoken", "rails": "x-runtime",
-            "express": "x-powered-by: express", "wordpress": "wp-content",
-            "laravel": "laravel_session",
-        }
-        for tech, sig in tech_sigs.items():
-            if sig in h or sig in b:
+        h = {str(k).lower(): str(v).lower() for k, v in headers.items()}
+        # Advertised product hints only. Unrelated prose is not a fingerprint.
+        server = h.get('server', '')
+        for tech, pattern in (('nginx', r'\bnginx\b'), ('apache', r'\bapache\b'),
+                              ('iis', r'\bmicrosoft-iis\b')):
+            if re.search(pattern, server):
                 found.append(tech)
+        powered = h.get('x-powered-by', '')
+        for tech in ('php', 'express'):
+            if re.search(r'\b' + tech + r'\b', powered):
+                found.append(tech)
+        if any(key.startswith('x-aspnet') for key in h):
+            found.append('asp.net')
+        if re.search(r'''(?:src|href)\s*=\s*["'][^"']*/wp-content/''', str(body), re.I):
+            found.append('wordpress')
         return found
 
     def _score_params(self, params: dict, body: str) -> dict:

@@ -2,6 +2,7 @@
 PentestAI v8 — Session Manager
 PostgreSQL for persistence, Redis for cache and real-time state.
 """
+import asyncio
 import json
 import time
 import uuid
@@ -22,23 +23,65 @@ log = structlog.get_logger(__name__)
 
 
 class SessionManager:
+    CACHE_TIMEOUT_SECONDS = 2
+
     def __init__(self):
         self._redis = None
+        # Reject cache contents from a previous process or a failed invalidation.
+        # Ownership and execution admission always read authoritative SQL.
+        self._cache_generation = str(uuid.uuid4())
 
     async def initialize(self):
         """Connect to Redis."""
+        client = None
         try:
             import redis.asyncio as aioredis
-            self._redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            await self._redis.ping()
+            client = aioredis.from_url(settings.REDIS_URL, decode_responses=True,
+                socket_connect_timeout=self.CACHE_TIMEOUT_SECONDS,
+                socket_timeout=self.CACHE_TIMEOUT_SECONDS)
+            async with asyncio.timeout(self.CACHE_TIMEOUT_SECONDS):
+                if await client.ping() is not True:
+                    raise ConnectionError('Cache readiness unavailable')
+            self._redis = client
             log.info("Redis connected")
         except Exception as e:
-            log.warning("Redis unavailable, using DB only", error=str(e))
+            log.warning("Redis unavailable, using DB only", error_type=type(e).__name__)
             self._redis = None
+        finally:
+            if client is not None and self._redis is not client:
+                try:
+                    async with asyncio.timeout(self.CACHE_TIMEOUT_SECONDS):
+                        await client.aclose()
+                except Exception as e:
+                    log.warning('redis_initialization_cleanup_failed', error_type=type(e).__name__)
 
     async def close(self):
-        if self._redis:
-            await self._redis.close()
+        client, self._redis = self._redis, None
+        if client is not None:
+            async with asyncio.timeout(self.CACHE_TIMEOUT_SECONDS):
+                await client.aclose()
+
+    async def _cache_operation(self, operation: str, *args):
+        if self._redis is None:
+            return None
+        try:
+            async with asyncio.timeout(self.CACHE_TIMEOUT_SECONDS):
+                return await getattr(self._redis, operation)(*args)
+        except Exception as e:
+            self._cache_generation = str(uuid.uuid4())
+            log.warning('session_cache_unavailable', operation=operation,
+                        error_type=type(e).__name__)
+            return None
+
+    async def cache_available(self) -> bool:
+        """Observe optional cache availability without changing durable state."""
+        return await self._cache_operation('ping') is True
+
+    async def _cache_session(self, session_id: str, data: dict) -> None:
+        payload = {'schema':'aria.session.cache.v2',
+                   'generation':self._cache_generation, 'data':data}
+        await self._cache_operation('setex', f'session:{session_id}',
+            settings.REDIS_SESSION_TTL, json.dumps(payload))
 
     # ── Sessions ─────────────────────────────────────────────────────────
 
@@ -62,24 +105,28 @@ class SessionManager:
             await db.commit()
 
         # Cache in Redis
-        if self._redis:
-            await self._redis.setex(
-                f"session:{session_id}",
-                settings.REDIS_SESSION_TTL,
-                json.dumps({"session_id": session_id, "target": target, "user_id": user_id, "name": name,
+        await self._cache_session(session_id,
+                {"session_id": session_id, "target": target, "user_id": user_id, "name": name,
                             "scope": scope or {"targets": [target], "exclusions": []},
                             "status": "active", "context_type": context_type,
-                            "phase": "scope", "tools_run": [], "open_ports": []}),
-            )
+                            "phase": "scope", "tools_run": [], "open_ports": []})
 
         return {"session_id": session_id, "name": name, "target": target}
 
     async def get_session(self, session_id: str, *, authoritative: bool = False) -> Optional[dict]:
         # Authorization callers bypass cached owner/scope data.
         if self._redis and not authoritative:
-            cached = await self._redis.get(f"session:{session_id}")
+            cached = await self._cache_operation('get', f"session:{session_id}")
             if cached:
-                return json.loads(cached)
+                try:
+                    envelope = json.loads(cached)
+                    data = envelope.get('data') if isinstance(envelope, dict) else None
+                    if (envelope.get('schema') == 'aria.session.cache.v2'
+                            and envelope.get('generation') == self._cache_generation
+                            and isinstance(data, dict) and data.get('session_id') == session_id):
+                        return data
+                except (ValueError, TypeError, AttributeError):
+                    self._cache_generation = str(uuid.uuid4())
 
         # Fallback to DB
         async with async_session() as db:
@@ -99,8 +146,8 @@ class SessionManager:
                     "scope": session.scope or {},
                     "created_at": session.created_at.isoformat() if session.created_at else "",
                 }
-                if self._redis:
-                    await self._redis.setex(f"session:{session_id}", settings.REDIS_SESSION_TTL, json.dumps(data))
+                if not authoritative:
+                    await self._cache_session(session_id, data)
                 return data
         return None
 
@@ -131,16 +178,14 @@ class SessionManager:
             await db.execute(update(PentestSession).where(PentestSession.id == session_id)
                              .values(status=SessionStatus.ARCHIVED))
             await db.commit()
-        if self._redis:
-            await self._redis.delete(f"session:{session_id}")
+        await self._cache_operation('delete', f"session:{session_id}")
 
     async def update_session(self, session_id: str, **kwargs):
         async with async_session() as db:
             await db.execute(update(PentestSession).where(PentestSession.id == session_id).values(**kwargs))
             await db.commit()
         # Invalidate cache
-        if self._redis:
-            await self._redis.delete(f"session:{session_id}")
+        await self._cache_operation('delete', f"session:{session_id}")
 
     async def update_phase(self, session_id: str, phase: str):
         try:

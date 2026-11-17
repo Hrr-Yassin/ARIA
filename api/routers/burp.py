@@ -72,12 +72,21 @@ async def repeater(session_id: str,evidence_id: str,user: TokenData = Depends(ge
             base=connector_base()
             caps = await client.get(base+'/capabilities',headers=headers)
             caps.raise_for_status()
-            if caps.json().get('edition')!='COMMUNITY': raise HTTPException(409,'Burp Community is required')
+            metadata = caps.json()
+            if not isinstance(metadata,dict) or metadata.get('edition')!='COMMUNITY':
+                raise HTTPException(409,'Burp Community is required')
+            if metadata.get('repeater_staging') is not True:
+                raise HTTPException(409,'Connector did not advertise Repeater staging')
             response = await client.post(base+'/repeater',headers=headers,
                 data={'url':source['url'],'request_b64':source['request_b64'],'evidence_id':evidence_id})
             response.raise_for_status()
+            receipt = response.json()
+            if (not isinstance(receipt,dict) or receipt.get('status')!='staged'
+                    or receipt.get('network_request_sent') is not False):
+                raise HTTPException(503,'Connector did not confirm passive staging')
         return {'status':'staged','evidence_id':evidence_id,'network_request_sent':False}
-    except httpx.HTTPError: raise HTTPException(503,'Burp connector is disconnected or refused staging') from None
+    except (httpx.HTTPError,ValueError,TypeError):
+        raise HTTPException(503,'Burp connector is disconnected or refused staging') from None
 
 
 @router.post('/{session_id}/{evidence_id}/check-proposal', dependencies=[Depends(local_connector)])
@@ -122,7 +131,7 @@ async def analyze_map(session_id: str,user: TokenData = Depends(get_current_user
     from agents.web_intel_agent import web_intel_agent
     return await web_intel_agent.process(session_id,user.user_id,{
         'user_input':'Map these observed endpoints, parameters and authentication contexts. Propose bounded tests with expected evidence; label all vulnerabilities as hypotheses.',
-        'target':session['target'],'http_data':mapped},user.skill_level)
+        'target':session['target'],'recorded_evidence_ids':[e['evidence_id'] for e in mapped['endpoints'][:20]]},user.skill_level)
 
 
 class Mutation(BaseModel):
@@ -216,9 +225,16 @@ async def import_history_selection(session_id: str,body: CaptureSelection,user: 
     if any(not re.fullmatch('[0-9a-f]{64}',capture) for capture in body.capture_ids): raise HTTPException(422,'Invalid capture selection')
     from memory.web_actions import web_actions
     selected=await web_actions.connector('POST','/history/selected',{'ids':','.join(body.capture_ids)})
-    results=[]
-    for capture in selected.get('captures',[]):
+    captures = selected.get('captures')
+    if (len(set(body.capture_ids)) != len(body.capture_ids) or not isinstance(captures, list)
+            or len(captures) != len(body.capture_ids) or any(not isinstance(c,dict) for c in captures)
+            or any(not isinstance(c.get('capture_id'),str) for c in captures)
+            or {c.get('capture_id') for c in captures} != set(body.capture_ids)):
+        raise HTTPException(422,'Connector selection did not match the requested captures')
+    pairs=[]
+    for capture in captures:
         try: pair=community.inspect_pair(capture['url'],capture['request_b64'],capture['response_b64'],session['scope'])
-        except (ValueError,KeyError): raise HTTPException(422,'Selected capture violates scope or HTTP framing') from None
-        results.append(await community.import_pair(session_id,pair))
+        except (ValueError,KeyError,TypeError): raise HTTPException(422,'Selected capture violates scope or HTTP framing') from None
+        pairs.append(pair)
+    results=[await community.import_pair(session_id,pair) for pair in pairs]
     return {'imported':results}

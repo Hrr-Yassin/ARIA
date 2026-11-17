@@ -76,6 +76,17 @@ class LocalModelReliabilityTests(OfflineCase):
         self.assertIsNone(unknown['input_tokens'])
         self.assertIsNone(unknown['output_tokens'])
 
+    async def test_native_reported_phases_do_not_replace_client_or_usage_metrics(self):
+        result = await self.native_response({'message': {'content': '{}'},
+            'load_duration': 9000000, 'prompt_eval_duration': 20000000,
+            'eval_duration': 30000000, 'total_duration': 59000000})
+        self.assertEqual(result['timings']['provider_load_ms'], 9.0)
+        self.assertEqual(result['timings']['provider_prompt_eval_ms'], 20.0)
+        self.assertEqual(result['timings']['provider_generation_ms'], 30.0)
+        self.assertEqual(result['timings']['provider_reported_total_ms'], 59.0)
+        self.assertIsNone(result['tokens_used'])
+        self.assertEqual(result['timings']['http_attempts'], 1)
+
     async def test_malformed_provider_envelopes_fail_without_retry_or_input_leak(self):
         cases = [[], None, {}, {'choices': [None]}, {'choices': ['private-sentinel']},
                  {'choices': {}}, {'choices': [{'message': None}]},

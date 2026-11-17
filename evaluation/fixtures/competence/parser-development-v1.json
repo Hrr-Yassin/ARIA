@@ -1,0 +1,152 @@
+{
+  "schema": "aria.competence.cases.v1",
+  "split": "development",
+  "author": "engineering agent; expected state semantics grounded in external Nmap reference",
+  "sources": [
+    "https://nmap.org/book/man-port-scanning-basics.html",
+    "docs/worker-contract.md",
+    "docs/competence/agents.json"
+  ],
+  "scoring": "Ten exact parser knowledge-projection checks, one point each; scanner confidence cannot establish exploitability.",
+  "cases": [
+    {
+      "id": "parser-tcp-open",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "80/tcp open http"
+      },
+      "expected": {
+        "tcp_ports": [
+          80
+        ],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-udp-open",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "53/udp open domain"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-open-filtered",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "80/tcp open|filtered http"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-xml-tcp",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "<nmaprun><host><status state=\"up\"/><address addr=\"192.0.2.1\" addrtype=\"ipv4\"/><ports><port protocol=\"tcp\" portid=\"80\"><state state=\"open\"/><service name=\"http\"/></port></ports></host></nmaprun>"
+      },
+      "expected": {
+        "tcp_ports": [
+          80
+        ],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-xml-udp",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "<nmaprun><host><status state=\"up\"/><address addr=\"192.0.2.1\" addrtype=\"ipv4\"/><ports><port protocol=\"udp\" portid=\"80\"><state state=\"open\"/><service name=\"http\"/></port></ports></host></nmaprun>"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-xml-filtered",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "<nmaprun><host><status state=\"up\"/><address addr=\"192.0.2.1\" addrtype=\"ipv4\"/><ports><port protocol=\"tcp\" portid=\"80\"><state state=\"filtered\"/><service name=\"http\"/></port></ports></host></nmaprun>"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-greppable-udp",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nmap",
+        "output": "Host: 192.0.2.1 () Ports: 53/open/udp//domain///"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-nuclei-critical",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nuclei",
+        "output": "[CVE-2021-41773] [http] [critical] http://192.0.2.1/"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-nikto-rce",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "nikto",
+        "output": "+ Target IP: 192.0.2.1\n+ RCE candidate from keyword only"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    },
+    {
+      "id": "parser-anonymous-share",
+      "component": "parser_interpretation",
+      "requirement": "C19-02",
+      "input": {
+        "tool": "enum4linux",
+        "output": "Anonymous login allowed"
+      },
+      "expected": {
+        "tcp_ports": [],
+        "exploitable_candidates": false
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic output only, no scanner or target execution.",
+    "TCP-only legacy knowledge projection intentionally does not represent UDP service state.",
+    "No finding is independently verified by a parser."
+  ]
+}
