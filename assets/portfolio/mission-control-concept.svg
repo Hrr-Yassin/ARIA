@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 796 229" role="img" aria-labelledby="title detail"><title id="title">Mission Control 2.0 conceptual model component flow</title><desc id="detail">Owned session to Status and scope via session summary. Status and scope to Evidence inspector via selected record. Evidence inspector to Review and export via approved evidence.</desc>
+<defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto"><path d="M0 0L6 3 0 6z" fill="#10B981"/></marker></defs><rect width="796" height="229" rx="16" fill="#0B1220"/>
+<g font-family="system-ui, sans-serif" fill="#F8FAFC" font-size="15"><text x="35" y="38" fill="#10B981" font-weight="700">MISSION CONTROL · CONCEPTUAL VIEW</text>
+<path d="M128 114V128H295V121" fill="none" stroke="#10B981" stroke-opacity=".78" marker-end="url(#arrow)"/><text x="211.5" y="124" text-anchor="middle" fill="#F8FAFC" font-size="14" stroke="#0B1220" stroke-width="7" paint-order="stroke">session summary</text>
+<path d="M315 114V156H482V121" fill="none" stroke="#10B981" stroke-opacity=".78" marker-end="url(#arrow)"/><text x="398.5" y="152" text-anchor="middle" fill="#F8FAFC" font-size="14" stroke="#0B1220" stroke-width="7" paint-order="stroke">selected record</text>
+<path d="M502 114V184H669V121" fill="none" stroke="#10B981" stroke-opacity=".78" marker-end="url(#arrow)"/><text x="585.5" y="180" text-anchor="middle" fill="#F8FAFC" font-size="14" stroke="#0B1220" stroke-width="7" paint-order="stroke">approved evidence</text>
+<g><rect x="35" y="64" width="166" height="50" rx="9" fill="#172235" stroke="#10B981"/><text x="118" y="94" text-anchor="middle">Owned session</text></g>
+<g><rect x="222" y="64" width="166" height="50" rx="9" fill="#172235" stroke="#10B981"/><text x="305" y="94" text-anchor="middle">Status and scope</text></g>
+<g><rect x="409" y="64" width="166" height="50" rx="9" fill="#172235" stroke="#10B981"/><text x="492" y="94" text-anchor="middle">Evidence inspector</text></g>
+<g><rect x="596" y="64" width="166" height="50" rx="9" fill="#172235" stroke="#10B981"/><text x="679" y="94" text-anchor="middle">Review and export</text></g></g></svg>

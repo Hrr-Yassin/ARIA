@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 310" role="img" aria-labelledby="title detail">
+<title id="title">ARIA</title><desc id="detail">AI-ASSISTED SECURITY RESEARCH. Research Prototype · Authorized Environments.</desc>
+<defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0v32" fill="none" stroke="#94A3B8" stroke-opacity=".16"/></pattern><linearGradient id="bg"><stop stop-color="#0B1220"/><stop offset="1" stop-color="#172235"/></linearGradient></defs>
+<rect width="1200" height="310" rx="24" fill="url(#bg)"/>
+<path d="M790 0h386q24 0 24 24v262q0 24-24 24H658z" fill="url(#grid)"/>
+<path d="M819 0L682 310" stroke="#38BDF8" stroke-opacity=".27"/>
+<rect x="55" y="60" width="32" height="4" rx="2" fill="#38BDF8"/>
+<g font-family="system-ui, sans-serif">
+<text x="55" y="101" fill="#38BDF8" font-size="17" font-weight="650" letter-spacing="2.1">AI-ASSISTED SECURITY RESEARCH</text>
+<text x="52" y="169" fill="#F8FAFC" font-size="54" font-weight="720">ARIA</text>
+<text x="55" y="224" fill="#94A3B8" font-size="19">Research Prototype · Authorized Environments</text>
+</g>
+<g transform="translate(1009 151)" fill="none">
+<circle r="105" stroke="#38BDF8" stroke-opacity=".24"/><circle r="82" stroke="#38BDF8" stroke-opacity=".22" stroke-dasharray="2 8"/>
+<path d="M-75 30l30-60L0 34l42-68 34 64 M-93 50H94 M-43-30h85 M0 34V-15" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="105" r="4" fill="#F8FAFC"/><circle cx="-105" r="4" fill="#F8FAFC"/>
+</g></svg>

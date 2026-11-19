@@ -1,198 +1,93 @@
-# ARIA — Human–AI Collaborative Penetration Testing
+![ARIA, AI-assisted security research prototype](assets/portfolio/aria-banner.svg)
 
-ARIA (`pentest-ai`) is an academic proof of concept for a penetration tester working with specialized AI agents. It combines a browser interface, a FastAPI backend, shared investigation memory, external language models, and a separate isolated execution service.
+# ARIA
 
-The research question is whether specialized agents, structured tool evidence, and explicit human decisions improve an authorized assessment's quality, efficiency, and traceability.
+**Research prototype · Authorized security assessment**
 
-**Current status:** prototype under integration. P0 and prioritized P1 fixes have offline regression coverage, including private retrieval/report access, revocation, credential handling and durable worker cancellation state; broader integration and recovery work remains. It is not ready for an exposed or production deployment. See [docs/security-review.md](docs/security-review.md) for current remediation status and [technical_revow.md](technical_revow.md) for the baseline review. Features described as proposed below are evaluation targets, not verified guarantees of this release.
+ARIA studies how human reviewers can supervise AI-assisted security assessments, inspect what the system observed and trace report claims to evidence. The research focuses on accountable decisions under scope, identity, budget and evidence constraints.
 
-## Current architecture
+## Branch guide
 
-```mermaid
-flowchart TD
-    Human[Human penetration tester] --> UI[Browser: HTML / CSS / JavaScript]
-    UI -->|HTTP and WebSocket| API[FastAPI: auth, sessions, pentest, keys, reports, admin]
-    API --> Intent[Intent and workflow engines]
-    Intent --> Coordinator[Coordinator and orchestrator agents]
-    Coordinator --> Specialists[Recon / scan / vulnerability / planner / correlation / web intel / post exploitation / reporting]
-    Specialists --> Pool[Per-user LLM pool and task routing]
-    Pool --> Providers[Groq / Gemini / OpenRouter]
-    Specialists <--> Memory[Knowledge cache / attack KB / vector retrieval / playbooks]
-    API --> Auto[Autonomous engine and approval queue]
-    Auto --> Coordinator
-    API --> Gate[Shared execution authorization and durable approvals]
-    Auto --> Gate
-    Gate --> Kali[Isolated execution worker]
-    Kali --> Results[Tool output]
-    Results --> Parsers[Deterministic output parsers]
-    Parsers --> Memory
-    API --> SQL[(PostgreSQL)]
-    Memory --> SQL
-    Memory --> Redis[(Redis cache and optional vector persistence)]
-    Memory --> CVE[CVE enrichment: NVD / static fallback data]
-```
+| Branch | What you can inspect |
+| --- | --- |
+| [`main`](https://github.com/Hrr-Yassin/ARIA/tree/main) | Default branch. Python/FastAPI backend, browser UI, authorization, evidence and isolated worker contracts. Audited baseline [`37d6cb0`](https://github.com/Hrr-Yassin/ARIA/commit/37d6cb066654e4b00fa18adfe8f2ce3e0da50801). |
+| [`evidence-driven-team`](https://github.com/Hrr-Yassin/ARIA/tree/evidence-driven-team) | Repository checkpoint for reviewed findings, reporting and November 7 lab evidence. Audited [`24f3918`](https://github.com/Hrr-Yassin/ARIA/commit/24f3918bf38a1a63519af7249f971979c3b2d226). |
+| [`autonoms_pentesters`](https://github.com/Hrr-Yassin/ARIA/tree/autonoms_pentesters) | Advanced development. Mission Control 2.0 and expanded evidence, decision and reliability records. Audited [`4240203`](https://github.com/Hrr-Yassin/ARIA/commit/4240203917012c31dc3be4e1c0f407b8dc10c50b). |
 
-The diagram shows the implemented components and intended connections. Execution paths share a policy gate. Encrypted vector cache restores/flushes when Redis is available; full investigation-state recovery is not implemented; automatic playbook saving and the standalone ReAct loop are not connected to the main workflow.
+## Research questions
 
-### Component responsibilities
+- Can a reviewer see the authorized scope, ownership and basis for a decision?
+- Can a report claim be traced to an observation and distinguish supported conclusions from unresolved hypotheses?
+- Can the interface represent stale, unavailable and blocked observations explicitly during service or authorization failures?
 
-| Directory | Responsibility | Main entry points |
-| --- | --- | --- |
-| `api/` | HTTP/WebSocket API, JWT authentication, session access, administration, reports | `main.py`, `auth.py`, `session_access.py`, `routers/` |
-| `agents/` | Coordinate the investigation and specialize reasoning by task | `coordinator_agent.py`, `orchestrator_agent.py`, `autonomous_engine.py`, `base_agent.py` |
-| `orchestrator/` | Deterministic intent recognition, phase progression, risk heuristics | `intent_engine.py`, `workflow_engine.py`, `risk_scorer.py` |
-| `memory/` | SQL models, session persistence, evidence parsing, investigation state and retrieval | `database_models.py`, `session_manager.py`, `parsers.py`, `attack_knowledge_base.py` |
-| `llm/` | Provider adapters, encrypted API-key handling, task routing and failover | `pool_manager.py`, `groq_client.py`, `gemini_client.py`, `openrouter_client.py` |
-| `config/` | Environment settings, tool metadata and CVE enrichment | `settings.py`, `tools_registry.py`, `cve_enricher.py` |
-| `web/` | Login, tactical workspace and administrator interface | `index.html`, `login.html`, `admin.html`, `static/` |
-
-PostgreSQL stores users, encrypted provider keys, sessions, findings, chats, audit records, decision logs, playbooks, report mappings and worker job/authorization records. Redis caches sessions and supports authenticated encrypted JSON vector storage. Attack graphs, live approvals, run state, and much of the investigation memory currently live in Python process memory. PostgreSQL persistence therefore does not imply complete run recovery.
-
-An initial isolated execution service is included in `worker/`, running separately from the API. It supports curl and Nmap TCP scans with a PostgreSQL job ledger and per-job network policy. See [worker setup](docs/worker-setup.md), [worker contract](docs/worker-contract.md) and [executed validation](docs/worker-validation.md). Other Kali tools require additional reviewed worker profiles.
-
-## Proposed architecture to evaluate
-
-Keep a modular application with a separate execution worker. Multiple microservices are unnecessary for the initial academic evaluation. Separate planning from authorization and execution through a single, explicit boundary:
+## System architecture
 
 ```mermaid
 flowchart LR
-    H[Human tester] --> A[Authenticated API]
-    A --> P[Planner and specialized agents]
-    P --> C[Typed command proposal]
-    C --> G[Policy gate: owner, scope, risk, limits]
-    G -->|Approval required| D[Durable human decision]
-    D --> G
-    G -->|Authorized job only| Q[Durable job queue]
-    Q --> W[Isolated Kali worker]
-    W --> E[Structured evidence and parsers]
-    E --> S[(PostgreSQL evidence and event store)]
-    S --> P
-    S --> V[Authorized UI events and reports]
-    V --> H
+    Owner["Authorized reviewer"] --> UI["Browser / Mission Control"]
+    UI --> API["FastAPI and owner-scoped routes"]
+    API --> Policy["Scope, ownership and approval boundary"]
+    API --> Record["Session, evidence and decision records"]
+    Policy --> Worker["Isolated worker boundary"]
+    Record --> Review["Human evidence review and report"]
 ```
 
-1. **Authenticate and scope the engagement.** Resolve the current user from the database, verify session ownership, define explicit targets/exclusions, and assign an engagement policy.
-2. **Generate a typed proposal.** Agents propose a tool, structured arguments, target, evidence references, purpose, and risk rationale. Model text is untrusted input.
-3. **Apply one server-side policy gate.** Every manual, WebSocket, autonomous, modified, or replayed command passes the same owner, target, tool, risk, timeout, and concurrency checks. Unknown cases require approval or are rejected.
-4. **Record human authorization.** Bind approval to an immutable command digest, user, session, expiry, and policy revision. Modification invalidates the old approval and triggers validation again.
-5. **Execute in isolation.** An unprivileged worker accepts authenticated jobs, enforces network scope locally, and returns a job ID, exit status, bounded output, and evidence hashes. Cancellation must terminate the remote process.
-6. **Persist evidence and events.** Store findings, command outcomes, decisions, and state transitions before notifying clients. Redis accelerates access but is not the source of truth for authorization.
-7. **Replan and report.** Deterministic parsers update the evidence model; agents explain recommendations using that evidence. Human verification remains distinct from model confidence.
+The Python 3.11 core places HTTP routes in `api/`, specialist modules in `agents/`, policy and coordination in `orchestrator/`, persistence and evidence in `memory/`, and worker services in `worker/`. PostgreSQL and Redis appear in service integration tests. The advanced branch adds TypeScript/Vite for Mission Control and worker adapter definitions under `security_tools/`. Fedora orchestration and a separate Kali worker appear in the advanced branch deployment documentation. These are lab deployment patterns with versioned capability and availability checks.
 
-The API, execution worker, target network, database, and external model providers are separate trust boundaries. Redact passwords, tokens, and customer data before model calls. Retrieval must filter by engagement ownership; sharing playbooks across users requires explicit, sanitized publication.
+### Collaboration and evidence
 
-## Evaluation protocol
-
-Use only isolated, authorized targets with a resettable baseline and a known finding set. Freeze the source revision, target image, tool versions, model identifiers, prompts, and configuration for every experiment.
-
-Compare three conditions on the same scenarios: human with tools; human with a single AI assistant; human with ARIA's specialized agents. Repeat runs, record the number of trials and variability, and keep the time budget and starting evidence comparable. Report limitations caused by model nondeterminism and target selection.
-
-| Dimension | Measurement | Evidence / acceptance criterion |
-| --- | --- | --- |
-| Finding quality | Precision = verified true positives / reported positives; recall = found ground-truth findings / all ground-truth findings | Findings mapped to independently verified ground truth; publish false positives and misses |
-| Efficiency | Wall-clock time to first verified finding and completion; tool calls; model tokens and cost | Timestamped command/model records; compare all three conditions |
-| Collaboration | Approval count, rejected/modified proposals, human intervention time | Decisions linked to the exact command and final outcome |
-| Scope enforcement | Attempts blocked across REST, WebSocket, autonomous execution and modified approvals | Zero out-of-scope executions in the test set; test enforcement at API and worker |
-| Approval enforcement | Critical actions executed without a valid, matching approval | Zero bypasses, including replay, concurrent requests and restart recovery |
-| Traceability | Executed jobs with a complete linked proposal, policy result, human decision if required, and outcome | 100% completeness in evaluation runs; missing events are failures |
-| Reliability | Recovery after API restart, worker failure, Redis loss, model timeout, and duplicate delivery | No duplicate execution; durable status and evidence remain consistent |
-| Report quality | Reproducible evidence, correct scope, severity justification and actionable remediation | Blind review with a declared rubric; distinguish confirmed from suspected issues |
-
-No benchmark results or security certification are claimed by this repository. Establish the integration and security acceptance tests before evaluating autonomous execution.
-
-## Local development
-
-Use an isolated lab. **CPython 3.11 is the supported interpreter series**; setup and runtime reject other minor versions, including the host’s Python 3.14. The core hash-locked dependencies install and pass offline regressions on Linux x86_64 with Python 3.11. PostgreSQL is required; Redis is optional. PostgreSQL 16.6 and Redis 7.4.1 are configured in CI; live-service integration tests now pass on Fedora (see [P2 status](docs/p2-status.md)).
-
-```bash
-git clone git@github.com:Hrr-Yassin/ARIA.git
-cd ARIA
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --require-hashes -r requirements.txt
-python -m pip check
+```mermaid
+flowchart TB
+    Task["Scoped review objective"] --> Obs["Specialist observations"]
+    Obs --> Log["Recorded evidence and provenance"]
+    Log --> Check["Verification and competing explanations"]
+    Check --> Decide["Reviewer decision"]
+    Decide --> Report["Approved claim or unresolved item"]
 ```
 
-The supported dependency lock uses keyword retrieval and excludes heavy optional embedding packages. Experimental semantic retrieval requires separately provisioned `sentence-transformers`, NumPy and a local model directory selected by `ARIA_EMBEDDING_MODEL_PATH`. The loader uses `local_files_only=True`; request handling never downloads a model. That optional dependency/model combination has no supported lock or real-model benchmark yet. A single background inference slot admits no waiting queue; busy, oversized or timed-out requests fall back to keywords. See [P2 status](docs/p2-status.md) for bounds and limitations.
+The specialist architecture separates collection and review responsibilities. A reviewable record preserves ownership, evidence source, state and decision context. A signed export and a completed action require their own verification. An acknowledgement alone can still leave containment pending. The [reporting status](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/docs/phase6-reporting-status.md) describes review, disposition and export evidence.
 
-Provision a local PostgreSQL database and a dedicated database role. Create an untracked `.env` containing the following values, replacing all placeholders:
+## Mission Control 2.0
 
-```dotenv
-SECRET_KEY=<persistent-random-signing-secret>
-FERNET_KEY=<persistent-valid-fernet-key>
-DATABASE_URL=postgresql+asyncpg://<user>:<password>@127.0.0.1:5432/pentestai
-REDIS_URL=redis://127.0.0.1:6379/0
-KALI_AGENT_URL=http://<isolated-worker-address>:9000
-KALI_WORKER_PROTOCOL=jobs-v1
-KALI_AGENT_TOKEN=<worker-authentication-secret>
-REPORT_OUTPUT_DIR=./reports
-ALLOWED_ORIGINS=["http://127.0.0.1:7000"]
-AUTO_RISK_THRESHOLD=green_only
-AUTONOMOUS_MAX_STEPS=12
-AUTONOMOUS_STEP_TIMEOUT_SECONDS=120
-AUTONOMOUS_STEP_DELAY_SECONDS=1.5
-DECISION_LOG_ENABLED=true
-DEBUG=false
-```
+![Conceptual Mission Control model showing an owned session, status, evidence and review](assets/portfolio/mission-control-concept.svg)
 
-Generate the signing secret with `python -c 'import secrets; print(secrets.token_hex(32))'` and the encryption key with `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`. Keep the encryption key persistent and protect it separately from database backups. Controlled rotation uses `FERNET_PREVIOUS_KEYS` and `python -m api.rotate_provider_keys`; retain previous keys until cached evidence is rewritten or expires. An optional `NVD_API_KEY` configures CVE enrichment.
+*Conceptual view of the advanced branch.*
 
-```bash
-python -m alembic upgrade head
-python -m api.bootstrap_admin
-python -m uvicorn api.main:app --host 127.0.0.1 --port 7000 --workers 1
-```
+Mission Control provides an owner-scoped session picker, read-only status views, evidence inspection, campaign history and replay of retained records. Its contracts distinguish absence, limited access, stale information and service unavailability. Some evidence is bounded by producer retention and browser replay state. Authorization remains server-side. See the [versioned frontend contracts](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/docs/mission-control-contracts.md).
 
-Visit `http://127.0.0.1:7000/login`. Startup verifies the schema revision and does not create tables or seed accounts. Apply migrations before starting; bootstrap an administrator interactively without default credentials. For an existing unversioned database, back up and restore to staging first, then follow [migration adoption](docs/p2-status.md). Do not run the initial upgrade over populated legacy tables.
+## Implementation and validation
 
-`/api/health` is liveness. `/api/ready` checks database connectivity and schema revision with a three-second deadline; it does not certify worker/provider readiness. Redis is optional. Keep one API worker: planning state and subscribers remain local. Durable worker recovery reconciles/cancels jobs without resubmitting commands or resuming investigation loops.
-
-`bash setup.sh` creates a checkout-local `.venv`, validates Python 3.11, installs the hash lock and checks dependency consistency. It refuses root, never invokes an OS package manager or changes services, and leaves infrastructure provisioning to the operator. [deploy/aria.service](deploy/aria.service) is an optional user-systemd unit for a checkout at `~/aria`; review its paths and environment before installing it with `systemctl --user`. It binds to loopback and uses one process. The installed Fedora user service passes local startup/readiness/login checks; TLS/reverse-proxy deployment remains unverified. See [Fedora manual lab](docs/fedora-lab.md).
-
-## Backend route map
-
-These paths follow `api/main.py` router registration. The frontend uses these registered paths; unknown API routes return JSON 404.
-
-| Purpose | Backend route |
+| Evidence status | Recorded result and scope |
 | --- | --- |
-| Login / liveness / database readiness | `POST /api/login`, `GET /api/health`, `GET /api/ready` |
-| Create / list sessions | `POST /api/session/new`, `GET /api/session/list` |
-| User input / tool output | `POST /api/v8/input`, `POST /api/tool-results` |
-| Job diagnostics | `GET /api/jobs/{session_id}/{job_id}`, `GET /api/running/{session_id}` |
-| Command proposals / decisions | `POST /api/execution/proposals`, `POST /api/execution/{action_id}/decision` |
-| Manual execution / chat socket | `POST /api/kali/execute`, `WS /api/ws/chat` |
-| Autonomous lifecycle | `/api/pentest/{session_id}/autonomous/{start,stop,status,approvals,approve}` (method depends on action) |
-| Autonomous events | `WS /api/pentest/ws/{session_id}/auto` |
-| Investigation views | `/api/pentest/{session_id}/{kb-snapshot,decision-log,playbooks}` |
-| Provider keys / reports / administration | `/api/keys/`, `/api/report/`, `/api/admin/` |
+| Implemented | `main` contains authentication, execution policy interfaces, evidence persistence, browser UI and worker code. The advanced revision adds the Mission Control bundle, owner-scoped projections and frontend state handling. Source and historical test reports are listed below. |
+| Tested offline | On 19 November 2026 the advanced-branch log records **876 Python regressions** passing, five JavaScript suites passing and a successful TypeScript/Vite build. [Dated progress record](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md) |
+| Tested in isolated fixtures | The 19 November log records **41/41** checks each in visible Chromium and headless Firefox and a disposable PostgreSQL check. These results cover scoped UI behaviors, authorization, replay and accounting states. [Dated progress record](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md) |
+| Verified in a live lab | On 7 November 2026 the evidence branch recorded real local API/database/UI checks for sign-in, engagement state and owner-scoped views. The advanced branch records an authenticated read-only workstation review of ten views on 19 November. [7 November notes](https://github.com/Hrr-Yassin/ARIA/blob/24f3918bf38a1a63519af7249f971979c3b2d226/docs/live-user-testing-2026-11-07.md) · [19 November progress](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md) |
+| Blocked or unverified | Raw Mission Control run artifacts referenced under `.local-lab/` are local. Portfolio review did not rerun services, browser fixtures, target activity or model calls. Broader effectiveness and production readiness remain unverified. |
+| Planned | Continue policy and availability regression, publish sanitized validation manifests and measure evidence quality and reviewer agreement across bounded lab runs. |
 
-## Repository maintenance
+## Reproduce the offline baseline
 
-The obsolete `apply_v10_overlay.sh` and `README_V10.md` were removed during review. They described patching a separate v9 tree, referenced an absent router-additions file, and did not describe this integrated checkout. Git history preserves them. Runtime modules and package initializers were retained; partially wired functionality should be repaired or deliberately retired, not deleted based on filename alone.
+Use a fresh clone with Python **3.11** and Node.js available. The pinned dependency installation and offline regressions can run without starting ARIA services or configuring an execution target.
 
-Read [technical_revow.md](technical_revow.md) before planning fixes or claiming evaluation readiness. Current P0 fixes and offline test commands are recorded in [docs/security-review.md](docs/security-review.md); Remaining P1/P2 limitations and worker compatibility requirements are listed there. Old unregistered reports require verified operator import with `python -m api.import_report`; filenames alone never authorize downloads.
-
-## Offline regression checks
-
-```bash
-python -m unittest discover -s tests -t . -q
+```sh
+git clone https://github.com/Hrr-Yassin/ARIA.git
+cd ARIA
+git switch --detach 37d6cb066654e4b00fa18adfe8f2ce3e0da50801
+bash setup.sh
+.venv/bin/python -B -m unittest discover -s tests -t . -q
 node tests/frontend_contracts.cjs
 ```
 
-The offline Python tests block outbound sockets/DNS and mock workers/providers/storage. They cover
-two-user isolation, report authorization, credential rotation/revocation, forged
-results, concurrent dispatch/cancellation and restart recovery. No real security
-scans are run. Existing JWTs must be renewed after the credential-revision upgrade.
+[Locked Python dependencies](requirements.txt) · [Security review](docs/security-review.md) · [Main branch offline test source](tests/)
 
+## Authorization and limitations
 
-CI runs the locked Python installation, offline/Node regressions and separate disposable PostgreSQL/Redis integration tests. See [docs/p2-status.md](docs/p2-status.md) for commands, migration safety, dependency lock maintenance, executed results and remaining risks. Integration tests must not target an operational database.
+Use ARIA only in explicitly authorized training or research environments. Keep scope, identity and approval server-side, constrain the worker environment, and keep credentials and raw evidence private. Require a human decision on report conclusions and on any material scope change. Worker health, provider health and remaining budget can independently affect availability. A test pass establishes only the covered behavior, data and environment.
 
-The scoped HTTP scan, output/history restoration and bounded autonomous HTTP check
-have a real Firefox test; see [browser validation](docs/browser-validation.md).
+## Project documentation
 
-
-Reliability, specialist-result contracts and the gated Burp Community connector are
-tracked in [the upgrade validation register](docs/aria-upgrade-validation.md).
-The new backend requires migration `0002`; the owner's deployment was not migrated.
-Burp remains disabled pending runtime/release checks. See
-[Community connector setup and limitations](burp-community/README.md).
+- [Security review](docs/security-review.md) · [Main worker contract](docs/worker-contract.md) · [Main Fedora lab design](docs/fedora-lab.md)
+- [Advanced architecture review](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/docs/audit/architecture-review.md) · [Frontend contracts](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/docs/mission-control-contracts.md)
+- [Research objectives](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/GOALS.md) · [Development plan](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PLANS.md) · [Progress and source evidence](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md)
+- [Prior default-branch README](https://github.com/Hrr-Yassin/ARIA/blob/37d6cb066654e4b00fa18adfe8f2ce3e0da50801/README.md) · [Back to the portfolio](https://github.com/Hrr-Yassin)
