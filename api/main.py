@@ -33,6 +33,7 @@ from api.routers import burp as burp_router
 from api.routers import tool_registry as tool_registry_router
 from api.routers import tool_operations as tool_operations_router
 from api.routers import coding as coding_router
+from api.routers import mission as mission_router
 from config.settings import settings
 from memory.database_models import init_db
 from memory.session_manager import session_manager
@@ -203,6 +204,7 @@ app.include_router(sessions_router.router, prefix="/api/session", tags=["session
 app.include_router(reports_router.router, prefix="/api/report", tags=["reports"])
 app.include_router(api_keys_router.router, prefix="/api/keys", tags=["api-keys"])
 app.include_router(admin_router.router, prefix="/api/admin", tags=["admin"])
+app.include_router(mission_router.router, prefix="/api/mission", tags=["mission-control"])
 
 
 # ── Auth Endpoints ───────────────────────────────────────────────────────
@@ -382,7 +384,15 @@ async def serve_chat(session_id: str):
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Owner-facing operations overview. Authentication remains client-enforced."""
+    built = WEB_DIR / "static" / "mission" / "index.html"
+    if built.is_file():
+        # Vite fingerprints asset URLs. Revalidate the shell on each navigation.
+        return HTMLResponse(built.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+    return await serve_legacy_dashboard()
+
+
+@app.get("/dashboard/legacy", response_class=HTMLResponse)
+async def serve_legacy_dashboard():
     f = WEB_DIR / "dashboard.html"
     if f.exists():
         return render_page(f)

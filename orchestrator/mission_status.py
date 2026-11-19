@@ -75,6 +75,8 @@ def mission_status(run: dict, ledger: dict | None) -> dict:
     research_states = {'OBSERVED', 'HYPOTHESIZED', 'PLANNED', 'TESTED', 'CONFIRMED', 'REJECTED', 'INCONCLUSIVE'}
     valid_hypotheses = (isinstance(hypotheses, list) and all(isinstance(h, dict)
         and isinstance(h.get('state'), str) and h['state'] in research_states for h in hypotheses))
+    evidence = ledger.get('evidence') if isinstance(ledger, dict) else None
+    reviews = ledger.get('verification_findings') if isinstance(ledger, dict) else None
     return {
         'scope': 'current_authorized_objective',
         'objective': run.get('original_objective') or '',
@@ -93,6 +95,8 @@ def mission_status(run: dict, ledger: dict | None) -> dict:
                                if available else None),
         'task_ledger_available': available,
         'task_ledger_cursor': ledger.get('cursor') if available else None,
+        'recorded_evidence_count': len(evidence) if isinstance(evidence, list) else None,
+        'recorded_review_count': len(reviews) if isinstance(reviews, list) else None,
         'recorded_hypothesis_count': len(hypotheses) if valid_hypotheses else None,
         'hypothesis_state_counts': ({s: sum(h['state'] == s for h in hypotheses)
             for s in sorted(research_states)} if valid_hypotheses else None),

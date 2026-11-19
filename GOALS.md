@@ -1,5 +1,13 @@
 # ARIA cybersecurity competence and quality engineering mission
 
+## Current priority — ARIA Mission Control 2.0
+
+Unify the owner-facing overview and record workspace in the existing application. Preserve the session, execution, evidence, and accounting authorities. Verify the interface in visible Chromium and Firefox with an auditable baseline, representative workflows, renderer measurements, and a graphical engineering report. The full request and its unmet requirements remain tracked separately from the verified observability and containment scope. [Mission Control contracts](docs/mission-control-contracts.md)
+
+The existing C15–C23 quality program and P00–P14 reliability gates remain tracked below. Graphical acceptance uses retained records and disposable fixtures. The earlier eight-hour owner deferral, independent comparison, and admissible-inference prerequisites still apply to their original programs.
+
+The current source passed 41 Mission Control scenarios in visible Chromium and headless Firefox, including fixed-window replay, bounded forward event catch-up, containment and accounting. Visible Chromium also verified migrated disposable PostgreSQL and read-only owner navigation across all ten views on the running workstation. The offline Python suite passed 876 tests, and five JavaScript suites passed. The verified interface scope, performance measurements and evidence are recorded in the latest PROGRESS.md checkpoint. PLANS.md records the blocked execution-releasing work and limits of live worker, provider and historical evidence.
+
 Current program (2026-11-17): execute Phases 15–23 in order using the stable C15–C23 requirements in PLANS.md. Resume from the last PROGRESS.md checkpoint after every interruption. Improve measurable technical accuracy, evidence interpretation, tool literacy, specialist prompts, coding/test engineering and peer review. Infrastructure reliability is a prerequisite, not cybersecurity expertise. All completed P00–P14 work and its acceptance criteria below remain preserved.
 
 Acceptance target: 10/10 only on a named frozen benchmark with ten explicit criteria, expected/actual results, retained answers, sample size, provenance, limitations and confidence. Software regressions, deterministic analysis, replayed historical answers and fresh model measurements are separate cohorts. Policy containment never earns decision-quality credit for a wrong raw proposal. Development cases cannot certify held-out quality. Independent human review is mandatory for senior equivalence; no reviewer is available, so that comparison remains BLOCKED. General competence, eight-hour endurance and 8/5 readiness must never be inferred from passing tests.

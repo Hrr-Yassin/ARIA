@@ -150,6 +150,7 @@ class TransportObservabilityTests(OfflineCase):
                 owner = TokenData(user_id='owner', username='fixture', role='pentester', skill_level='expert')
                 ws = AsyncMock(headers={}, query_params={})
                 ws.receive_json.return_value = {'token': 'private-token-sentinel'}
+                ws.receive.side_effect = asyncio.Event().wait
                 event = {'type': 'auto_complete', 'run_id': 'run', 'event_sequence': 3,
                          'session_id': 'engagement', 'private-sentinel': 'not-a-log-field'}
                 async def access(*args, **kwargs):
@@ -187,6 +188,7 @@ class TransportObservabilityTests(OfflineCase):
         owner = TokenData(user_id='owner', username='fixture', role='pentester', skill_level='expert')
         ws = AsyncMock(headers={}, query_params={})
         ws.receive_json.return_value = {'token': 'private-token-sentinel'}
+        ws.receive.side_effect = asyncio.Event().wait
         async def stream(*args):
             yield {'run_id': 'private-run-sentinel'}
         with patch('api.routers.pentest.authenticate_socket_token', AsyncMock(return_value=owner)), \
@@ -197,3 +199,29 @@ class TransportObservabilityTests(OfflineCase):
         ws.send_json.assert_not_awaited()
         log.info.assert_not_called()
         ws.close.assert_awaited_once_with(code=4401, reason='Access revoked')
+
+    async def test_websocket_disconnect_releases_idle_stream(self):
+        owner = TokenData(user_id='owner', username='fixture', role='pentester', skill_level='expert')
+        ws = AsyncMock(headers={}, query_params={})
+        ws.receive_json.return_value = {'token': 'private-token-sentinel'}
+        subscribed, released = asyncio.Event(), asyncio.Event()
+
+        async def receive():
+            await subscribed.wait()
+            return {'type': 'websocket.disconnect'}
+
+        async def stream(*args):
+            try:
+                subscribed.set()
+                await asyncio.Event().wait()
+                yield {}
+            finally:
+                released.set()
+
+        ws.receive.side_effect = receive
+        with patch('api.routers.pentest.authenticate_socket_token', AsyncMock(return_value=owner)), \
+             patch('api.routers.pentest.get_accessible_session', AsyncMock(return_value={})), \
+             patch('api.routers.pentest.autonomous_engine.stream_events', side_effect=stream):
+            await asyncio.wait_for(autonomous_websocket(ws, 'engagement'), timeout=1)
+        self.assertTrue(released.is_set())
+        ws.send_json.assert_not_awaited()

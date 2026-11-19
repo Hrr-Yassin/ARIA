@@ -95,7 +95,7 @@ def _read_usage(value) -> tuple[dict, bool]:
         stopped = True
         invalid = True
     stop_reason = value.get('stop_reason', '')
-    if stop_reason not in STOP_REASONS:
+    if not isinstance(stop_reason, str) or stop_reason not in STOP_REASONS:
         stop_reason = 'accounting_inconsistent'
         invalid = True
     usage.update(stopped=stopped, stop_reason=stop_reason)
@@ -105,6 +105,44 @@ def _read_usage(value) -> tuple[dict, bool]:
         usage['stop_reason'] = 'accounting_inconsistent'
         invalid = True
     return usage, invalid
+
+
+def admission_snapshot(metadata: dict, limits: ModelLimits, selection: dict) -> dict:
+    """Explain hard lower bounds using accounting inputs, without reserving anything."""
+    usage, invalid = _read_usage(metadata.get('model_usage'))
+    remaining = {resource: None if invalid else max(0, limit - usage[field])
+                 for resource, limit, field in (
+                     ('calls', limits.max_calls, 'calls'),
+                     ('tokens', limits.max_tokens, 'reserved_tokens'),
+                     ('cost_microusd', limits.max_cost_microusd, 'reserved_cost_microusd'))}
+    provider, model = selection['provider'], selection['model']
+    tariff = next((item for item in limits.tariffs if item.provider == provider and item.model == model), None)
+    rate = 0 if provider == 'local' else tariff.microusd_per_million if tariff else None
+    minimum_tokens, minimum_cost = reservation_ceiling('', '', rate or 0)
+    reasons = []
+    if invalid:
+        reasons.append('accounting_inconsistent')
+    else:
+        if usage['stopped']:
+            reasons.append(usage['stop_reason'] or 'accounting_stopped')
+        if remaining['calls'] < 1:
+            reasons.append('call_limit')
+        if remaining['tokens'] < minimum_tokens:
+            reasons.append('token_reservation_floor')
+        if rate is not None and remaining['cost_microusd'] < minimum_cost:
+            reasons.append('cost_reservation_floor')
+    prerequisites = []
+    if provider != 'local' and tariff is None:
+        prerequisites.append('model_tariff_missing')
+    elif provider == 'openrouter':
+        from llm.provider_tariffs import checked_quote
+        try:
+            checked_quote(metadata, tariff)
+        except (HTTPException, ValueError, TypeError, AttributeError, KeyError):
+            prerequisites.append('model_tariff_invalid')
+    return {'state': 'blocked' if reasons else 'undetermined', 'reasons': reasons,
+            'configured_provider_prerequisites': prerequisites, 'remaining': remaining,
+            'minimum_tokens': minimum_tokens, 'minimum_cost_microusd': minimum_cost if rate is not None else None}
 
 
 class ModelAccounting:
@@ -336,14 +374,16 @@ class ModelAccounting:
         from config.settings import settings
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
-            rows = (await db.execute(select(DecisionLog).where(DecisionLog.session_id == sid,
+            rows = (await db.execute(select(DecisionLog).where(DecisionLog.session_id == sid, DecisionLog.user_id == owner,
                 DecisionLog.decision_type == 'model_attempt').order_by(
-                DecisionLog.created_at.desc()).limit(MAX_ATTEMPTS))).scalars().all()
+                DecisionLog.created_at.desc(), DecisionLog.id.desc()).limit(MAX_ATTEMPTS))).scalars().all()
             metadata = session.metadata_ or {}
-            return {'limits': ModelLimits.model_validate(metadata.get('model_limits', {})).model_dump(),
-                    'configured_selection': ({'provider': 'local', 'model': settings.LOCAL_LLM_MODEL}
-                        if settings.LLM_ROUTING == 'local' else
-                        {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL}),
+            limits = ModelLimits.model_validate(metadata.get('model_limits', {}))
+            selection = ({'provider': 'local', 'model': settings.LOCAL_LLM_MODEL}
+                         if settings.LLM_ROUTING == 'local' else
+                         {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL})
+            return {'limits': limits.model_dump(), 'configured_selection': selection,
+                    'admission': admission_snapshot(metadata, limits, selection),
                     'tariff_quotes': metadata.get('model_tariffs', {}),
                     'approved_at': metadata.get('model_budget_approved_at'),
                     'usage': metadata.get('model_usage', {}),

@@ -1,5 +1,20 @@
 # ARIA competence and reliability implementation plan
 
+## Mission Control 2.0 implementation and acceptance
+
+| Requirement | Validation | Current status |
+| --- | --- | --- |
+| MC-01 Local audit, baseline and source contracts | Local revision, clean entry audit, reproduced accounting and fetch defects, headed baseline, contract matrix | VERIFIED |
+| MC-02 Shared shell, scoped API and operator views | `/dashboard` and mission sign-in, owner session switching, inspection, preferences and responsive layouts | VERIFIED in fixtures and read-only navigation of all ten workstation views. The embedded workspace shares the shell's current session |
+| MC-03 Truthful graphs and retained event pipeline | D3 graph links, owner-scoped team and campaign paging, bounded forward catch-up, durable authorization journal, retention, socket cleanup and fixed-window replay | VERIFIED for the exposed sources. Older campaign rings are available by campaign ID. Overwritten ring prefixes and unrecorded worker transitions remain outside replay |
+| MC-04 Accounting and measured analytics | Exact minimum reservation prerequisites, unknown values, retained histories and ECharts over the public accounting projection | VERIFIED for available measurements. Missing resource or historical measurements remain unknown |
+| MC-05a Operator actions and retained records | Session creation, protected preview, signed ZIP download, proposal rejection, pause, stop, campaign cancellation and existing guarded resume | VERIFIED in fixtures. Durable pending web replay state verified through reload and disposable PostgreSQL |
+| MC-05b Full activation and settings | Offensive activation and resume, execution-releasing approvals, and expanded execution settings | BLOCKED for this implementation scope |
+| MC-06 Renderer and browser engineering | Visible Chromium comparison and stress benchmarks, Firefox, responsive and keyboard checks, bounded timeline and process measurements | VERIFIED for the measured workstation and fixture workloads |
+| MC-07 Evidence and delivery | Offline regressions, disposable PostgreSQL with visible Chromium, reproducible frontend lock, retained screenshots and HTML report | VERIFIED locally. The running workstation serves the source-bound bundle |
+
+Continuation cycle08 (2026-11-19): The retained cycle07 browser, PostgreSQL, report and workstation results supersede its earlier in-progress checkpoint. MC-03 forward catch-up is verified in the current build. The browser follows up to four forward pages per refresh, reports remaining records, and recovers from a stalled cursor. 41 workflows pass in visible Chromium and headless Firefox. The current disposable PostgreSQL run and authenticated read-only workstation check pass in visible Chromium. Live worker outcomes, paid provider operations, and execution-releasing workflows remain outside the acceptance evidence. Source retention still limits replay and analytics. See PROGRESS.md for the reproduction and evidence paths.
+
 Active program: **Cycle03 checkpoint of the retained passive runtime and defensive software checks.** Dependent work awaits admissible inference, independent human review and a working desktop installation. The frozen criteria and original operational program govern acceptance.
 
 ## Competence requirement matrix — frozen acceptance v1 (2026-11-17)

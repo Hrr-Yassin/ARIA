@@ -187,12 +187,16 @@ function normalizeUsage(value) {
   ];
   const usage = {};
   for (const field of fields) {
-    const number = Number(value?.[field]);
-    usage[field] = Number.isFinite(number) && number >= 0 ? Math.trunc(number) : 0;
+    const measured = value?.[field];
+    usage[field] = Number.isSafeInteger(measured) && measured >= 0 ? measured : null;
   }
   usage.stopped = Boolean(value?.stopped);
   usage.stop_reason = typeof value?.stop_reason === 'string' ? value.stop_reason : '';
   return usage;
+}
+
+function budgetCount(value, formatter = fmtInt) {
+  return Number.isSafeInteger(value) && value >= 0 ? formatter(value) : 'Unavailable';
 }
 
 // ── API ─────────────────────────────────────────────────────────────────
@@ -296,7 +300,7 @@ function budgetLine(label, valueText, value, max, note) {
   const head = h('div', 'budget-line-head');
   append(head, h('span', null, label), h('strong', null, valueText));
   block.appendChild(head);
-  block.appendChild(meter(value, max, label));
+  if (Number.isSafeInteger(value) && Number.isSafeInteger(max) && max > 0) block.appendChild(meter(value, max, label));
   if (note) block.appendChild(h('div', 'budget-footnote', note));
   return block;
 }
@@ -552,12 +556,12 @@ function renderMetrics() {
   const budget = modelBudget();
   const usage = normalizeUsage(budget?.usage);
   const limits = budget?.limits || {};
-  const maxCalls = Number(limits.max_calls);
-  const calls = Number(usage.calls) || 0;
-  setText('metric-calls', budget ? fmtInt(calls) : '—');
-  setText('metric-calls-unit', budget && Number.isFinite(maxCalls) && maxCalls > 0 ? 'of ' + fmtInt(maxCalls) : 'recorded');
+  const maxCalls = limits.max_calls;
+  const blocked = budget?.admission?.state === 'blocked';
+  setText('metric-calls', usage.calls === null ? '—' : fmtInt(usage.calls));
+  setText('metric-calls-unit', budget && Number.isSafeInteger(maxCalls) ? 'of ' + fmtInt(maxCalls) : 'recorded');
   setText('metric-calls-note', budget
-    ? (calls || usage.reserved_tokens ? fmtCompact(usage.reserved_tokens) + ' tokens reserved' : 'No provider usage recorded')
+    ? (blocked ? 'Model admission blocked' : usage.reserved_tokens === null ? 'Usage not recorded' : fmtCompact(usage.reserved_tokens) + ' tokens reserved')
     : 'Model budget unavailable');
 }
 
@@ -698,11 +702,11 @@ function renderCampaign() {
   const budgetColumn = h('div', 'campaign-column');
   budgetColumn.appendChild(h('h3', null, 'Campaign budget'));
   const budget = health?.budget || campaign.budget || {};
-  const reservedTokens = Number(budget.reserved_tokens ?? budget.reported_tokens ?? 0) || 0;
-  const maxTokens = Number(budget.max_tokens ?? 0) || 0;
-  const reservedCost = Number(budget.reserved_cost_microusd ?? 0) || 0;
-  const maxCost = Number(budget.max_cost_microusd ?? 0) || 0;
-  budgetColumn.appendChild(budgetLine('Tokens reserved', fmtCompact(reservedTokens) + ' / ' + fmtCompact(maxTokens), reservedTokens, maxTokens));
+  const reservedTokens = budget.reserved_tokens;
+  const maxTokens = budget.max_tokens;
+  const reservedCost = budget.reserved_cost_microusd;
+  const maxCost = budget.max_cost_microusd;
+  budgetColumn.appendChild(budgetLine('Tokens reserved', budgetCount(reservedTokens, fmtCompact) + ' / ' + budgetCount(maxTokens, fmtCompact), reservedTokens, maxTokens));
   budgetColumn.appendChild(budgetLine('Cost ceiling', fmtUsdMicro(reservedCost) + ' / ' + fmtUsdMicro(maxCost), reservedCost, maxCost));
   if (budget.stopped) {
     const stopped = h('div', 'alert-row');
@@ -1619,20 +1623,20 @@ function renderBudget() {
 
   const limits = budget.limits || {};
   const usage = normalizeUsage(budget.usage);
-  const maxCalls = Number(limits.max_calls) || 0;
-  const maxTokens = Number(limits.max_tokens) || 0;
-  const maxCost = Number(limits.max_cost_microusd) || 0;
+  const maxCalls = limits.max_calls;
+  const maxTokens = limits.max_tokens;
+  const maxCost = limits.max_cost_microusd;
   const attempts = Array.isArray(budget.attempts) ? budget.attempts : [];
   const tariffs = Array.isArray(limits.tariffs) ? limits.tariffs : [];
 
   const engagement = h('div', 'budget-section');
   engagement.appendChild(h('h3', null, 'Engagement ceiling'));
-  engagement.appendChild(budgetLine('Model call reservations', fmtInt(usage.calls) + ' / ' + fmtInt(maxCalls), usage.calls, maxCalls));
-  engagement.appendChild(budgetLine('Reserved tokens', fmtCompact(usage.reserved_tokens) + ' / ' + fmtCompact(maxTokens), usage.reserved_tokens, maxTokens,
-    fmtInt(usage.reported_tokens) + ' tokens reported'));
+  engagement.appendChild(budgetLine('Model call reservations', budgetCount(usage.calls) + ' / ' + budgetCount(maxCalls), usage.calls, maxCalls));
+  engagement.appendChild(budgetLine('Reserved tokens', budgetCount(usage.reserved_tokens, fmtCompact) + ' / ' + budgetCount(maxTokens, fmtCompact), usage.reserved_tokens, maxTokens,
+    usage.reported_tokens === null ? 'Reported token usage unavailable' : fmtInt(usage.reported_tokens) + ' tokens reported'));
   engagement.appendChild(budgetLine('Reserved cost', fmtUsdMicro(usage.reserved_cost_microusd) + ' / ' + fmtUsdMicro(maxCost), usage.reserved_cost_microusd, maxCost,
     fmtUsdMicro(usage.reported_cost_microusd) + ' reported, rounded up to micro-USD'));
-  if (!usage.calls && !usage.reserved_tokens && !usage.reserved_cost_microusd) {
+  if (usage.calls === 0 && usage.reserved_tokens === 0 && usage.reserved_cost_microusd === 0) {
     engagement.appendChild(h('div', 'budget-empty', 'No provider calls are recorded for this engagement.'));
   }
   if (usage.unknown_usage_calls) {
@@ -1643,6 +1647,13 @@ function renderBudget() {
     stopped.dataset.severity = 'critical';
     stopped.appendChild(h('div', null, 'Accounting is stopped: ' + humanize(usage.stop_reason || 'unknown reason') + '. Further provider calls are denied.'));
     engagement.appendChild(stopped);
+  }
+  const admission = budget.admission;
+  if (admission?.state === 'blocked') {
+    const reason = (admission.reasons || []).includes('token_reservation_floor')
+      ? budgetCount(admission.remaining?.tokens) + ' tokens available · ' + budgetCount(admission.minimum_tokens) + ' minimum reservation'
+      : (admission.reasons || []).map(humanize).join(', ');
+    engagement.appendChild(kvRow('Model admission blocked', reason || 'See accounting status'));
   }
   body.appendChild(engagement);
 
@@ -1676,12 +1687,12 @@ function renderBudget() {
     const section = h('div', 'budget-section');
     section.appendChild(h('h3', null, 'Campaign ceiling'));
     section.appendChild(budgetLine('Reserved tokens',
-      fmtCompact(campaignUsage.reserved_tokens) + ' / ' + fmtCompact(campaignBudget.max_tokens || 0),
-      campaignUsage.reserved_tokens, campaignBudget.max_tokens || 0));
+      budgetCount(campaignUsage.reserved_tokens, fmtCompact) + ' / ' + budgetCount(campaignBudget.max_tokens, fmtCompact),
+      campaignUsage.reserved_tokens, campaignBudget.max_tokens));
     section.appendChild(budgetLine('Reserved cost',
-      fmtUsdMicro(campaignUsage.reserved_cost_microusd) + ' / ' + fmtUsdMicro(campaignBudget.max_cost_microusd || 0),
-      campaignUsage.reserved_cost_microusd, campaignBudget.max_cost_microusd || 0));
-    section.appendChild(kvRow('Provider calls', fmtInt(campaignUsage.calls)));
+      fmtUsdMicro(campaignUsage.reserved_cost_microusd) + ' / ' + fmtUsdMicro(campaignBudget.max_cost_microusd),
+      campaignUsage.reserved_cost_microusd, campaignBudget.max_cost_microusd));
+    section.appendChild(kvRow('Provider calls', budgetCount(campaignUsage.calls)));
     body.appendChild(section);
   }
 }

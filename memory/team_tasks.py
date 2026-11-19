@@ -182,6 +182,23 @@ class TeamStore:
             events = [event for event in await self._events(db, sid) if event['sequence'] > after][:100]
             return {'events': events, 'cursor': events[-1]['sequence'] if events else after}
 
+    async def event_page(self, sid: str, owner: str, after: int | None, limit: int,
+                         *, before: int | None = None) -> tuple[list[dict], bool]:
+        """Return the latest page or older-cursor increments without materializing the ledger."""
+        async with async_session() as db:
+            sequence = DecisionLog.metadata_['sequence'].as_integer()
+            query = select(DecisionLog.metadata_).where(DecisionLog.session_id == sid,
+                DecisionLog.user_id == owner, DecisionLog.decision_type == 'team_event')
+            if after is None:
+                if before is not None:
+                    query = query.where(sequence < before)
+                query = query.order_by(sequence.desc(), DecisionLog.id.desc())
+            else:
+                query = query.where(sequence > after).order_by(sequence, DecisionLog.id)
+            records = (await db.execute(query.limit(limit + 1))).scalars().all()
+            page = records[:limit]
+            return (page[::-1] if after is None else page), len(records) > limit
+
     async def task_summary(self, sid: str, owner: str, task_ids) -> dict:
         """Bounded state counts for the given run-linked specialist tasks."""
         ids = [task_id for task_id in (task_ids or [])

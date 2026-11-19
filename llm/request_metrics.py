@@ -62,8 +62,8 @@ def safe_timings(value):
     result = {}
     for key in TIMING_FIELDS:
         number = value.get(key)
-        result[key] = (number if type(number) in {int, float} and math.isfinite(number)
-                       and 0 <= number <= 86400000 else None)
+        result[key] = (number if type(number) in {int, float} and 0 <= number <= 86400000
+                       and math.isfinite(number) else None)
     attempts = value.get('http_attempts')
     result['http_attempts'] = attempts if type(attempts) is int and 0 <= attempts <= 100 else None
     return result
