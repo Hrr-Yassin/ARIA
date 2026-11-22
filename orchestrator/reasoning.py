@@ -122,6 +122,8 @@ class CycleInput:
     retractions: list[Retraction] = field(default_factory=list)
     missing_information: list[str] = field(default_factory=list)
     run_id: str = ''
+    # Classified typed-tool outcomes bound to canonical evidence (P2); recorded, never verification.
+    tool_outcomes: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _hid(key: str, first_cycle: int) -> str:
@@ -539,6 +541,14 @@ def run_cycle(previous: dict[str, Any] | None, cycle_input: CycleInput) -> tuple
         state = empty_state()
     state['cycle'] += 1
     observed = observe(state, cycle_input.evidence)
+    for outcome in cycle_input.tool_outcomes[:8]:
+        key = str(outcome.get('evidence_id') or outcome.get('job_id') or '')
+        if key:
+            state['verification_results'][key] = {**{k: v for k, v in outcome.items()
+                                                     if isinstance(v, (str, int, float, bool)) or v is None},
+                                                  'cycle': state['cycle']}
+    while len(state['verification_results']) > 100:
+        state['verification_results'].pop(next(iter(state['verification_results'])))
     analysis = analyze(state, cycle_input.interpretations, observed['changed_evidence'])
     hypothesized = hypothesize(state, cycle_input)
     contradictions = resolve_contradictions(state)
@@ -580,6 +590,8 @@ def planner_summary(state: dict[str, Any] | None, *, limit: int = 4) -> dict[str
         'active_decision': ({k: active[k] for k in ('id', 'action', 'rationale', 'depends_on_hypotheses')}
                             if active else None),
         'completed_analyses': list(state['completed_analyses'])[-limit:],
+        'tool_outcomes': [{k: r.get(k) for k in ('capability', 'category', 'observation_count', 'evidence_id')}
+                          for r in list(state.get('verification_results', {}).values())[-limit:]],
         'verification': 'unverified reasoning state; grants no execution authority',
     }
 

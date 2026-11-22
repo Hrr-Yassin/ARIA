@@ -773,3 +773,34 @@
   In the collaborative arm, the two analyses overlapped for 0.25 s. The arm detected 2 contradictions, merged 2 duplicate conclusions, rejected 1 unsupported claim and made 1 contradiction replan. Mechanics only; no model-intelligence claim.
 - **Gaps:** listed in `docs/p1-collaboration.md`. They include live measurement, human-review latency, lexical retraction matching, a PostgreSQL restart test, evidence-ID unification and the absence of a UI.
 
+## 2026-11-22 — P1 commit, P1 gap closure and P2 tool integration
+
+- **P1 commit `689ae2d`.** Contains only the P1 files and hunks; earlier uncommitted changes are preserved. The staged tree was tested in isolation (67 tests OK).
+- **P1 gaps closed (uncommitted):**
+  - canonical ledger evidence IDs in engine reasoning;
+  - stable `claim_id` and `disposition` preserved through `professional_result` (they were previously dropped, so real reviewer rejections never reached reasoning), with unattributed rejections reported rather than guessed;
+  - an explicit dependent-approval test;
+  - redundant challenges and empty reviews skipped.
+
+  Collaborative evaluation: 3 calls (previously 4), 5,784 prompt characters (previously 8,344), 0.68 s wall time (previously 1.00 s), 0.14 s coordinator overhead, quality unchanged (0/2 false accepted, 2/2 true kept).
+- **PostgreSQL acceptance** (`python -m integration.collaboration_postgres`; fresh rootless postgres:16.6, removed after the run, 13.8 s). The crash process was SIGKILLed during a specialist call.
+  - Recovery moved the task from `running` to `blocked`.
+  - Redelivery returned a duplicate claim; the web specialist was called once in total.
+  - The failed specialist was replaced and its dependent re-pointed. Dependents ran only after explicit owner completion.
+  - The `claim_id` rejection contested the `/admin` claim, and the redundant challenge was skipped.
+  - A second restart made 0 new calls.
+  - Reasoning IDs are a subset of the ledger catalog, with no raw job IDs.
+- **P2** (`security_tools/intelligence.py`, outside the approval contract digest):
+  - readiness and compatibility against the retained validation baseline;
+  - outcome classification;
+  - objective-driven, approval-gated selection;
+  - ingestion of typed results into reasoning and P1;
+  - the `GET /api/sessions/{sid}/tool-readiness` endpoint.
+
+  Live read-only worker evidence: online, 6 validated capabilities advertised, but no version pins or contract digest reported, so readiness is 0 ready and 6 unconfirmed. No tool was executed.
+- **OpenRouter.** All 9 approved engagements still fail preflight (5 `model_provider_sharing_denied`, 3 `model_budget_denied`, 1 `model_budget_exhausted`). Policy unchanged; 0 calls, $0.
+- **Checks.**
+  - The full offline suite passed 966/967 in 49.0 s. The one failure is the same pre-existing `test_team_tasks` correlation-prompt test.
+  - Frontend contracts pass.
+  - Pyright reports 0 errors in all new modules and none on the lines added to pre-modified files.
+

@@ -1,5 +1,19 @@
 # ARIA competence and reliability implementation plan
 
+## Mission P2 — Intelligent tool integration (2026-11-22)
+
+| ID | Requirement | Status | Evidence and limits | Next action |
+| --- | --- | --- | --- | --- |
+| R-P2-01 | Capability discovery and version compatibility | IMPLEMENTED; live = unconfirmed | `readiness()` against the retained validation baseline. Live worker: 6 unconfirmed (no pins or digest reported), 4 unavailable. | Redeploy service and worker so pins and the digest are reported (owner action). |
+| R-P2-02 | Typed invocation contracts | REUSED | Recommendations are canonical `encode`/`decode` requests validated by the adapter's own scope check. The digested contract files are unchanged. | — |
+| R-P2-03 | Output interpretation and error classification | VERIFIED (offline) | `classify_outcome()`: 9 categories with retryability, operator action and evidence usability. | Distinguishing scope violations needs an adapter-contract change. |
+| R-P2-04 | Evidence provenance | VERIFIED (offline) | Canonical ledger ID plus request and output digests, version and image, recorded in reasoning `verification_results`. | Live typed receipt. |
+| R-P2-05 | Objective-driven selection | VERIFIED (offline) | `select_tools()` by information value over live hypotheses and dependencies; excludes executed, blocked and out-of-scope work; proposals only. | Richer than lexical rules. |
+| R-P2-06 | Integration with P0 and P1 | VERIFIED (offline) | A changed tool fact → hypothesis revalidation → P1 challenge with the tool evidence. | — |
+| R-P2-07 | Operator visibility | IMPLEMENTED | `GET /api/sessions/{sid}/tool-readiness`. | UI panel. |
+| R-P2-08 | Real worker compatibility | PARTIAL (read-only) | Authenticated read-only advertisement captured; no execution. | One owner-approved typed run in the isolated lab. |
+| R-P1-10 | P1 gap closure | VERIFIED | Evidence IDs, PostgreSQL restart, claim IDs, approval test, call reduction ([report](docs/p1-collaboration.md)). | — |
+
 ## Mission P1 — Intelligent multi-agent orchestration (2026-11-22)
 
 | ID | Requirement | Status | Evidence and limits | Next action |

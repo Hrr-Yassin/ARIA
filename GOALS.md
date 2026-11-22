@@ -1,6 +1,18 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — Mission P1: intelligent multi-agent orchestration
+## Current priority — Mission P2: intelligent tool integration
+
+Make tool use evidence-driven and observable without adding inventory or autonomous offensive execution. The work covers capability discovery and version compatibility, typed contracts, structured outcome classification, provenance, objective-driven selection, integration with P0 reasoning and P1 orchestration, and operator readiness visibility.
+
+Status (2026-11-22):
+
+- P1 is committed (`689ae2d`) and its critical gaps are closed (uncommitted): canonical evidence IDs, PostgreSQL crash/restart acceptance, stable claim IDs, an explicit approval-gate test, and fewer specialist calls.
+- The first P2 increment is implemented (uncommitted). Against the live worker, readiness reports 6 capabilities `unconfirmed`: the worker does not report version pins or a contract digest. No tool was executed.
+- The OpenRouter evaluation is still blocked by model-provider sharing policy, with zero spend.
+
+See [P2 report](docs/p2-tool-integration.md) and [P1 report](docs/p1-collaboration.md).
+
+## Previous priority — Mission P1: intelligent multi-agent orchestration
 
 Turn specialist coordination into an evidence-driven collaborative workflow that reuses the P0 reasoning engine. The workflow covers structured delegation, concurrent independent analyses, owner-gated dependent tasks, shared ledger evidence, supervisory review, adaptive replanning and restart-safe state. No new offensive execution workflows.
 

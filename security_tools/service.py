@@ -52,7 +52,19 @@ class ToolOperations:
             registry_sha256=provenance.registry_sha256, owner_id=context.get('owner_id'),
             scope_sha256=sha256(json.dumps(context['scope'],sort_keys=True)),
             error=output.error, observation_count=len(output.observations))
-        return {'state': state, 'output': output.model_dump(), 'provenance': provenance.model_dump()}
+        response = {'state': state, 'output': output.model_dump(), 'provenance': provenance.model_dump(),
+                    'capability': adapter.capability, 'exit_code': code}
+        # P2: classify the outcome and feed observations to the shared reasoning
+        # state under the canonical ledger evidence ID. The tool already ran, so a
+        # ledger failure is reported, never turned into a failed execution.
+        from security_tools.intelligence import classify_outcome, ingest_tool_result
+        response['outcome'] = classify_outcome(state, response['output'], code)
+        try:
+            response['reasoning'] = await ingest_tool_result(session_id, context.get('owner_id') or user_id, response)
+        except Exception:  # noqa: BLE001 - evidence remains in the verified receipt.
+            structlog.get_logger(__name__).warning('typed_tool_reasoning_unavailable', job_id=result['job_id'])
+            response['reasoning'] = {'status': 'unavailable'}
+        return response
 
 
 tool_operations = ToolOperations()
