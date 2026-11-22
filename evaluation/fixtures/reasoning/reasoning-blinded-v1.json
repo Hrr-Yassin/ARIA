@@ -1,0 +1,162 @@
+{
+  "schema_version": "aria.reasoning-eval.v1",
+  "frozen_at": "2026-11-22",
+  "authorship": "Author-held-out set written after all P3 rule and engine changes and before any evaluation run on it. Same author as the rules: not an independent or third-party blinded holdout. Labels state what is correct, not what the rules can detect.",
+  "evidence": {
+    "ftp": {"job_id": "b-ftp", "provenance": "Retained lab observation shape: 192.168.77.20 tcp/21 open (vsftpd banner, synthetic text)",
+            "output": [{"kind": "port", "locator": "192.168.77.20:21/tcp", "summary": "tcp/21 open ftp banner vsftpd 2.3.4"}]},
+    "ssh": {"job_id": "b-ssh", "provenance": "Retained lab observation shape: tcp/22 open (OpenSSH banner, synthetic text)",
+            "output": [{"kind": "port", "locator": "192.168.77.20:22/tcp", "summary": "tcp/22 open ssh banner OpenSSH 4.7p1 Debian"}]},
+    "smb": {"job_id": "b-smb", "provenance": "Retained lab observation: tcp/139 and tcp/445 open",
+            "output": [{"kind": "port", "locator": "192.168.77.20:139/tcp", "summary": "tcp/139 open netbios-ssn"},
+                       {"kind": "port", "locator": "192.168.77.20:445/tcp", "summary": "tcp/445 open microsoft-ds"}]},
+    "http_root": {"job_id": "b-http", "provenance": "Retained lab observation: HTTP 200 Metasploitable2 - Linux",
+                  "output": [{"kind": "http", "locator": "http://192.168.77.20", "summary": "HTTP 200: Metasploitable2 - Linux; server Apache/2.2.8"}]},
+    "http_root_changed": {"job_id": "b-http-later", "provenance": "Synthetic later observation at the same locator (labelled change)",
+                          "output": [{"kind": "http", "locator": "http://192.168.77.20", "summary": "HTTP 200: Welcome; server nginx/1.24.0"}]},
+    "pma_forbidden": {"job_id": "b-pma", "provenance": "Synthetic bounded path observation (labelled outcome)",
+                      "output": [{"kind": "http_path", "locator": "http://192.168.77.20/phpmyadmin", "summary": "status 403 length 287"}]},
+    "robots": {"job_id": "b-robots", "provenance": "Synthetic bounded path observation (labelled outcome)",
+               "output": [{"kind": "http_path", "locator": "http://192.168.77.20/robots.txt", "summary": "status 200 length 26"}]},
+    "mysql_open": {"job_id": "b-mysql", "provenance": "Synthetic TCP observation (labelled)",
+                   "output": [{"kind": "port", "locator": "192.168.77.20:3306/tcp", "summary": "tcp/3306 open mysql"}]},
+    "mysql_filtered": {"job_id": "b-mysql-later", "provenance": "Synthetic later TCP observation at the same locator (labelled change)",
+                       "output": [{"kind": "port", "locator": "192.168.77.20:3306/tcp", "summary": "tcp/3306 filtered"}]},
+    "scan_empty": {"job_id": "b-empty", "provenance": "Normalized TCP receipt with no observations", "output": []}
+  },
+  "follow_ups": {
+    "bounded_http_paths": {"requires_approval": true, "validation_criterion": "Compare HTTP statuses for bounded paths without redirects; a non-404 response is a path candidate, not a vulnerability."},
+    "http_observation_template": {"requires_approval": true, "validation_criterion": "Capture the pinned informational single-response observation; it does not establish a vulnerability."}
+  },
+  "cases": [
+    {
+      "id": "ftp-asserted-access",
+      "objective": "Interpret the FTP and SSH banners without asserting access or safety.",
+      "cycles": [
+        {"evidence": ["ftp", "ssh"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["FTP and SSH are open"], "limitations": [],
+           "hypotheses": [
+             {"description": "Anonymous FTP login is enabled on 192.168.77.20.", "evidence_job_ids": ["b-ftp"], "follow_up": "none", "validation_criterion": "Log in anonymously", "alternative_explanations": ["Login disabled"], "confidence": 0.8, "label": "false_positive"},
+             {"description": "The FTP banner may correspond to vsftpd 2.3.4, a release with a known historical backdoor; applicability is unverified.", "evidence_job_ids": ["b-ftp"], "follow_up": "none", "validation_criterion": "Independent version evidence beyond the banner", "alternative_explanations": ["Banner altered or patched build"], "confidence": 0.3, "label": "supported"},
+             {"description": "The SSH service is secure and not exploitable.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Weak credentials"], "confidence": 0.7, "label": "false_positive"}
+           ]}}
+      ]
+    },
+    {
+      "id": "smb-cve-assertion",
+      "objective": "Interpret open SMB ports without attributing a CVE.",
+      "cycles": [
+        {"evidence": ["smb"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["SMB ports open"], "limitations": [],
+           "hypotheses": [
+             {"description": "The host is affected by CVE-2007-2447 in the Samba usermap script.", "evidence_job_ids": ["b-smb"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Patched Samba"], "confidence": 0.85, "label": "false_positive"},
+             {"description": "SMB services are exposed and might permit null-session enumeration; this is untested.", "evidence_job_ids": ["b-smb"], "follow_up": "none", "validation_criterion": "Null-session attempt with owner approval", "alternative_explanations": ["Null sessions disabled"], "confidence": 0.3, "label": "supported"},
+             {"description": "Null session enumeration might be possible over the exposed SMB services.", "evidence_job_ids": ["b-smb"], "follow_up": "none", "validation_criterion": "Same", "alternative_explanations": ["Disabled"], "confidence": 0.3, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "forbidden-path-contradiction",
+      "objective": "Revise a path-exposure hypothesis when the bounded follow-up answers 403.",
+      "cycles": [
+        {"evidence": ["http_root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP 200 root"], "limitations": [],
+           "hypotheses": [
+             {"description": "The /phpmyadmin path may be publicly accessible.", "evidence_job_ids": ["b-http"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /phpmyadmin", "alternative_explanations": ["Not installed"], "confidence": 0.35, "label": "supported", "tag": "pma"}
+           ]}},
+        {"evidence": ["http_root", "pma_forbidden"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "no_further_analysis", "expect_contradicted": ["pma"],
+         "scripted": {"observations": ["/phpmyadmin returned 403"], "limitations": [],
+           "hypotheses": [
+             {"description": "phpMyAdmin appears to be installed but access controlled.", "evidence_job_ids": ["b-pma"], "follow_up": "none", "validation_criterion": "Authenticated owner baseline", "alternative_explanations": ["Generic 403 for any path"], "confidence": 0.4, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "banner-change-replan",
+      "objective": "Revise the plan when the server banner at the same locator changes.",
+      "cycles": [
+        {"evidence": ["http_root"], "follow_ups": ["http_observation_template"], "completed": [], "expect_action": "http_observation_template",
+         "scripted": {"observations": ["Apache/2.2.8 banner"], "limitations": [],
+           "hypotheses": [
+             {"description": "Apache 2.2.8 may be outdated; the version comes from a banner only.", "evidence_job_ids": ["b-http"], "follow_up": "http_observation_template", "validation_criterion": "Template observation of the server header", "alternative_explanations": ["Banner spoofed"], "confidence": 0.35, "label": "supported"}
+           ]}},
+        {"evidence": ["http_root_changed"], "follow_ups": ["http_observation_template"], "completed": [],
+         "expect_action": "http_observation_template", "expect_revised": true,
+         "scripted": {"observations": ["Server now reports nginx/1.24.0"], "limitations": [],
+           "hypotheses": [
+             {"description": "The service may have been redeployed behind nginx 1.24.0.", "evidence_job_ids": ["b-http-later"], "follow_up": "http_observation_template", "validation_criterion": "Template observation", "alternative_explanations": ["Load balancer alternates backends"], "confidence": 0.35, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "ssh-stable-reordered",
+      "objective": "Keep the decision stable when reviews only reorder the same SSH hypotheses.",
+      "cycles": [
+        {"evidence": ["ssh"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["OpenSSH 4.7p1"], "limitations": [],
+           "hypotheses": [
+             {"description": "OpenSSH 4.7p1 may be affected by old weak-key issues on Debian; unverified.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "Host key fingerprint comparison", "alternative_explanations": ["Keys regenerated"], "confidence": 0.3, "label": "supported"},
+             {"description": "Password authentication might be enabled for SSH.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "Auth methods banner", "alternative_explanations": ["Keys only"], "confidence": 0.3, "label": "supported"}
+           ]}},
+        {"evidence": ["ssh"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information", "expect_stable": true,
+         "scripted": {"observations": ["Same"], "limitations": [],
+           "hypotheses": [
+             {"description": "Password authentication might be enabled for SSH.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "Auth methods banner", "alternative_explanations": ["Keys only"], "confidence": 0.3, "label": "supported"},
+             {"description": "OpenSSH 4.7p1 may be affected by old weak-key issues on Debian; unverified.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "Host key fingerprint comparison", "alternative_explanations": ["Keys regenerated"], "confidence": 0.3, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "training-image-overclaim",
+      "objective": "Do not infer a specific vulnerability from a training-image title.",
+      "cycles": [
+        {"evidence": ["http_root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Metasploitable2 title"], "limitations": [],
+           "hypotheses": [
+             {"description": "The web application is vulnerable to SQL injection because the host is Metasploitable2.", "evidence_job_ids": ["b-http"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Title only"], "confidence": 0.9, "label": "false_positive"},
+             {"description": "The training image may host deliberately vulnerable web applications under predictable paths; unverified.", "evidence_job_ids": ["b-http"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for bounded paths", "alternative_explanations": ["Stripped image"], "confidence": 0.35, "label": "supported"},
+             {"description": "Attackers can read arbitrary files on this server.", "evidence_job_ids": ["b-http"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["No such flaw"], "confidence": 0.6, "label": "false_positive"}
+           ]}}
+      ]
+    },
+    {
+      "id": "empty-receipt-citation",
+      "objective": "Reject a conclusion that cites a receipt with no observations.",
+      "cycles": [
+        {"evidence": ["scan_empty", "ssh"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["Scan returned nothing"], "limitations": [],
+           "hypotheses": [
+             {"description": "A firewall may be silently dropping probes to other ports.", "evidence_job_ids": ["b-empty"], "follow_up": "none", "validation_criterion": "Compare filtered states", "alternative_explanations": ["Ports simply closed"], "confidence": 0.4, "label": "false_positive"},
+             {"description": "SSH may be the only remote administration service exposed.", "evidence_job_ids": ["b-ssh"], "follow_up": "none", "validation_criterion": "Port coverage", "alternative_explanations": ["Other services on unscanned ports"], "confidence": 0.3, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "robots-competing",
+      "objective": "Keep rival explanations for a short robots.txt alive.",
+      "cycles": [
+        {"evidence": ["robots"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths", "expect_competing": [[0, 1]],
+         "scripted": {"observations": ["robots.txt 26 bytes"], "limitations": [],
+           "hypotheses": [
+             {"description": "robots.txt may list hidden administrative paths.", "evidence_job_ids": ["b-robots"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for listed paths", "alternative_explanations": ["Disallow-all only"], "competes_with": [1], "confidence": 0.35, "label": "supported"},
+             {"description": "robots.txt is probably a default disallow-all file.", "evidence_job_ids": ["b-robots"], "follow_up": "none", "validation_criterion": "Body is User-agent * Disallow /", "alternative_explanations": ["Lists paths"], "competes_with": [0], "confidence": 0.5, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "port-filtered-contradiction",
+      "objective": "Contest a service-exposure hypothesis when the port becomes filtered.",
+      "cycles": [
+        {"evidence": ["mysql_open"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["3306 open"], "limitations": [],
+           "hypotheses": [
+             {"description": "Port 3306 may expose MySQL to the lab network.", "evidence_job_ids": ["b-mysql"], "follow_up": "none", "validation_criterion": "Service handshake", "alternative_explanations": ["Other service on 3306"], "confidence": 0.35, "label": "supported", "tag": "mysql"}
+           ]}},
+        {"evidence": ["mysql_filtered"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "expect_contradicted": ["mysql"], "expect_revised": true,
+         "scripted": {"observations": ["3306 now filtered"], "limitations": [], "hypotheses": []}}
+      ]
+    }
+  ]
+}

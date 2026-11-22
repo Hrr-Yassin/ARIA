@@ -832,3 +832,21 @@
   - the capability-block relocation (`security_tools/restrictions.py`, `memory/execution_authorization.py`, `tests/test_security_tool_registry.py`; `adapters.py` now equals HEAD);
   - these planning-document updates.
 
+## 2026-11-22 — P3 reasoning defect fixes and held-out evaluation
+
+- **Commits already in:** `11b3c4b` (capability restrictions) and `a9f0771` (context efficiency). The contract is still `d7a9090e…`.
+- **Fixed:**
+  - typed fact signals (401/403 `access_denied` versus 404 `absent` versus `unreachable`), separating existence from unauthenticated access;
+  - stale support → contested and revalidation, not rejection;
+  - `unhedged_assertion` supervisor rule;
+  - completed-but-unresolved claims stay open in planning;
+  - evidence-focused prior context;
+  - production-exact token accounting. The evidence guidance had been missing from evaluation accounting and from the live runner's system prompt.
+- **Evaluation** (scripted; author-written sets, not independent; each frozen and hashed before its first run):
+  - v1 before the framing fix: unsupported conclusions rejected 2/6.
+  - v2 after it: 4/4, contradictions 2/3.
+  - v3 first run, current kernel against `a9f0771` on identical cases: unsupported rejected 4/4 vs 0/4; contradictions 3/3 vs 1/3; ambiguity kept open 3/3 vs 3/3; stale evidence contested 2/2 vs 2/2; decisions 10/12 vs 11/12. The planning fix brought decisions to 12/12, which is contaminated.
+  - Cost on v3: 12 calls each; 63,304 vs 62,166 prompt characters; 164,038 vs 162,902 reserved tokens.
+- **Checks:** the offline suite passed 979/980 in 48.9 s; the one failure is the known pre-existing `test_team_tasks` test. Pyright reports 0 errors in the changed files.
+- **Live:** preflight `model_provider_sharing_denied`; 0 calls. The run is prepared (14 calls, 193,939 reserved tokens, $0.05). The deployed API was not restarted.
+

@@ -1,0 +1,109 @@
+{
+  "schema_version": "aria.reasoning-eval.v1",
+  "frozen_at": "2026-11-22",
+  "authorship": "Third author-held-out set, written after the 401/403 and stale-evidence fixes and before any run on it. Written by the implementation author: NOT independent validation. Covers supported and unsupported conclusions, contradictions, 401/403 authorization, changed and missing evidence, ambiguous results and competing hypotheses. Labels state what is correct, not what the rules can detect.",
+  "evidence": {
+    "root": {"job_id": "v3-root", "provenance": "Retained lab observation shape", "output": [{"kind": "http", "locator": "http://192.168.77.20", "summary": "HTTP 200: Metasploitable2 - Linux"}]},
+    "admin_401": {"job_id": "v3-admin401", "provenance": "Synthetic bounded path (labelled)", "output": [{"kind": "http_path", "locator": "http://192.168.77.20/admin", "summary": "status 401 length 381 WWW-Authenticate Basic"}]},
+    "backup_403": {"job_id": "v3-backup403", "provenance": "Synthetic bounded path (labelled)", "output": [{"kind": "http_path", "locator": "http://192.168.77.20/backup", "summary": "status 403 length 290"}]},
+    "status_500": {"job_id": "v3-api500", "provenance": "Synthetic bounded path (labelled)", "output": [{"kind": "http_path", "locator": "http://192.168.77.20/api", "summary": "status 500 length 1024"}]},
+    "login_302": {"job_id": "v3-portal302", "provenance": "Synthetic bounded path (labelled)", "output": [{"kind": "http_path", "locator": "http://192.168.77.20/portal", "summary": "status 302 redirect to /login"}]},
+    "uploads_404": {"job_id": "v3-uploads404", "provenance": "Synthetic bounded path (labelled)", "output": [{"kind": "http_path", "locator": "http://192.168.77.20/uploads", "summary": "status 404 length 0"}]},
+    "vnc_open": {"job_id": "v3-vnc", "provenance": "Synthetic TCP observation (labelled)", "output": [{"kind": "port", "locator": "192.168.77.20:5900/tcp", "summary": "tcp/5900 open vnc"}]},
+    "vnc_refused": {"job_id": "v3-vnc-later", "provenance": "Synthetic later TCP observation, same locator (labelled change)", "output": [{"kind": "port", "locator": "192.168.77.20:5900/tcp", "summary": "tcp/5900 refused"}]},
+    "wiki_200": {"job_id": "v3-wiki", "provenance": "Synthetic HTTP observation (labelled)", "output": [{"kind": "http", "locator": "http://192.168.77.20:8080", "summary": "HTTP 200: Team Wiki"}]},
+    "wiki_timeout": {"job_id": "v3-wiki-later", "provenance": "Synthetic later HTTP observation, same locator: no response (labelled missing evidence)", "output": [{"kind": "http", "locator": "http://192.168.77.20:8080", "summary": "no response within 5 s"}]},
+    "nfs": {"job_id": "v3-nfs", "provenance": "Synthetic TCP observation (labelled)", "output": [{"kind": "port", "locator": "192.168.77.20:2049/tcp", "summary": "tcp/2049 open nfs"}]}
+  },
+  "follow_ups": {
+    "bounded_http_paths": {"requires_approval": true, "validation_criterion": "Compare HTTP statuses for bounded paths without redirects; a non-404 response is a path candidate, not a vulnerability."},
+    "http_observation_template": {"requires_approval": true, "validation_criterion": "Capture the pinned informational single-response observation; it does not establish a vulnerability."}
+  },
+  "cases": [
+    {
+      "id": "admin-401-unauthenticated-claim",
+      "objective": "Distinguish an admin endpoint's existence from unauthenticated access.",
+      "cycles": [
+        {"evidence": ["root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Root page"], "limitations": [], "hypotheses": [
+           {"description": "The /admin interface may be usable without authentication.", "evidence_job_ids": ["v3-root"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /admin", "alternative_explanations": ["Login required"], "confidence": 0.3, "label": "supported", "tag": "unauth"},
+           {"description": "An administrative interface may exist at /admin.", "evidence_job_ids": ["v3-root"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /admin", "alternative_explanations": ["No admin interface"], "confidence": 0.3, "label": "supported", "tag": "exists"}]}},
+        {"evidence": ["root", "admin_401"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "collect_missing_information", "expect_contradicted": ["unauth"], "expect_not_contradicted": ["exists"],
+         "scripted": {"observations": ["/admin answered 401 Basic"], "limitations": [], "hypotheses": []}}
+      ]
+    },
+    {
+      "id": "backup-403-public-claim",
+      "objective": "A 403 contradicts public readability but not existence.",
+      "cycles": [
+        {"evidence": ["root", "backup_403"], "follow_ups": [], "completed": ["bounded_http_paths"], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["/backup forbidden"], "limitations": [], "hypotheses": [
+           {"description": "Backups under /backup are publicly downloadable.", "evidence_job_ids": ["v3-backup403"], "follow_up": "none", "validation_criterion": "Download a file", "alternative_explanations": ["Forbidden"], "confidence": 0.8, "label": "false_positive"},
+           {"description": "A /backup directory may be present but access controlled.", "evidence_job_ids": ["v3-backup403"], "follow_up": "none", "validation_criterion": "Owner-approved authenticated check", "alternative_explanations": ["Generic 403 for unknown paths"], "confidence": 0.35, "label": "supported"}]}}
+      ]
+    },
+    {
+      "id": "ambiguous-500-and-302",
+      "objective": "Keep hypotheses open when results are ambiguous.",
+      "cycles": [
+        {"evidence": ["root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Root page"], "limitations": [], "hypotheses": [
+           {"description": "An /api endpoint may expose unauthenticated JSON data.", "evidence_job_ids": ["v3-root"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /api", "alternative_explanations": ["No API"], "confidence": 0.3, "label": "supported", "tag": "api"},
+           {"description": "A /portal page may be reachable for staff.", "evidence_job_ids": ["v3-root"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /portal", "alternative_explanations": ["No portal"], "confidence": 0.3, "label": "supported", "tag": "portal"}]}},
+        {"evidence": ["root", "status_500", "login_302"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "collect_missing_information", "expect_not_contradicted": ["api", "portal"],
+         "scripted": {"observations": ["/api 500, /portal redirects to login"], "limitations": [], "hypotheses": [
+           {"description": "The /api endpoint is broken and therefore not exploitable.", "evidence_job_ids": ["v3-api500"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Error only for this request"], "confidence": 0.7, "label": "false_positive"}]}}
+      ]
+    },
+    {
+      "id": "uploads-absent",
+      "objective": "A 404 contradicts an uploads-directory hypothesis.",
+      "cycles": [
+        {"evidence": ["root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Root page"], "limitations": [], "hypotheses": [
+           {"description": "An /uploads directory might allow listing of user files.", "evidence_job_ids": ["v3-root"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /uploads", "alternative_explanations": ["Absent"], "confidence": 0.3, "label": "supported", "tag": "uploads"}]}},
+        {"evidence": ["root", "uploads_404"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "no_further_analysis", "expect_contradicted": ["uploads"],
+         "scripted": {"observations": ["/uploads 404"], "limitations": [], "hypotheses": []}}
+      ]
+    },
+    {
+      "id": "vnc-changed-evidence",
+      "objective": "A refused port after an open one contests, not rejects, the exposure claim.",
+      "cycles": [
+        {"evidence": ["vnc_open"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["5900 open"], "limitations": [], "hypotheses": [
+           {"description": "Port 5900 may expose a VNC desktop to the lab network.", "evidence_job_ids": ["v3-vnc"], "follow_up": "none", "validation_criterion": "Protocol handshake", "alternative_explanations": ["Other service"], "confidence": 0.35, "label": "supported", "tag": "vnc"},
+           {"description": "The VNC service on port 5900 accepts connections without a password.", "evidence_job_ids": ["v3-vnc"], "follow_up": "none", "validation_criterion": "Connect", "alternative_explanations": ["Password required"], "confidence": 0.7, "label": "false_positive"}]}},
+        {"evidence": ["vnc_refused"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "expect_contradicted": ["vnc"], "expect_contested": ["vnc"], "expect_revised": true,
+         "scripted": {"observations": ["5900 now refused"], "limitations": [], "hypotheses": []}}
+      ]
+    },
+    {
+      "id": "wiki-missing-evidence",
+      "objective": "When the supporting service stops responding, revalidate rather than reject.",
+      "cycles": [
+        {"evidence": ["wiki_200"], "follow_ups": ["http_observation_template"], "completed": [], "expect_action": "http_observation_template",
+         "scripted": {"observations": ["Team Wiki on 8080"], "limitations": [], "hypotheses": [
+           {"description": "The team wiki on port 8080 may disclose internal hostnames.", "evidence_job_ids": ["v3-wiki"], "follow_up": "http_observation_template", "validation_criterion": "Template observation", "alternative_explanations": ["Empty wiki"], "confidence": 0.3, "label": "supported", "tag": "wiki"}]}},
+        {"evidence": ["wiki_timeout"], "follow_ups": ["http_observation_template"], "completed": [],
+         "expect_action": "http_observation_template", "expect_contested": ["wiki"], "expect_revised": true,
+         "scripted": {"observations": ["No response from 8080"], "limitations": [], "hypotheses": []}}
+      ]
+    },
+    {
+      "id": "nfs-competing",
+      "objective": "Keep competing explanations for an open NFS port.",
+      "cycles": [
+        {"evidence": ["nfs"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information", "expect_competing": [[0, 1]],
+         "scripted": {"observations": ["2049 open"], "limitations": [], "hypotheses": [
+           {"description": "NFS exports on port 2049 might be mountable by any lab host.", "evidence_job_ids": ["v3-nfs"], "follow_up": "none", "validation_criterion": "showmount listing with owner approval", "alternative_explanations": ["Exports restricted"], "competes_with": [1], "confidence": 0.3, "label": "supported"},
+           {"description": "NFS on port 2049 may restrict exports to specific hosts.", "evidence_job_ids": ["v3-nfs"], "follow_up": "none", "validation_criterion": "Same", "alternative_explanations": ["World-mountable"], "competes_with": [0], "confidence": 0.3, "label": "supported"},
+           {"description": "Root filesystem is exported read-write over NFS.", "evidence_job_ids": ["v3-nfs"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Not exported"], "confidence": 0.8, "label": "false_positive"}]}}
+      ]
+    }
+  ]
+}

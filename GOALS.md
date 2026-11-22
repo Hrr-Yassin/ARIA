@@ -4,11 +4,13 @@
 
 Improve prompt quality, context use, model routing and supervisor decisions with measured effects. The work spends provider funds only under an approved sharing policy and budget.
 
-Status (2026-11-22):
+Status (2026-11-22): the offline work is done; **live acceptance is outstanding.**
 
-- **P2 accepted on the deployed lab.** API and Kali worker contracts match (`d7a9090e…`); one owner-approved httpx run succeeded (job `ac5747a7…`); its evidence persisted and P0 and P1 consumed it. Details in the [P2 report](docs/p2-tool-integration.md).
-- **First P3 increment:** schema and context compaction plus a review-necessity gate. In the scripted set, model calls went 13 → 10 and prompt characters fell 31% from before P3, with every decision and safety metric unchanged ([P3 report](docs/p3-llm-efficiency.md)).
-- **DeepSeek evaluation:** blocked. The owner kept provider sharing denied.
+- **Reasoning defects corrected.** 401/403 now distinguish existence from unauthenticated access. Changed or missing support contests a claim instead of rejecting it. Unhedged definitive claims are rejected. Completed-but-unresolved claims stay open in planning. Token accounting now includes the production evidence guidance.
+- **Held-out v3, first run** (author-written, so not independent), current kernel against the previous one on identical cases: unsupported conclusions rejected 4/4 vs 0/4, contradictions 3/3 vs 1/3, decisions 10/12 vs 11/12 (the incorrect decisions are reported). After a planning fix, decisions are 12/12 (contaminated).
+- **DeepSeek V4 Flash live evaluation:** prepared (14 calls, 193,939 reserved tokens, $0.05 cap) and **blocked**, because `provider_sharing` is `deny` on the approved engagement.
+
+See the [P3 report](docs/p3-llm-efficiency.md).
 
 ## Previous priority — Mission P2: intelligent tool integration
 

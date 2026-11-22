@@ -43,8 +43,9 @@ _OVERCLAIM = re.compile(
     r"injection|bypass)|\bproves?\b|\bsuccessfully\s+exploit|\bcredentials?\s+(?:are|were)\s+"
     r"(?:valid|obtained|recovered)|\bremote code execution (?:is|was) (?:possible|achieved)",
     re.IGNORECASE)
-_HEDGE = re.compile(r"\b(?:may|might|could|possibl[ey]|candidate|suggests?|unverified|"
-                    r"potential(?:ly)?|appears?|if)\b", re.IGNORECASE)
+_HEDGE = re.compile(r"\b(?:may|might|could|possibl[ey]|candidate|suggests?|unverified|untested|unconfirmed|"
+                    r"potential(?:ly)?|appears?|seems?|probabl[ey]|likely|plausibl[ey]|perhaps|whether|"
+                    r"hypothes[ie]s|if)\b", re.IGNORECASE)
 _WORD = re.compile(r"[a-z0-9]+")
 _STOP = frozenset('a an the of to on in at for and or is are be may might could possibly '
                   'potentially candidate suggests that this with by from as it its which'.split())
@@ -145,6 +146,7 @@ def observe(state: dict[str, Any], evidence: list[dict[str, Any]]) -> dict[str, 
     """Record receipt-derived facts; detect facts that changed since a prior cycle."""
     changed: list[str] = []
     added = 0
+    new_ids: list[str] = []
     by_locator = {(o['kind'], o['locator']): oid for oid, o in state['observations'].items()
                   if not o.get('superseded') and o['locator']}
     for item in evidence:
@@ -173,7 +175,8 @@ def observe(state: dict[str, Any], evidence: list[dict[str, Any]]) -> dict[str, 
             if locator:
                 by_locator[(kind, locator)] = oid
             added += 1
-    return {'observations_added': added, 'changed_evidence': sorted(set(changed))}
+            new_ids.append(oid)
+    return {'observations_added': added, 'changed_evidence': sorted(set(changed)), 'new_observations': new_ids}
 
 
 # ── ANALYZE ────────────────────────────────────────────────────────────────
@@ -197,6 +200,99 @@ def analyze(state: dict[str, Any], interpretations: list[str], changed_evidence:
             'assumptions': len(interpretations[:5]), 'requires_revalidation': revalidate}
 
 
+_ABSENT_FACT = re.compile(r'\b(?:404|410|not found)\b', re.I)
+_UNREACHABLE_FACT = re.compile(r'\b(?:closed|filtered|refused|unreachable|no route)\b', re.I)
+_ACCESS_DENIED_FACT = re.compile(r'\b(?:401|403|forbidden|unauthori[sz]ed|authentication required|access denied)\b', re.I)
+# Claims about who can access an endpoint, as opposed to whether it exists.
+_UNAUTH_ACCESS_CLAIM = re.compile(r'\b(?:public(?:ly)?|unauthenticated|without (?:any )?(?:auth\w*|credentials|login)|'
+                                  r'anonymous(?:ly)?|no (?:login|authentication|credentials)|freely|accessible|'
+                                  r'readable|browsable)\b', re.I)
+_AUTH_REQUIRED_CLAIM = re.compile(r'\b(?:requires? (?:auth\w*|login|credentials)|behind (?:\w+ )?(?:auth\w*|login)|'
+                                  r'access[- ]controlled|protected|restricted)\b', re.I)
+_EXISTENCE_CLAIM = re.compile(r'\b(?:exists?|installed|present|deployed|hosts?|runs?|enabled)\b', re.I)
+
+
+def fact_signal(summary: str) -> str | None:
+    """Typed meaning of a receipt fact for contradiction analysis."""
+    if _ACCESS_DENIED_FACT.search(summary):
+        return 'access_denied'     # the endpoint exists; unauthenticated access is refused
+    if _ABSENT_FACT.search(summary):
+        return 'absent'
+    if _UNREACHABLE_FACT.search(summary):
+        return 'unreachable'
+    return None
+_NEGATIVE_CLAIM = re.compile(r'\b(?:404|410|closed|filtered|refused|not found|absent|unavailable|no longer|returned)\b', re.I)
+
+
+def _fact_targets(locator: str) -> tuple[set[str], set[str]]:
+    """Paths and TCP ports a receipt fact is about."""
+    from urllib.parse import urlsplit
+    paths: set[str] = set()
+    ports: set[str] = set()
+    port_match = re.search(r'(?::|^)(\d{1,5})(?:/tcp)?$', locator) or re.search(r'\b(\d{1,5})/tcp\b', locator)
+    if '://' in locator:
+        parts = urlsplit(locator)
+        if parts.path and parts.path != '/':
+            paths.add(parts.path.rstrip('/').lower())
+        if parts.port:
+            ports.add(str(parts.port))
+    elif port_match:
+        ports.add(port_match.group(1))
+    return paths, ports
+
+
+def detect_fact_contradictions(state: dict[str, Any], new_observation_ids: list[str]) -> list[dict[str, Any]]:
+    """Relate new receipt facts to live claims that name the same path or port.
+
+    * ``absent`` (404/410) contradicts claims about the path.
+    * ``access_denied`` (401/403) contradicts only claims of unauthenticated or
+      public access; it corroborates claims that the endpoint exists or is protected.
+    * ``unreachable`` (closed/filtered/refused) contradicts claims about the port.
+
+    Claims that already assert the negative, or rest on the same evidence, are
+    left alone. Nothing here rejects; contradiction resolution decides status.
+    """
+    found: list[dict[str, Any]] = []
+    for oid in new_observation_ids:
+        fact = state['observations'].get(oid)
+        signal = fact_signal(fact['summary']) if fact else None
+        if not fact or not signal:
+            continue
+        paths, ports = _fact_targets(fact['locator'])
+        if not paths and not ports:
+            continue
+        ref = fact['evidence_ref']
+        for hid, hyp in state['hypotheses'].items():
+            if hyp['status'] not in {'active', 'contested'} or ref in hyp['support']:
+                continue
+            claim = hyp['claim'].lower()
+            named_path = any(re.search(re.escape(path) + r'(?![a-z0-9_-])', claim) for path in paths)
+            named_port = any(re.search(rf'(?:\bport\s*|:){port}\b|\b{port}/tcp\b', claim) for port in ports)
+            if signal == 'access_denied':
+                if not named_path:
+                    continue
+                if _UNAUTH_ACCESS_CLAIM.search(claim) and not _AUTH_REQUIRED_CLAIM.search(claim):
+                    relation = 'contradicts'
+                elif _AUTH_REQUIRED_CLAIM.search(claim) or _EXISTENCE_CLAIM.search(claim):
+                    relation = 'supports'
+                else:
+                    continue           # ambiguous wording ("reachable", "exposed"): no automatic relation
+            else:
+                if _NEGATIVE_CLAIM.search(claim) or not ((signal == 'absent' and named_path) or
+                                                         (signal == 'unreachable' and named_port)):
+                    continue
+                relation = 'contradicts'
+            field = 'contradict' if relation == 'contradicts' else 'support'
+            if ref in hyp[field]:
+                continue
+            hyp[field] = sorted({*hyp[field], ref})[:30]
+            hyp['history'].append({'cycle': state['cycle'], 'event': f'fact_{relation}', 'signal': signal,
+                                   'evidence': [ref], 'fact': fact['summary'][:160]})
+            found.append({'hypothesis': hid, 'evidence': ref, 'relation': relation, 'signal': signal,
+                          'fact': fact['summary'][:160]})
+    return found
+
+
 # ── HYPOTHESIZE + SUPERVISE ────────────────────────────────────────────────
 
 def supervise(proposal: ProposedHypothesis, allowed: set[str], observed_refs: set[str],
@@ -217,6 +313,10 @@ def supervise(proposal: ProposedHypothesis, allowed: set[str], observed_refs: se
     description = proposal.description
     if _OVERCLAIM.search(description) and not _HEDGE.search(description):
         challenges.append('unsupported_conclusion')
+    elif not _HEDGE.search(description):
+        # A conclusion stated as settled fact is an assertion, not a hypothesis: facts come
+        # only from receipts, so unhedged security claims never enter research.
+        challenges.append('unhedged_assertion')
     key = claim_key(description)
     rejected = state['rejected_claims'].get(key)
     if rejected and not set(support) - set(rejected.get('evidence', [])):
@@ -224,7 +324,7 @@ def supervise(proposal: ProposedHypothesis, allowed: set[str], observed_refs: se
     if not proposal.alternative_explanations and not proposal.competes_with:
         challenges.append('single_explanation')
     fatal = {'no_supporting_evidence', 'unknown_evidence_cited', 'evidence_has_no_retained_fact',
-             'same_evidence_supports_and_contradicts', 'unsupported_conclusion',
+             'same_evidence_supports_and_contradicts', 'unsupported_conclusion', 'unhedged_assertion',
              'previously_rejected_without_new_evidence'}
     # Confidence must be earned by independent retained evidence; it is capped
     # below verification because a review over passive receipts cannot verify.
@@ -376,11 +476,17 @@ def resolve_contradictions(state: dict[str, Any]) -> dict[str, Any]:
     for hid, hyp in state['hypotheses'].items():
         if hyp['status'] not in {'active', 'contested'}:
             continue
-        support = set(_support_refs(state, hyp)) - set(hyp['contradict'])
-        if hyp['contradict'] and not support:
+        current = set(_support_refs(state, hyp)) - set(hyp['contradict'])
+        # Support whose facts were superseded or are no longer retained is stale, not
+        # refuted: the claim needs revalidation, never automatic rejection.
+        stale = set(hyp['support']) - set(_support_refs(state, hyp)) - set(hyp['contradict'])
+        if stale and not current and not hyp.get('requires_revalidation'):
+            hyp['requires_revalidation'] = True
+            hyp['history'].append({'cycle': state['cycle'], 'event': 'support_stale', 'evidence': sorted(stale)})
+        if hyp['contradict'] and not current and not stale:
             hyp['status'] = 'rejected'
             hyp['history'].append({'cycle': state['cycle'], 'event': 'rejected',
-                                   'reason': 'Contradicting evidence with no independent retained support'})
+                                   'reason': 'Contradicting evidence with no current or stale independent support'})
             state['rejected_claims'][hyp['key']] = {
                 'claim': hyp['claim'], 'evidence': hyp['support'],
                 'reasons': ['contradicted'], 'cycles': [state['cycle']]}
@@ -454,14 +560,17 @@ def prioritize(state: dict[str, Any], available: dict[str, dict[str, Any]],
                                      f'hypothesis(es); {discriminates} discriminate competing '
                                      f'explanations; {contested} contested.')})
     if live:
-        uncertain = sum(_entropy(h['confidence']) for h in live.values() if h['follow_up'] == NO_FOLLOW_UP)
+        # Open claims: no analysis is available for them, or their analysis completed
+        # without contradicting them (an ambiguous or partial answer leaves them open).
+        # A claim the completed analysis contradicted is not reopened here.
+        open_ids = sorted(hid for hid, h in live.items()
+                          if h['follow_up'] == NO_FOLLOW_UP or (h['follow_up'] in done and h['status'] == 'active'))
+        uncertain = sum(_entropy(live[hid]['confidence']) for hid in open_ids)
         if uncertain:
             ranked.append({'action': 'collect_missing_information', 'score': round(0.5 * uncertain, 4),
-                           'redundant': False,
-                           'hypotheses': sorted(h for h, v in live.items() if v['follow_up'] == NO_FOLLOW_UP),
-                           'evidence': sorted({r for h in live.values() if h['follow_up'] == NO_FOLLOW_UP
-                                               for r in h['support']}),
-                           'rationale': 'Live hypotheses need information no available analysis supplies.'})
+                           'redundant': False, 'hypotheses': open_ids,
+                           'evidence': sorted({r for hid in open_ids for r in live[hid]['support']}),
+                           'rationale': 'Open hypotheses need information no available analysis supplies.'})
     ranked.sort(key=lambda item: (-item['score'], item['action']))
     return ranked
 
@@ -551,7 +660,10 @@ def run_cycle(previous: dict[str, Any] | None, cycle_input: CycleInput) -> tuple
         state['verification_results'].pop(next(iter(state['verification_results'])))
     analysis = analyze(state, cycle_input.interpretations, observed['changed_evidence'])
     hypothesized = hypothesize(state, cycle_input)
+    # Every fact observed this cycle is checked, including against claims proposed this cycle.
+    fact_contradictions = detect_fact_contradictions(state, observed['new_observations'])
     contradictions = resolve_contradictions(state)
+    contradictions['from_facts'] = fact_contradictions
     needs = missing_information(state, cycle_input.missing_information)
     state['dependencies'] = {item['id']: {**item, 'status': 'open'} for item in needs}
     ranked = prioritize(state, cycle_input.available_follow_ups, cycle_input.completed_follow_ups)
@@ -572,14 +684,23 @@ def run_cycle(previous: dict[str, Any] | None, cycle_input: CycleInput) -> tuple
     return state, report
 
 
-def planner_summary(state: dict[str, Any] | None, *, limit: int = 4) -> dict[str, Any]:
-    """Compact, bounded view for planner and review prompts."""
+def planner_summary(state: dict[str, Any] | None, *, limit: int = 4,
+                    focus: Iterable[str] = ()) -> dict[str, Any]:
+    """Compact, bounded view for planner and review prompts.
+
+    ``focus`` names the evidence under review: hypotheses and rejected claims that
+    touch it come first, so the bound drops unrelated history, never this evidence.
+    """
     if not state or not state.get('hypotheses') and not state.get('decisions'):
         return {}
-    live = sorted((h for h in state['hypotheses'].values() if h['status'] in {'active', 'contested'}),
-                  key=lambda h: (-_entropy(h['confidence']), h['id']))[:limit]
+    refs = set(focus)
+    candidates = [h for h in state['hypotheses'].values() if h['status'] in {'active', 'contested'}]
+    live = sorted(candidates, key=lambda h: (not refs & set(h['support'] + h['contradict']),
+                                             -_entropy(h['confidence']), h['id']))[:limit]
     active = next((d for d in state['decisions'].values() if d['status'] == 'active'), None)
-    rejected = list(state['rejected_claims'].values())[-limit:]
+    rejected_all = list(state['rejected_claims'].values())
+    rejected = sorted(rejected_all, key=lambda r: not refs & set(r.get('evidence', [])))[:limit] if refs \
+        else rejected_all[-limit:]
     return {
         'cycle': state['cycle'],
         'live_hypotheses': [{k: h[k] for k in ('id', 'claim', 'status', 'support', 'contradict',
@@ -592,6 +713,7 @@ def planner_summary(state: dict[str, Any] | None, *, limit: int = 4) -> dict[str
         'completed_analyses': list(state['completed_analyses'])[-limit:],
         'tool_outcomes': [{k: r.get(k) for k in ('capability', 'category', 'observation_count', 'evidence_id')}
                           for r in list(state.get('verification_results', {}).values())[-limit:]],
+        'omitted_live_hypotheses': max(0, len(candidates) - len(live)),
         'verification': 'unverified reasoning state; grants no execution authority',
     }
 

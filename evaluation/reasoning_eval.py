@@ -22,7 +22,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from orchestrator.reasoning import (CycleInput, ProposedHypothesis, Retraction, _OVERCLAIM, _HEDGE,
                                     claim_key, planner_summary, run_cycle)
@@ -49,8 +49,8 @@ def digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def load() -> dict[str, Any]:
-    return json.loads(FIXTURE.read_text())
+def load(path: Path | None = None) -> dict[str, Any]:
+    return json.loads((path or FIXTURE).read_text())
 
 
 def cycle_evidence(spec: dict[str, Any], cycle: dict[str, Any]) -> list[dict[str, Any]]:
@@ -112,8 +112,11 @@ class ReasoningArm:
         self.decisions: list[str] = []
         self.kernel_ms = 0.0
 
-    def prior(self) -> dict[str, Any]:
-        return planner_summary(self.state)
+    def prior(self, focus: Iterable[str] = ()) -> dict[str, Any]:
+        try:
+            return planner_summary(self.state, focus=focus)
+        except TypeError:          # kernels before evidence-focused summaries (comparison runs)
+            return planner_summary(self.state)
 
     def step(self, response: dict[str, Any], evidence: list[dict[str, Any]], follow_ups: dict[str, Any],
              completed: list[str], tags: list[str | None] | None = None) -> dict[str, Any]:
@@ -160,7 +163,8 @@ def new_tally() -> dict[str, Any]:
             'revision_expected': 0, 'revision_made': 0, 'redundant_decisions': 0,
             'duplicate_entries': 0, 'competing_expected': 0, 'competing_linked': 0,
             'overconfident_accepted_excess': [], 'overclaims_reaching_research': 0,
-            'supported_claims_unique': 0, 'supported_claims_live_at_end': 0}
+            'supported_claims_unique': 0, 'supported_claims_live_at_end': 0,
+            'ambiguity_expected': 0, 'ambiguity_kept_live': 0, 'stale_expected': 0, 'stale_contested': 0}
 
 
 def score_cycle(tally: dict[str, Any], arm: str, cycle: dict[str, Any], response: dict[str, Any],
@@ -212,6 +216,8 @@ def summarize(tally: dict[str, Any]) -> dict[str, Any]:
         'duplicate_hypothesis_entries': tally['duplicate_entries'],
         'overclaims_reaching_research': tally['overclaims_reaching_research'],
         'supported_claims_live_at_end': ratio('supported_claims_live_at_end', 'supported_claims_unique'),
+        'ambiguous_results_kept_open': ratio('ambiguity_kept_live', 'ambiguity_expected'),
+        'stale_evidence_contested_not_rejected': ratio('stale_contested', 'stale_expected'),
         'mean_unverified_confidence_excess': round(sum(excess) / len(excess), 4) if excess else 0.0,
         'counts': {k: v for k, v in tally.items() if k != 'overconfident_accepted_excess'},
     }
@@ -228,6 +234,24 @@ def strip_labels(response: dict[str, Any], legacy: bool) -> dict[str, Any]:
     return out
 
 
+def production_system(instruction: str) -> str:
+    """System text exactly as BaseAgent.query_llm_smart sends it (instruction + evidence guidance)."""
+    from agents.base_agent import EVIDENCE_ANALYSIS_GUIDANCE
+    return instruction + EVIDENCE_ANALYSIS_GUIDANCE
+
+
+def reserved_tokens(objective: str, evidence: list[dict[str, Any]], follow_ups: dict[str, Any],
+                    prior: dict[str, Any] | None, instruction: str, schema: dict[str, Any], compact: bool) -> int:
+    """ARIA's production reservation: UTF-8 bytes of prompt + system + schema text, plus 8192."""
+    from llm.context_budget import compact_json
+    from llm.engagement_budget import reservation_ceiling
+    context: dict[str, Any] = {'objective': objective, 'evidence': evidence, 'available_follow_ups': follow_ups}
+    if prior:
+        context['prior_reasoning'] = prior
+    prompt = compact_json(context) if compact else json.dumps(context)
+    return reservation_ceiling(prompt, production_system(instruction) + json.dumps(schema, ensure_ascii=True), 0)[0]
+
+
 def prompt_chars(objective: str, evidence: list[dict[str, Any]], follow_ups: dict[str, Any],
                  prior: dict[str, Any] | None, instruction: str, schema: dict[str, Any],
                  compact: bool = False) -> int:
@@ -236,14 +260,16 @@ def prompt_chars(objective: str, evidence: list[dict[str, Any]], follow_ups: dic
     context: dict[str, Any] = {'objective': objective, 'evidence': evidence, 'available_follow_ups': follow_ups}
     if prior:
         context['prior_reasoning'] = prior
+    system = production_system(instruction)
     if compact:
-        return len(compact_json(context)) + len(instruction) + len(compact_json(schema))
-    return len(json.dumps(context)) + len(instruction) + len(json.dumps(schema))
+        return len(compact_json(context)) + len(system) + len(compact_json(schema))
+    return len(json.dumps(context)) + len(system) + len(json.dumps(schema))
 
 
-async def evaluate(mode: str, responder=None, cases: list[str] | None = None) -> dict[str, Any]:
+async def evaluate(mode: str, responder=None, cases: list[str] | None = None,
+                   fixture: Path | None = None) -> dict[str, Any]:
     from agents.autonomous_engine import REVIEW_INSTRUCTION, review_schema
-    spec = load()
+    spec = load(fixture)
     if cases:
         unknown = set(cases) - {c['id'] for c in spec['cases']}
         assert not unknown, f'Unknown cases: {sorted(unknown)}'
@@ -263,12 +289,16 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
             evidence = cycle_evidence(spec, cycle)
             follow_ups = cycle_follow_ups(spec, cycle)
             allowed = {item['job_id'] for item in evidence}
-            prior = reasoning.prior()
+            prior = reasoning.prior(allowed)
             prior_ids = [h['id'] for h in prior.get('live_hypotheses', [])]
             new_schema = review_schema(allowed, follow_ups, prior_ids)
             old_schema = legacy_schema(allowed, follow_ups)
             cost['baseline']['prompt_chars'] += prompt_chars(case['objective'], evidence, follow_ups, None,
                                                              LEGACY_INSTRUCTION, old_schema)
+            cost['baseline']['reserved_tokens'] = cost['baseline'].get('reserved_tokens', 0) + reserved_tokens(
+                case['objective'], evidence, follow_ups, None, LEGACY_INSTRUCTION, old_schema, False)
+            cost['reasoning']['reserved_tokens'] = cost['reasoning'].get('reserved_tokens', 0) + reserved_tokens(
+                case['objective'], evidence, follow_ups, prior, REVIEW_INSTRUCTION, new_schema, True)
             cost['reasoning']['prompt_chars'] += prompt_chars(case['objective'], evidence, follow_ups, prior,
                                                               REVIEW_INSTRUCTION, new_schema, compact=True)
             labelled = mode == 'scripted'
@@ -294,18 +324,30 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
                 retractions = [{**r, 'prior_hypothesis_id': reasoning.tags.get(r.get('tag', ''), r.get('prior_hypothesis_id', ''))}
                                for r in new_response.get('retractions', [])]
                 new_response = {**new_response, 'retractions': retractions}
+            started = time.perf_counter()
             b = baseline.step(legacy_response, evidence, follow_ups, cycle['completed'])
+            cost['baseline']['processing_ms'] = cost['baseline'].get('processing_ms', 0.0) + (time.perf_counter() - started) * 1000
+            started = time.perf_counter()
             r = reasoning.step(new_response, evidence, follow_ups, cycle['completed'], tags)
+            cost['reasoning']['processing_ms'] = cost['reasoning'].get('processing_ms', 0.0) + (time.perf_counter() - started) * 1000
             arms = [('baseline', b, legacy_response), ('reasoning', r, new_response)]
+            gate_ms = 0.0
             if gate:
+                started = time.perf_counter()
                 needed, _ = review_needed(gated.state, evidence)
+                gate_ms = (time.perf_counter() - started) * 1000
                 if needed:
-                    gated_prior = gated.prior()
+                    gated_prior = gated.prior(allowed)
                     gated_schema = review_schema(allowed, follow_ups, [h['id'] for h in gated_prior.get('live_hypotheses', [])])
                     cost['reasoning_gated']['prompt_chars'] += prompt_chars(
                         case['objective'], evidence, follow_ups, gated_prior, REVIEW_INSTRUCTION, gated_schema, compact=True)
                     cost['reasoning_gated']['model_calls'] += 1
+                    cost['reasoning_gated']['reserved_tokens'] = cost['reasoning_gated'].get('reserved_tokens', 0) + \
+                        reserved_tokens(case['objective'], evidence, follow_ups, gated_prior, REVIEW_INSTRUCTION,
+                                        gated_schema, True)
+                    started = time.perf_counter()
                     g = gated.step(new_response, evidence, follow_ups, cycle['completed'], tags)
+                    gate_ms += (time.perf_counter() - started) * 1000
                     arms.append(('reasoning_gated', g, new_response))
                 else:
                     # No model call: nothing is proposed; the standing decision is kept.
@@ -313,6 +355,8 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
                     standing = gated.decisions[-1] if gated.decisions else 'no_further_analysis'
                     arms.append(('reasoning_gated', {'accepted': [], 'action': standing, 'redundant': standing in cycle['completed'],
                                                      'revised': False}, {'hypotheses': new_response.get('hypotheses', [])}))
+            if gate:
+                cost['reasoning_gated']['processing_ms'] = cost['reasoning_gated'].get('processing_ms', 0.0) + gate_ms
             for arm, result, response in arms:
                 labels = ([h.get('label') for h in cycle['scripted'].get('hypotheses', [])]
                           if labelled else [])
@@ -327,6 +371,17 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
                     hid = arm_state.tags.get(tag)
                     status = arm_state.state['hypotheses'][hid]['status'] if hid and arm_state.state else None
                     tallies[arm_name]['contradiction_handled'] += int(status in {'contested', 'rejected'})
+            for key, wanted, counter in (('expect_not_contradicted', {'active'}, ('ambiguity_expected', 'ambiguity_kept_live')),
+                                         ('expect_contested', {'contested'}, ('stale_expected', 'stale_contested'))):
+                for tag in cycle.get(key, []):
+                    for arm in tallies:
+                        tallies[arm][counter[0]] += 1
+                    # The pre-change baseline keeps no status: every entry stays "active".
+                    tallies['baseline'][counter[1]] += int('active' in wanted)
+                    for arm_name, arm_state in (('reasoning', reasoning), *((('reasoning_gated', gated),) if gate else ())):
+                        hid = arm_state.tags.get(tag)
+                        status = arm_state.state['hypotheses'][hid]['status'] if hid and arm_state.state else None
+                        tallies[arm_name][counter[1]] += int(status in wanted)
             for left, right in cycle.get('expect_competing', []) if labelled else []:
                 for arm in tallies:
                     tallies[arm]['competing_expected'] += 1
@@ -385,7 +440,8 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
             cost[arm]['provider']['cost_usd'] = str(sum(float(u.get('cost') or 0) for u in usage))
             cost[arm]['provider']['calls'] = len(usage)
     return {'schema_version': 'aria.reasoning-eval.result.v1', 'mode': mode,
-            'fixture_sha256': digest(load()), 'selected_cases': [c['id'] for c in spec['cases']], 'cases': len(spec['cases']),
+            'fixture': str(fixture or FIXTURE), 'fixture_sha256': digest(load(fixture)),
+            'selected_cases': [c['id'] for c in spec['cases']], 'cases': len(spec['cases']),
             'cycles': sum(len(c['cycles']) for c in spec['cases']),
             'metrics': {arm: summarize(t) for arm, t in tallies.items()},
             'cost': cost, 'per_case': cases_out,
@@ -425,7 +481,11 @@ def live_responder(user_id: str, max_calls: int, accounting, session_id: str, ma
         token = response_schema.set(schema)  # pyright: ignore[reportArgumentType]
         started = time.perf_counter()
         try:
-            result = await pool_manager.query_for_task(user_id, 'output_analysis', json.dumps(context), instruction)
+            # Same encoding and system text as the production review path.
+            from llm.context_budget import compact_json
+            prompt = compact_json(context) if instruction != LEGACY_INSTRUCTION else json.dumps(context)
+            result = await pool_manager.query_for_task(user_id, 'output_analysis', prompt,
+                                                       production_system(instruction))
         finally:
             response_schema.reset(token)
         usage = {'latency_ms': round((time.perf_counter() - started) * 1000, 1),
@@ -519,6 +579,7 @@ def main() -> None:
     parser.add_argument('--max-calls', type=int, default=30)
     parser.add_argument('--max-cost-microusd', type=int, default=50000)
     parser.add_argument('--cases', default='', help='Comma-separated case IDs (default: all)')
+    parser.add_argument('--fixture', type=Path, default=None, help='Case file (default: development set)')
     args = parser.parse_args()
     cases = [c for c in args.cases.split(',') if c] or None
     if args.mode == 'live':
@@ -526,9 +587,9 @@ def main() -> None:
             parser.error('--session-id of an owner-approved engagement is required for live mode')
         result = asyncio.run(run_live(args.session_id, args.max_calls, args.max_cost_microusd, cases))
     else:
-        result = asyncio.run(evaluate('scripted', cases=cases))
+        result = asyncio.run(evaluate('scripted', cases=cases, fixture=args.fixture))
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / f'{args.mode}-result.json'
+    path = OUT / f'{args.mode}{"-" + args.fixture.stem if args.fixture else ""}-result.json'
     path.write_text(json.dumps(result, indent=2))
     print(json.dumps({'written': str(path), 'metrics': result.get('metrics'), 'cost': {
         arm: {k: v for k, v in c.items() if k != 'usage'} for arm, c in result.get('cost', {}).items()},

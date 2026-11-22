@@ -4,12 +4,15 @@
 
 | ID | Requirement | Status | Evidence and limits | Next action |
 | --- | --- | --- | --- | --- |
-| R-P3-01 | Context optimization | VERIFIED (scripted) | Lossless schema compaction and compact context: reasoning prompt characters 59,719 → 56,095. | Billed-token confirmation on a live run. |
-| R-P3-02 | Supervisor decisions to avoid uninformative calls | VERIFIED (scripted) | `review_needed` gate: 13 → 10 calls, prompt characters −27% versus ungated; decision and safety metrics unchanged; supported claims live at end 12/12. | Live measurement. |
-| R-P3-03 | Prompt quality | NOT STARTED | Needs live model adherence measurement. | Blocked on sharing approval. |
-| R-P3-04 | Model routing | PARTIAL | Kernel-first decisions; specialist call avoidance (P1). | Live per-task cost data. |
-| R-P3-05 | Measured reasoning improvement on a live model | BLOCKED | Owner kept `provider_sharing=deny`; 0 calls. | Owner decision. |
-| R-P2-09 | Deployed P2 acceptance | VERIFIED | Contract matched; httpx job `ac5747a7…` succeeded; evidence `2e064b9d…` persisted and consumed by P0 and P1; readiness `runtime_verified`. | Revalidate the other five capabilities under the current digest. |
+| R-P3-01 | Context optimization | VERIFIED (scripted) | Lossless schema and context compaction; evidence-focused prior context with an omitted count; evidence never trimmed. | Billed tokens on a live run. |
+| R-P3-02 | Avoid uninformative model calls | VERIFIED (scripted) | Review gate: development set 13 → 10 calls; v3 0 skips (every cycle new). | Live measurement. |
+| R-P3-03 | Supervisor: unsupported definitive claims | VERIFIED (held-out, author-written) | v3 first run: 4/4 rejected vs 0/4 for the previous kernel. | Independent cases. |
+| R-P3-04 | Contradictions incl. 401/403; existence vs access | VERIFIED (held-out, author-written) | v3 first run: 3/3 vs 1/3. A typed `access_denied` signal contradicts unauthenticated-access claims and supports existence claims. | — |
+| R-P3-05 | Changed or missing evidence → contested, not rejected | VERIFIED (held-out, author-written) | v3: 2/2; unit tests cover superseded port and HTTP evidence. | — |
+| R-P3-06 | Decision quality | PARTIAL | v3 first run 10/12 (previous kernel 11/12); after the open-claim fix 12/12 (**contaminated**). | Fresh held-out set. |
+| R-P3-07 | Token and cost accounting | VERIFIED (offline) | Fixed undercount: production appends `EVIDENCE_ANALYSIS_GUIDANCE`. The evaluation uses the exact production system text (tested), and the live runner now sends it. | Reconcile against billed receipts. |
+| R-P3-08 | Live model acceptance (DeepSeek V4 Flash, $0.05) | BLOCKED | `model_provider_sharing_denied` on `c5486358`; prepared run 14 calls, 193,939 reserved tokens. | Owner sets `provider_sharing=redacted_metadata`. |
+| R-P2-09 | Deployed P2 acceptance | VERIFIED | httpx job `ac5747a7…`; contract `d7a9090e…`. | Revalidate the other five capabilities. |
 
 ## Mission P2 — Intelligent tool integration (2026-11-22)
 

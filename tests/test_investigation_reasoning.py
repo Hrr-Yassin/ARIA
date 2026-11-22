@@ -130,6 +130,75 @@ class ReasoningKernel(OfflineCase):
                                          evidence=(HTTP, PORT)))
         self.assertTrue(all(not h['verified'] and h['confidence'] <= .7 for h in state['hypotheses'].values()))
 
+    def test_negative_fact_contradicts_claim_naming_its_path_or_port(self):
+        state, _ = run_cycle(None, cycle([proposal('The site may expose an /admin path'),
+                                          proposal('Port 8443 may host a management console', refs=('job-port',)),
+                                          proposal('The /admin path may have returned 404 earlier')],
+                                         evidence=(HTTP, PORT)))
+        admin, console, negative = (h['id'] for h in state['hypotheses'].values())
+        probe = {'job_id': 'job-probe', 'output': [
+            {'kind': 'http_path', 'locator': 'http://192.0.2.1:8080/admin', 'summary': 'status 404 length 0'},
+            {'kind': 'port', 'locator': '192.0.2.1:8443/tcp', 'summary': 'tcp/8443 closed'}]}
+        state, report = run_cycle(state, cycle([], evidence=(probe,)))
+        self.assertEqual({c['hypothesis'] for c in report['contradictions']['from_facts']}, {admin, console})
+        self.assertEqual(state['hypotheses'][admin]['status'], 'contested')
+        self.assertEqual(state['hypotheses'][negative]['status'], 'active')   # claim already asserts the negative
+
+    def test_positive_fact_or_unrelated_path_is_not_a_contradiction(self):
+        state, _ = run_cycle(None, cycle([proposal('The site may expose an /admin path')]))
+        probe = {'job_id': 'job-probe', 'output': [
+            {'kind': 'http_path', 'locator': 'http://192.0.2.1:8080/admin', 'summary': 'status 200 length 512'},
+            {'kind': 'http_path', 'locator': 'http://192.0.2.1:8080/administrator', 'summary': 'status 404'}]}
+        state, report = run_cycle(state, cycle([], evidence=(probe,)))
+        self.assertEqual(report['contradictions']['from_facts'], [])
+
+    def test_summary_puts_claims_about_reviewed_evidence_first(self):
+        claims = ['The root page may be a vendor default', 'Directory listing may be enabled',
+                  'A reverse proxy may front the application']
+        state, _ = run_cycle(None, cycle([proposal(c, refs=('job-http',)) for c in claims]
+                                         + [proposal('Port claim may be about tcp 8080',
+                                                                         refs=('job-port',))],
+                                         evidence=(HTTP, PORT)))
+        focused = planner_summary(state, limit=1, focus=['job-port'])
+        self.assertEqual(focused['live_hypotheses'][0]['support'], ['job-port'])
+        self.assertEqual(focused['omitted_live_hypotheses'], 3)
+
+    def test_unhedged_security_assertions_are_not_hypotheses(self):
+        for text in ('Anonymous FTP login is enabled on the host.', 'The host is affected by CVE-2007-2447.',
+                     'The SSH service is secure and not exploitable.'):
+            accepted, challenges, _ = supervise(proposal(text), {'job-http'}, {'job-http'}, empty_state())
+            self.assertFalse(accepted, text)
+            self.assertIn('unhedged_assertion', challenges)
+        for text in ('Anonymous FTP login might be enabled; untested.', 'The host is probably a default install.'):
+            self.assertTrue(supervise(proposal(text), {'job-http'}, {'job-http'}, empty_state())[0], text)
+
+    def test_access_denied_separates_existence_from_unauthenticated_access(self):
+        root = {'job_id': 'job-root', 'output': [{'kind': 'http', 'locator': 'http://192.0.2.1', 'summary': 'HTTP 200'}]}
+        state, _ = run_cycle(None, cycle([
+            proposal('The /manager path may be accessible without authentication', refs=('job-root',)),
+            proposal('A manager application may exist at /manager', refs=('job-root',)),
+            proposal('The /manager path may be reachable', refs=('job-root',))], evidence=(root,)))
+        public, exists, ambiguous = (h['id'] for h in state['hypotheses'].values())
+        probe = {'job_id': 'job-403', 'output': [
+            {'kind': 'http_path', 'locator': 'http://192.0.2.1/manager', 'summary': 'status 403 length 287'}]}
+        state, report = run_cycle(state, cycle([], evidence=(probe,)))
+        relations = {c['hypothesis']: c['relation'] for c in report['contradictions']['from_facts']}
+        self.assertEqual(relations, {public: 'contradicts', exists: 'supports'})
+        self.assertEqual(state['hypotheses'][public]['status'], 'contested')
+        self.assertIn('job-403', state['hypotheses'][exists]['support'])
+        self.assertEqual(state['hypotheses'][ambiguous]['status'], 'active')
+
+    def test_superseded_support_contests_instead_of_rejecting(self):
+        opened = {'job_id': 'job-open', 'output': [{'kind': 'port', 'locator': '192.0.2.1:3306/tcp', 'summary': 'tcp/3306 open'}]}
+        state, _ = run_cycle(None, cycle([proposal('Port 3306 may expose MySQL', refs=('job-open',))], evidence=(opened,)))
+        hid = next(iter(state['hypotheses']))
+        filtered = {'job_id': 'job-later', 'output': [{'kind': 'port', 'locator': '192.0.2.1:3306/tcp', 'summary': 'tcp/3306 filtered'}]}
+        state, report = run_cycle(state, cycle([], evidence=(filtered,)))
+        self.assertEqual(state['hypotheses'][hid]['status'], 'contested')
+        self.assertTrue(state['hypotheses'][hid]['requires_revalidation'])
+        self.assertEqual(report['contradictions']['rejected'], [])
+        self.assertEqual(report['decision']['action'], 'collect_missing_information')
+
     def test_claim_key_is_order_insensitive(self):
         self.assertEqual(claim_key('admin path may be exposed'), claim_key('Exposed admin path'))
 
@@ -343,3 +412,23 @@ class ContextBudget(OfflineCase):
                     'decision_consistency', 'replanning_on_evidence_change', 'overclaims_reaching_research'):
             self.assertEqual(gated[key], full[key], key)
         self.assertLess(result['cost']['reasoning_gated']['prompt_chars'], result['cost']['reasoning']['prompt_chars'])
+
+
+class EvaluationAccounting(OfflineCase):
+    def test_evaluation_uses_the_production_system_text(self):
+        from agents.autonomous_engine import REVIEW_INSTRUCTION
+        from agents.orchestrator_agent import orchestrator_agent
+        from evaluation.reasoning_eval import production_system
+        _, system = orchestrator_agent._ground_prompt('task', REVIEW_INSTRUCTION)
+        self.assertEqual(production_system(REVIEW_INSTRUCTION), system)
+
+    async def test_heldout_v3_targeted_defects_are_fixed(self):
+        from pathlib import Path
+        from evaluation.reasoning_eval import evaluate
+        result = await evaluate('scripted', fixture=Path('evaluation/fixtures/reasoning/reasoning-heldout-v3.json'))
+        counts = result['metrics']['reasoning']['counts']
+        self.assertEqual((counts['fp_rejected'], counts['fp']), (4, 4))
+        self.assertEqual((counts['contradiction_handled'], counts['contradiction_expected']), (3, 3))
+        self.assertEqual((counts['stale_contested'], counts['stale_expected']), (2, 2))
+        self.assertEqual((counts['ambiguity_kept_live'], counts['ambiguity_expected']), (3, 3))
+        self.assertEqual(counts['tp_accepted'], counts['tp'])

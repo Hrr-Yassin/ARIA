@@ -67,6 +67,7 @@ REVIEW_INSTRUCTION = (
     'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
     'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
     'Facts are only what evidence outputs show; put inferences in assumptions. '
+    'Phrase every hypothesis with explicit uncertainty (may, might, unverified); unhedged claims are rejected. '
     'Prefer competing explanations: link rival hypotheses with competes_with (zero-based indexes) and list alternative_explanations. '
     'Cite contradicting_evidence_job_ids when evidence weakens a hypothesis. '
     'Use missing_information for what would distinguish the hypotheses. '
@@ -2000,12 +2001,6 @@ class AutonomousEngine:
         except Exception:
             raise InvestigationReviewError('reasoning_state_unavailable',
                 'Investigation reasoning state is unavailable; no provider call was made.') from None
-        # Reasoning stores canonical ledger evidence IDs; the model cites worker job IDs.
-        prior_reasoning = planner_summary(prior_record.get('state'))
-        for item in prior_reasoning.get('live_hypotheses', []):
-            for field in ('support', 'contradict'):
-                item[field] = [aliases.get(ref, ref) for ref in item[field]]
-        prior_ids = [h['id'] for h in prior_reasoning.get('live_hypotheses', [])]
         from memory.investigation_state import canonical_worker_evidence
         from orchestrator.reasoning import review_needed
         try:
@@ -2013,6 +2008,13 @@ class AutonomousEngine:
         except Exception:
             raise InvestigationReviewError('reasoning_state_unavailable',
                 'Evidence could not be cataloged; no provider call was made.') from None
+        # Reasoning stores canonical ledger evidence IDs; the model cites worker job IDs.
+        # Prior claims about the evidence under review are shown first.
+        prior_reasoning = planner_summary(prior_record.get('state'), focus=canonical.values())
+        for item in prior_reasoning.get('live_hypotheses', []):
+            for field in ('support', 'contradict'):
+                item[field] = [aliases.get(ref, ref) for ref in item[field]]
+        prior_ids = [h['id'] for h in prior_reasoning.get('live_hypotheses', [])]
         needed, reason = review_needed(prior_record.get('state'), [
             {**item, 'job_id': canonical.get(item['job_id'], item['job_id'])} for item in evidence])
         if not needed:

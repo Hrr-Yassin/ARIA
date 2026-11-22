@@ -1,0 +1,110 @@
+{
+  "schema_version": "aria.reasoning-eval.v1",
+  "frozen_at": "2026-11-22",
+  "authorship": "Second author-held-out set, written after the hypothesis-framing fix and before any run on it. Same author as the rules: not an independent or third-party blinded holdout. Scenarios, services and phrasings differ from the development set and from blinded v1. Labels state what is correct, not what the rules can detect.",
+  "evidence": {
+    "telnet": {"job_id": "v2-telnet", "provenance": "Synthetic TCP observation (labelled)",
+               "output": [{"kind": "port", "locator": "192.168.77.20:23/tcp", "summary": "tcp/23 open telnet"}]},
+    "postgres": {"job_id": "v2-pg", "provenance": "Synthetic TCP observation (labelled)",
+                 "output": [{"kind": "port", "locator": "192.168.77.20:5432/tcp", "summary": "tcp/5432 open postgresql"}]},
+    "tomcat": {"job_id": "v2-tomcat", "provenance": "Synthetic HTTP observation (labelled)",
+               "output": [{"kind": "http", "locator": "http://192.168.77.20:8180", "summary": "HTTP 200: Apache Tomcat/5.5"}]},
+    "manager_401": {"job_id": "v2-manager", "provenance": "Synthetic bounded path observation (labelled)",
+                    "output": [{"kind": "http_path", "locator": "http://192.168.77.20:8180/manager/html", "summary": "status 401 length 954"}]},
+    "dav_404": {"job_id": "v2-dav", "provenance": "Synthetic bounded path observation (labelled)",
+                "output": [{"kind": "http_path", "locator": "http://192.168.77.20/dav", "summary": "status 404 length 0"}]},
+    "http_root": {"job_id": "v2-http", "provenance": "Retained lab observation: HTTP 200 Metasploitable2 - Linux",
+                  "output": [{"kind": "http", "locator": "http://192.168.77.20", "summary": "HTTP 200: Metasploitable2 - Linux"}]},
+    "irc": {"job_id": "v2-irc", "provenance": "Synthetic TCP observation (labelled)",
+            "output": [{"kind": "port", "locator": "192.168.77.20:6667/tcp", "summary": "tcp/6667 open irc UnrealIRCd"}]},
+    "irc_later": {"job_id": "v2-irc-later", "provenance": "Synthetic later TCP observation at the same locator (labelled change)",
+                  "output": [{"kind": "port", "locator": "192.168.77.20:6667/tcp", "summary": "tcp/6667 closed"}]}
+  },
+  "follow_ups": {
+    "bounded_http_paths": {"requires_approval": true, "validation_criterion": "Compare HTTP statuses for bounded paths without redirects; a non-404 response is a path candidate, not a vulnerability."},
+    "http_observation_template": {"requires_approval": true, "validation_criterion": "Capture the pinned informational single-response observation; it does not establish a vulnerability."}
+  },
+  "cases": [
+    {
+      "id": "cleartext-services",
+      "objective": "Interpret telnet and PostgreSQL exposure without asserting credentials.",
+      "cycles": [
+        {"evidence": ["telnet", "postgres"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["telnet and postgres open"], "limitations": [],
+           "hypotheses": [
+             {"description": "Telnet transmits credentials in cleartext, so any login on this host can be captured.", "evidence_job_ids": ["v2-telnet"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["No logins occur"], "confidence": 0.7, "label": "false_positive"},
+             {"description": "Telnet exposure may allow credential interception if operators log in over the lab network; unverified.", "evidence_job_ids": ["v2-telnet"], "follow_up": "none", "validation_criterion": "Observe whether interactive logins occur (owner approval)", "alternative_explanations": ["Service unused"], "confidence": 0.3, "label": "supported"},
+             {"description": "PostgreSQL uses the default postgres/postgres credentials.", "evidence_job_ids": ["v2-pg"], "follow_up": "none", "validation_criterion": "Login attempt", "alternative_explanations": ["Changed password"], "confidence": 0.75, "label": "false_positive"},
+             {"description": "PostgreSQL might accept remote connections from the lab network.", "evidence_job_ids": ["v2-pg"], "follow_up": "none", "validation_criterion": "Protocol handshake", "alternative_explanations": ["pg_hba rejects remote hosts"], "confidence": 0.3, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "tomcat-manager-401",
+      "objective": "Revise a manager-exposure hypothesis when the path requires authentication.",
+      "cycles": [
+        {"evidence": ["tomcat"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Tomcat 5.5 on 8180"], "limitations": [],
+           "hypotheses": [
+             {"description": "The Tomcat manager at /manager/html may be reachable without authentication.", "evidence_job_ids": ["v2-tomcat"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /manager/html", "alternative_explanations": ["Manager removed"], "confidence": 0.35, "label": "supported", "tag": "manager"},
+             {"description": "Tomcat 5.5 is end of life and therefore exploitable.", "evidence_job_ids": ["v2-tomcat"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Backported fixes"], "confidence": 0.8, "label": "false_positive"}
+           ]}},
+        {"evidence": ["tomcat", "manager_401"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "collect_missing_information", "expect_contradicted": ["manager"],
+         "scripted": {"observations": ["/manager/html requires authentication"], "limitations": [],
+           "hypotheses": [
+             {"description": "The manager application may exist behind HTTP basic authentication; credentials are untested.", "evidence_job_ids": ["v2-manager"], "follow_up": "none", "validation_criterion": "Owner-approved credential policy check", "alternative_explanations": ["401 for any path"], "confidence": 0.35, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "webdav-absent",
+      "objective": "Withdraw a WebDAV hypothesis when the path is absent.",
+      "cycles": [
+        {"evidence": ["http_root"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP root"], "limitations": [],
+           "hypotheses": [
+             {"description": "WebDAV might be enabled at /dav on the training image.", "evidence_job_ids": ["v2-http"], "follow_up": "bounded_http_paths", "validation_criterion": "Status of /dav", "alternative_explanations": ["Not configured"], "confidence": 0.3, "label": "supported", "tag": "dav"}
+           ]}},
+        {"evidence": ["http_root", "dav_404"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "no_further_analysis", "expect_contradicted": ["dav"],
+         "scripted": {"observations": ["/dav returned 404"], "limitations": [], "hypotheses": []}}
+      ]
+    },
+    {
+      "id": "irc-backdoor-claim",
+      "objective": "Treat an IRC banner as a hint, then react when the port closes.",
+      "cycles": [
+        {"evidence": ["irc"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "scripted": {"observations": ["UnrealIRCd on 6667"], "limitations": [],
+           "hypotheses": [
+             {"description": "UnrealIRCd on port 6667 contains the 3.2.8.1 backdoor.", "evidence_job_ids": ["v2-irc"], "follow_up": "none", "validation_criterion": "None", "alternative_explanations": ["Different version"], "confidence": 0.85, "label": "false_positive"},
+             {"description": "The IRC service on port 6667 may be an UnrealIRCd build whose exact version is unconfirmed.", "evidence_job_ids": ["v2-irc"], "follow_up": "none", "validation_criterion": "Version evidence beyond the banner", "alternative_explanations": ["Spoofed banner"], "confidence": 0.3, "label": "supported", "tag": "irc"}
+           ]}},
+        {"evidence": ["irc_later"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information",
+         "expect_contradicted": ["irc"], "expect_revised": true,
+         "scripted": {"observations": ["6667 now closed"], "limitations": [],
+           "hypotheses": [
+             {"description": "The IRC daemon may have been stopped or firewalled since the first observation.", "evidence_job_ids": ["v2-irc-later"], "follow_up": "none", "validation_criterion": "Later observation", "alternative_explanations": ["Intermittent service"], "confidence": 0.35, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "root-page-duplicates",
+      "objective": "Merge restated hypotheses about the root page and keep the decision.",
+      "cycles": [
+        {"evidence": ["http_root"], "follow_ups": ["http_observation_template"], "completed": [], "expect_action": "http_observation_template",
+         "scripted": {"observations": ["Root page title"], "limitations": [],
+           "hypotheses": [
+             {"description": "The root page might expose links to bundled vulnerable applications.", "evidence_job_ids": ["v2-http"], "follow_up": "http_observation_template", "validation_criterion": "Template observation", "alternative_explanations": ["Plain landing page"], "confidence": 0.3, "label": "supported"},
+             {"description": "Links to bundled vulnerable applications might be exposed by the root page.", "evidence_job_ids": ["v2-http"], "follow_up": "http_observation_template", "validation_criterion": "Template observation", "alternative_explanations": ["Plain landing page"], "confidence": 0.3, "label": "supported"}
+           ]}},
+        {"evidence": ["http_root"], "follow_ups": ["http_observation_template"], "completed": [], "expect_action": "http_observation_template", "expect_stable": true,
+         "scripted": {"observations": ["Same page"], "limitations": [],
+           "hypotheses": [
+             {"description": "The root page might expose links to bundled vulnerable applications.", "evidence_job_ids": ["v2-http"], "follow_up": "http_observation_template", "validation_criterion": "Template observation", "alternative_explanations": ["Plain landing page"], "confidence": 0.3, "label": "supported"}
+           ]}}
+      ]
+    }
+  ]
+}
