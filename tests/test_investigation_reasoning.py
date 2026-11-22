@@ -183,7 +183,7 @@ class ReasoningPersistence(OfflineCase):
 
 
 class SupervisedReview(OfflineCase):
-    async def review(self, engine, state, output):
+    async def review(self, engine, state, output, stdout='HTTP/1.1 200 OK'):
         from agents.orchestrator_agent import orchestrator_agent
         from memory.worker_jobs import worker_jobs
         prompts = []
@@ -193,7 +193,7 @@ class SupervisedReview(OfflineCase):
             return {'success': True, 'content': json.dumps(output)}
         with patch.object(worker_jobs.store, 'get', AsyncMock(return_value={'session_id': 'engagement'})), \
                 patch.object(worker_jobs.client, 'status', AsyncMock(return_value={
-                    'stdout': 'HTTP/1.1 200 OK', 'stderr': '', 'exit_code': 0})), \
+                    'stdout': stdout, 'stderr': '', 'exit_code': 0})), \
                 patch.object(worker_jobs, 'verify_receipt', AsyncMock()), \
                 patch.object(engine, '_persist', AsyncMock()), \
                 patch.object(orchestrator_agent, 'query_llm_smart', side_effect=model), \
@@ -224,7 +224,7 @@ class SupervisedReview(OfflineCase):
         self.assertEqual(report['supervisor_rejected'][0]['challenges'], ['unsupported_conclusion', 'single_explanation', 'confidence_capped'])
         state.run_id = 'second-run'
         output['hypotheses'] = output['hypotheses'][1:]
-        _, _, prompt = await self.review(engine, state, output)
+        _, _, prompt = await self.review(engine, state, output, stdout='HTTP/1.1 200 OK\nServer: lab')
         prior = prompt['prior_reasoning']
         self.assertEqual(len(prior['live_hypotheses']), 1)
         self.assertIn('unsupported_conclusion', prior['rejected_claims'][0]['reasons'])
@@ -244,8 +244,38 @@ class SupervisedReview(OfflineCase):
         stored = next(iter(self.reasoning_records['engagement']['state']['hypotheses'].values()))
         self.assertEqual(stored['support'], ['ev-ledger-1'])
         state.run_id = 'second-run'
-        _, _, prompt = await self.review(engine, state, output)
+        _, _, prompt = await self.review(engine, state, output, stdout='HTTP/1.1 200 OK\nServer: lab')
         self.assertEqual(prompt['prior_reasoning']['live_hypotheses'][0]['support'], ['owned-job'])
+
+    async def test_identical_receipt_facts_skip_the_model_review(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState
+        from agents.orchestrator_agent import orchestrator_agent
+        from memory.worker_jobs import worker_jobs
+        engine = AutonomousEngine()
+        state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
+        state.evidence_job_ids = ['owned-job']
+        output = {'observations': [], 'limitations': [], 'hypotheses': [
+            {'description': 'The response may come from a default installation page',
+             'evidence_job_ids': ['owned-job'], 'follow_up': 'none', 'validation_criterion': 'Compare body',
+             'alternative_explanations': ['Custom app']}]}
+        await self.review(engine, state, output)
+        calls_before = state.model_calls
+        state.run_id = 'second-run'
+        query = AsyncMock()
+        with patch.object(worker_jobs.store, 'get', AsyncMock(return_value={'session_id': 'engagement'})), \
+                patch.object(worker_jobs.client, 'status', AsyncMock(return_value={
+                    'stdout': 'HTTP/1.1 200 OK', 'stderr': '', 'exit_code': 0})), \
+                patch.object(worker_jobs, 'verify_receipt', AsyncMock()), \
+                patch.object(engine, '_persist', AsyncMock()), \
+                patch.object(orchestrator_agent, 'query_llm_smart', query), \
+                patch.object(engine, '_emit', AsyncMock()) as emit, \
+                patch.object(engine, '_write_decision_log', AsyncMock()):
+            await engine._review_investigation(state)
+        query.assert_not_awaited()
+        self.assertEqual(state.model_calls, calls_before)
+        assert emit.await_args is not None
+        event = emit.await_args.args[1]
+        self.assertEqual((event['status'], event['review']['reason']), ('skipped', 'no_new_receipt_facts'))
 
     async def test_unknown_retraction_target_is_rejected(self):
         from agents.autonomous_engine import AutonomousEngine, InvestigationReviewError, SessionRunState
@@ -281,3 +311,35 @@ class ReasoningEvaluation(OfflineCase):
         self.assertEqual(reasoning['redundant_decisions'], 0)
         self.assertEqual(baseline['false_positive_rejection'], 0.0)
         self.assertGreater(baseline['duplicate_hypothesis_entries'], 0)
+
+
+class ContextBudget(OfflineCase):
+    def test_schema_compaction_keeps_every_constraint(self):
+        from agents.autonomous_engine import review_schema
+        from agents.orchestrator_agent import InvestigationReview
+        from llm.context_budget import compact_json, compact_schema
+        raw = InvestigationReview.model_json_schema()
+        compact = review_schema({'job-1'}, {'bounded_http_paths': {}}, ['h-0123456789ab'])
+        hyp = compact['$defs']['EvidenceHypothesis']
+        self.assertIn('description', hyp['properties'])            # a field named "description" survives
+        self.assertEqual(hyp['required'], raw['$defs']['EvidenceHypothesis']['required'])
+        self.assertFalse(hyp['additionalProperties'])
+        self.assertEqual(hyp['properties']['follow_up']['enum'], ['bounded_http_paths', 'none'])
+        self.assertEqual(hyp['properties']['evidence_job_ids']['items']['enum'], ['job-1'])
+        self.assertNotIn('default', hyp['properties']['confidence'])
+        self.assertNotIn('"default":', compact_json(compact))
+        self.assertNotIn('title', hyp)
+        self.assertLess(len(compact_json(compact)), len(compact_json(compact_schema(raw))) + 200)
+        self.assertLess(len(compact_json(compact_schema(raw))), len(compact_json(raw)))
+
+    async def test_gated_evaluation_saves_calls_without_losing_supported_claims(self):
+        from evaluation.reasoning_eval import evaluate
+        result = await evaluate('scripted')
+        gated, full = result['metrics']['reasoning_gated'], result['metrics']['reasoning']
+        self.assertEqual(result['cost']['reasoning_gated']['model_calls'], 10)
+        self.assertEqual(result['cost']['reasoning_gated']['skipped_reviews'], 3)
+        self.assertEqual(gated['supported_claims_live_at_end'], 1.0)
+        for key in ('false_positive_rejection', 'contradiction_handling', 'decision_accuracy',
+                    'decision_consistency', 'replanning_on_evidence_change', 'overclaims_reaching_research'):
+            self.assertEqual(gated[key], full[key], key)
+        self.assertLess(result['cost']['reasoning_gated']['prompt_chars'], result['cost']['reasoning']['prompt_chars'])

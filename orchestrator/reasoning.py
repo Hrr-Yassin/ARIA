@@ -620,3 +620,31 @@ def task_reasoning_context(state: dict[str, Any] | None, evidence_refs: Iterable
                         'rejected or inconclusive, citing the evidence. Do not restate rejected claims without '
                         'new evidence.'),
     }
+
+
+def review_needed(state: dict[str, Any] | None, evidence: list[dict[str, Any]]) -> tuple[bool, str]:
+    """Supervisor decision: is a model review of this evidence informative?
+
+    A review is skipped only when every receipt fact is already in the reasoning
+    state. Re-reading identical facts cannot resolve a contested hypothesis; that
+    needs new evidence (for example an approved follow-up), not another model call.
+    """
+    if not state or state.get('version') != REASONING_VERSION or not state.get('observations'):
+        return True, 'no_prior_reasoning'
+    new = 0
+    for item in evidence:
+        ref = str(item.get('job_id', ''))
+        output = item.get('output')
+        facts = output if isinstance(output, list) else [
+            {'kind': 'raw', 'locator': '', 'summary': str(output or '')[:300]}]
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            kind = str(fact.get('kind', 'raw'))[:40]
+            locator = str(fact.get('locator', ''))[:300]
+            summary = str(fact.get('summary', ''))[:300]
+            oid = 'o-' + hashlib.sha256(f'{ref}:{kind}:{locator}:{summary}'.encode()).hexdigest()[:12]
+            new += oid not in state['observations']
+    if new:
+        return True, f'{new} new receipt fact(s)'
+    return False, 'no_new_receipt_facts'

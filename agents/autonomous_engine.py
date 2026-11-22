@@ -94,15 +94,9 @@ def review_schema(allowed: set[str], follow_ups: dict, prior_ids: list[str]) -> 
         retraction_schema['prior_hypothesis_id']['enum'] = list(prior_ids)
     else:
         schema['properties']['retractions']['maxItems'] = 0
-
-    def untitled(value: Any) -> Any:
-        # Generated titles carry no contract information; omit them to save prompt tokens.
-        if isinstance(value, dict):
-            return {k: untitled(v) for k, v in value.items() if not (k == 'title' and isinstance(v, str))}
-        if isinstance(value, list):
-            return [untitled(v) for v in value]
-        return value
-    result: dict = untitled(schema)
+    # Titles and defaults do not constrain generation (Pydantic validates); drop them to save tokens.
+    from llm.context_budget import compact_schema
+    result: dict = compact_schema(schema)
     return result
 
 
@@ -1907,8 +1901,9 @@ class AutonomousEngine:
             context = {'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}
             if prior_reasoning:
                 context['prior_reasoning'] = prior_reasoning
+            from llm.context_budget import compact_json
             result = await orchestrator_agent.query_llm_smart(state.user_id,
-                json.dumps(context),
+                compact_json(context),
                 REVIEW_INSTRUCTION,
                 task_type='output_analysis')
         except asyncio.CancelledError:
@@ -2011,6 +2006,24 @@ class AutonomousEngine:
             for field in ('support', 'contradict'):
                 item[field] = [aliases.get(ref, ref) for ref in item[field]]
         prior_ids = [h['id'] for h in prior_reasoning.get('live_hypotheses', [])]
+        from memory.investigation_state import canonical_worker_evidence
+        from orchestrator.reasoning import review_needed
+        try:
+            canonical = await canonical_worker_evidence(state.session_id, owner, sorted(allowed))
+        except Exception:
+            raise InvestigationReviewError('reasoning_state_unavailable',
+                'Evidence could not be cataloged; no provider call was made.') from None
+        needed, reason = review_needed(prior_record.get('state'), [
+            {**item, 'job_id': canonical.get(item['job_id'], item['job_id'])} for item in evidence])
+        if not needed:
+            # Supervisor decision: identical facts cannot change any conclusion, so no model call.
+            skipped = {'status': 'skipped', 'reason': reason, 'evidence_job_ids': sorted(allowed),
+                       'verification': 'unverified', 'model_calls': 0}
+            await self._emit(state, {'type': 'investigation_review', 'status': 'skipped',
+                'action': 'Review skipped: no new receipt facts since the last review', 'review': skipped})
+            await self._write_decision_log(state, decision_type='investigation_review',
+                observation=json.dumps(skipped), action_taken='Model review skipped by supervisor; no new facts')
+            return
         schema = review_schema(allowed, follow_ups, prior_ids)
         raw = await self._review_response(state, evidence, follow_ups, schema, prior_reasoning)
         validation_started = time.monotonic_ns()
@@ -2045,9 +2058,6 @@ class AutonomousEngine:
                      if encode_operation(item['operation']) in state.executed_commands]
         cycle_key = f"{state.run_id}:{sha256_text(json.dumps(sorted(allowed)))}"
         try:
-            from memory.investigation_state import canonical_worker_evidence
-            canonical = await canonical_worker_evidence(state.session_id, owner, sorted(allowed))
-
             def ids(refs: list[str]) -> list[str]:
                 return [canonical.get(ref, ref) for ref in refs]
             proposed = []

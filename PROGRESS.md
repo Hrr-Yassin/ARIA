@@ -804,3 +804,31 @@
   - Frontend contracts pass.
   - Pyright reports 0 errors in all new modules and none on the lines added to pre-modified files.
 
+## 2026-11-22 — P2 deployed acceptance and first P3 increment
+
+- **Commits:** `b6122e1` (P1 gap closure), `b732661` (P2 tool intelligence), `472a8dc` (readiness from execution outcomes and the P2 acceptance record). Unrelated uncommitted work was preserved.
+- **Deployment inspection.**
+  - The API service runs this repository through a `checkout.conf` drop-in; the owner restarted it at 18:15.
+  - The Kali worker was inspected read-only through the guest agent. Its contract digest was `d7a9090e…` against the API's `165dad0f…`, caused by an uncommitted capability-block check in `adapters.py`.
+- **Execution.** Each step had owner approval in chat.
+  1. The httpx probe was rejected at worker admission (403). No tool ran.
+  2. After a 2-file worker redeploy (with backups), the probe reached the pinned image and failed with exit 65. The receipt was verified, and the stderr digest equals the runner's validation-failure message: **the images bake the committed contract**.
+  3. The capability-block check moved to `security_tools/restrictions.py`, enforced in `ExecutionAuthorization._validate` with the same 403 `capability_blocked`. `adapters.py` was returned to the committed version, the worker restored from backup (keeping digest and pin reporting), and both services restarted. Contract `matched`; pins equal the validation baseline.
+  4. The retry **succeeded**: job `ac5747a7-0a3e-40de-aa8b-a73ebb8c7303`, exit 0, 4.35 s, `HTTP 200: Metasploitable2 - Linux`.
+     - Receipt verified; image `sha256:938b67c9…`, httpx 1.7.1.
+     - Evidence `2e064b9d…` persisted; P0 fact `o-fe9ab8d0c794`.
+     - P1 delegations built from the updated state.
+     - Readiness shows httpx `runtime_verified`.
+- **DeepSeek.** Provider sharing is still `deny`. The owner declined to change it; 0 calls, $0.
+- **P3:**
+  - `llm/context_budget.py` (schema and context compaction);
+  - `orchestrator/reasoning.review_needed` plus the engine gate (no model call when there are no new receipt facts);
+  - a gated evaluation arm.
+
+  Scripted results: calls 13 → 10, prompt characters 59,719 → 40,978 (−31%), decision and safety metrics unchanged, supported claims live at end 12/12.
+- **Checks.** The full offline suite passed 970/971 in 52.6 s; the one failure is the pre-existing `test_team_tasks` correlation-prompt test. Pyright reports 0 errors in the new and changed modules.
+- **Uncommitted for owner review:**
+  - P3 code;
+  - the capability-block relocation (`security_tools/restrictions.py`, `memory/execution_authorization.py`, `tests/test_security_tool_registry.py`; `adapters.py` now equals HEAD);
+  - these planning-document updates.
+

@@ -1,6 +1,16 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — Mission P2: intelligent tool integration
+## Current priority — Mission P3: LLM intelligence and cost efficiency
+
+Improve prompt quality, context use, model routing and supervisor decisions with measured effects. The work spends provider funds only under an approved sharing policy and budget.
+
+Status (2026-11-22):
+
+- **P2 accepted on the deployed lab.** API and Kali worker contracts match (`d7a9090e…`); one owner-approved httpx run succeeded (job `ac5747a7…`); its evidence persisted and P0 and P1 consumed it. Details in the [P2 report](docs/p2-tool-integration.md).
+- **First P3 increment:** schema and context compaction plus a review-necessity gate. In the scripted set, model calls went 13 → 10 and prompt characters fell 31% from before P3, with every decision and safety metric unchanged ([P3 report](docs/p3-llm-efficiency.md)).
+- **DeepSeek evaluation:** blocked. The owner kept provider sharing denied.
+
+## Previous priority — Mission P2: intelligent tool integration
 
 Make tool use evidence-driven and observable without adding inventory or autonomous offensive execution. The work covers capability discovery and version compatibility, typed contracts, structured outcome classification, provenance, objective-driven selection, integration with P0 reasoning and P1 orchestration, and operator readiness visibility.
 

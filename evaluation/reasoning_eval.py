@@ -159,7 +159,8 @@ def new_tally() -> dict[str, Any]:
             'decisions': 0, 'decisions_correct': 0, 'stable_expected': 0, 'stable_kept': 0,
             'revision_expected': 0, 'revision_made': 0, 'redundant_decisions': 0,
             'duplicate_entries': 0, 'competing_expected': 0, 'competing_linked': 0,
-            'overconfident_accepted_excess': [], 'overclaims_reaching_research': 0}
+            'overconfident_accepted_excess': [], 'overclaims_reaching_research': 0,
+            'supported_claims_unique': 0, 'supported_claims_live_at_end': 0}
 
 
 def score_cycle(tally: dict[str, Any], arm: str, cycle: dict[str, Any], response: dict[str, Any],
@@ -210,6 +211,7 @@ def summarize(tally: dict[str, Any]) -> dict[str, Any]:
         'redundant_decisions': tally['redundant_decisions'],
         'duplicate_hypothesis_entries': tally['duplicate_entries'],
         'overclaims_reaching_research': tally['overclaims_reaching_research'],
+        'supported_claims_live_at_end': ratio('supported_claims_live_at_end', 'supported_claims_unique'),
         'mean_unverified_confidence_excess': round(sum(excess) / len(excess), 4) if excess else 0.0,
         'counts': {k: v for k, v in tally.items() if k != 'overconfident_accepted_excess'},
     }
@@ -227,10 +229,15 @@ def strip_labels(response: dict[str, Any], legacy: bool) -> dict[str, Any]:
 
 
 def prompt_chars(objective: str, evidence: list[dict[str, Any]], follow_ups: dict[str, Any],
-                 prior: dict[str, Any] | None, instruction: str, schema: dict[str, Any]) -> int:
+                 prior: dict[str, Any] | None, instruction: str, schema: dict[str, Any],
+                 compact: bool = False) -> int:
+    """Characters the engine sends (context + instruction + schema) in its encoding."""
+    from llm.context_budget import compact_json
     context: dict[str, Any] = {'objective': objective, 'evidence': evidence, 'available_follow_ups': follow_ups}
     if prior:
         context['prior_reasoning'] = prior
+    if compact:
+        return len(compact_json(context)) + len(instruction) + len(compact_json(schema))
     return len(json.dumps(context)) + len(instruction) + len(json.dumps(schema))
 
 
@@ -241,12 +248,16 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
         unknown = set(cases) - {c['id'] for c in spec['cases']}
         assert not unknown, f'Unknown cases: {sorted(unknown)}'
         spec = {**spec, 'cases': [c for c in spec['cases'] if c['id'] in cases]}
-    tallies = {'baseline': new_tally(), 'reasoning': new_tally()}
+    from orchestrator.reasoning import review_needed
+    gate = mode == 'scripted'   # the gated arm replays scripted responses only
+    tallies = {'baseline': new_tally(), 'reasoning': new_tally(), **({'reasoning_gated': new_tally()} if gate else {})}
     cases_out = []
-    cost = {'baseline': {'prompt_chars': 0, 'usage': []}, 'reasoning': {'prompt_chars': 0, 'usage': []}}
+    cost: dict[str, Any] = {'baseline': {'prompt_chars': 0, 'usage': []}, 'reasoning': {'prompt_chars': 0, 'usage': []}}
+    if gate:
+        cost['reasoning_gated'] = {'prompt_chars': 0, 'usage': [], 'model_calls': 0, 'skipped_reviews': 0}
     for case in spec['cases']:
-        baseline, reasoning = BaselineArm(), ReasoningArm()
-        previous = {'baseline': None, 'reasoning': None}
+        baseline, reasoning, gated = BaselineArm(), ReasoningArm(), ReasoningArm()
+        previous: dict[str, str | None] = {'baseline': None, 'reasoning': None, 'reasoning_gated': None}
         case_out: dict[str, Any] = {'id': case['id'], 'cycles': []}
         for number, cycle in enumerate(case['cycles']):
             evidence = cycle_evidence(spec, cycle)
@@ -259,7 +270,7 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
             cost['baseline']['prompt_chars'] += prompt_chars(case['objective'], evidence, follow_ups, None,
                                                              LEGACY_INSTRUCTION, old_schema)
             cost['reasoning']['prompt_chars'] += prompt_chars(case['objective'], evidence, follow_ups, prior,
-                                                              REVIEW_INSTRUCTION, new_schema)
+                                                              REVIEW_INSTRUCTION, new_schema, compact=True)
             labelled = mode == 'scripted'
             if labelled:
                 legacy_response = strip_labels(cycle['scripted'], legacy=True)
@@ -285,25 +296,49 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
                 new_response = {**new_response, 'retractions': retractions}
             b = baseline.step(legacy_response, evidence, follow_ups, cycle['completed'])
             r = reasoning.step(new_response, evidence, follow_ups, cycle['completed'], tags)
-            for arm, result, response in (('baseline', b, legacy_response), ('reasoning', r, new_response)):
+            arms = [('baseline', b, legacy_response), ('reasoning', r, new_response)]
+            if gate:
+                needed, _ = review_needed(gated.state, evidence)
+                if needed:
+                    gated_prior = gated.prior()
+                    gated_schema = review_schema(allowed, follow_ups, [h['id'] for h in gated_prior.get('live_hypotheses', [])])
+                    cost['reasoning_gated']['prompt_chars'] += prompt_chars(
+                        case['objective'], evidence, follow_ups, gated_prior, REVIEW_INSTRUCTION, gated_schema, compact=True)
+                    cost['reasoning_gated']['model_calls'] += 1
+                    g = gated.step(new_response, evidence, follow_ups, cycle['completed'], tags)
+                    arms.append(('reasoning_gated', g, new_response))
+                else:
+                    # No model call: nothing is proposed; the standing decision is kept.
+                    cost['reasoning_gated']['skipped_reviews'] += 1
+                    standing = gated.decisions[-1] if gated.decisions else 'no_further_analysis'
+                    arms.append(('reasoning_gated', {'accepted': [], 'action': standing, 'redundant': standing in cycle['completed'],
+                                                     'revised': False}, {'hypotheses': new_response.get('hypotheses', [])}))
+            for arm, result, response in arms:
                 labels = ([h.get('label') for h in cycle['scripted'].get('hypotheses', [])]
                           if labelled else [])
-                score_cycle(tallies[arm], arm, cycle, response, result, evidence, previous[arm], labels)
+                score_cycle(tallies[arm], 'reasoning' if arm == 'reasoning_gated' else arm, cycle, response,
+                            result, evidence, previous[arm], labels)
                 previous[arm] = result['action']
             # Contradiction, duplication, competition and confidence are judged on resulting state.
             for tag in cycle.get('expect_contradicted', []):
                 for arm in tallies:
                     tallies[arm]['contradiction_expected'] += 1
-                hid = reasoning.tags.get(tag)
-                status = reasoning.state['hypotheses'][hid]['status'] if hid and reasoning.state else None
-                tallies['reasoning']['contradiction_handled'] += int(status in {'contested', 'rejected'})
+                for arm_name, arm_state in (('reasoning', reasoning), *((('reasoning_gated', gated),) if gate else ())):
+                    hid = arm_state.tags.get(tag)
+                    status = arm_state.state['hypotheses'][hid]['status'] if hid and arm_state.state else None
+                    tallies[arm_name]['contradiction_handled'] += int(status in {'contested', 'rejected'})
             for left, right in cycle.get('expect_competing', []) if labelled else []:
                 for arm in tallies:
                     tallies[arm]['competing_expected'] += 1
-                ids = r['report']['hypothesize']['proposal_ids']
-                if ids[left] and ids[right] and reasoning.state:
-                    tallies['reasoning']['competing_linked'] += int(
-                        ids[right] in reasoning.state['hypotheses'][ids[left]]['competes_with'])
+                gated_result = next((res for name, res, _ in arms if name == 'reasoning_gated'), None)
+                for arm_name, arm_state, result in (('reasoning', reasoning, r),
+                                                    *((('reasoning_gated', gated, gated_result),) if gate else ())):
+                    if not result or not result.get('report'):
+                        continue
+                    ids = result['report']['hypothesize']['proposal_ids']
+                    if ids[left] and ids[right] and arm_state.state:
+                        tallies[arm_name]['competing_linked'] += int(
+                            ids[right] in arm_state.state['hypotheses'][ids[left]]['competes_with'])
             for index, hyp in enumerate(new_response.get('hypotheses', [])):
                 if index in r['accepted'] and reasoning.state:
                     hid = r['report']['hypothesize']['proposal_ids'][index]
@@ -327,6 +362,18 @@ async def evaluate(mode: str, responder=None, cases: list[str] | None = None) ->
         tallies['baseline']['duplicate_entries'] += len(b_keys) - len(set(b_keys))
         live_keys = [h['key'] for h in reasoning.state['hypotheses'].values()] if reasoning.state else []
         tallies['reasoning']['duplicate_entries'] += len(live_keys) - len(set(live_keys))
+        if mode == 'scripted':
+            # Distinct supported claims of the case that remain live in each arm's final state.
+            supported = {claim_key(h['description']) for c in case['cycles']
+                         for h in c['scripted'].get('hypotheses', []) if h.get('label') == 'supported'}
+            for arm_name, arm_state in (('reasoning', reasoning), *((('reasoning_gated', gated),) if gate else ())):
+                live = {h['key'] for h in (arm_state.state or {}).get('hypotheses', {}).values()
+                        if h['status'] in {'active', 'contested'}}
+                tallies[arm_name]['supported_claims_unique'] += len(supported)
+                tallies[arm_name]['supported_claims_live_at_end'] += len(supported & live)
+        if gate:
+            gated_keys = [h['key'] for h in gated.state['hypotheses'].values()] if gated.state else []
+            tallies['reasoning_gated']['duplicate_entries'] += len(gated_keys) - len(set(gated_keys))
         case_out['kernel_ms'] = round(reasoning.kernel_ms, 3)
         cases_out.append(case_out)
     for arm in cost:
