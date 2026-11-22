@@ -179,13 +179,15 @@ def validate_execution_sources(review: PolicyReview) -> None:
         source(index, category)
 
 
-async def owned_engagement(db, session_id: str, owner_id: str):
+async def owned_engagement(db, session_id: str, owner_id: str, *, read_only: bool = False):
     # No administrator override: only the engagement owner can review its policy.
-    row = (await db.execute(select(PentestSession).where(
-        PentestSession.id == session_id, PentestSession.user_id == owner_id).with_for_update())).scalar_one_or_none()
+    query = select(PentestSession).where(PentestSession.id == session_id, PentestSession.user_id == owner_id)
+    if not read_only:
+        query = query.with_for_update()
+    row = (await db.execute(query)).scalar_one_or_none()
     if not row:
         raise HTTPException(404, 'Engagement not found')
-    if str(getattr(row.status, 'value', row.status)) != 'active':
+    if not read_only and str(getattr(row.status, 'value', row.status)) != 'active':
         raise HTTPException(409, 'Engagement is not active')
     return row
 
@@ -301,8 +303,10 @@ class ProgramPolicyStore:
                       'content_sha256': latest.metadata_['content_sha256'], 'rules': rules.model_dump(),
                       'activated_by': owner_id, 'activation_id': str(uuid.uuid4())}
             # Budgets live in metadata and NEVER reset when a policy is revised.
+            restrictions = {key: session.scope[key] for key in ('blocked_typed_capabilities',)
+                            if key in (session.scope or {})}
             session.scope = {'targets': [asset.host for asset in rules.assets], 'exclusions': [],
-                             'program_policy': policy}
+                             'program_policy': policy, **restrictions}
             metadata = dict(session.metadata_ or {})
             metadata['worker_epoch'] = int(metadata.get('worker_epoch', 0)) + 1
             metadata['worker_blocked'] = False

@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from config.security_tool_registry import (
 )
 from api.auth import get_current_user
 from api.main import app
+from memory.database_models import SessionStatus
 from tests.support import OfflineCase
 from tests.test_access import OWNER
 
@@ -214,6 +216,116 @@ class RegistryTests(unittest.TestCase):
 
 
 class RegistryAPITests(OfflineCase):
+    async def test_paused_owner_can_read_capability_audit_but_cannot_edit_restrictions(self):
+        from datetime import datetime
+
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        capability = 'semgrep.source.scan.v1'
+        session = SimpleNamespace(status=SessionStatus.PAUSED, attack_mode='lab', metadata_={},
+            scope={'targets': ['192.0.2.10'], 'blocked_typed_capabilities': [capability]})
+        session_result = SimpleNamespace(scalar_one_or_none=lambda: session)
+        audit = SimpleNamespace(all=lambda: [('paused-audit', datetime(2026, 1, 1), capability)])
+        database = SimpleNamespace(execute=AsyncMock(side_effect=[session_result, audit, session_result]),
+                                   add=AsyncMock(), commit=AsyncMock())
+        context = AsyncMock()
+        context.__aenter__.return_value = database
+        path = '/api/sessions/engagement/tool-restrictions'
+        with patch('api.routers.tool_registry.async_session', return_value=context):
+            response = await self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            view = response.json()
+            self.assertEqual(view['engagement_state'], 'paused')
+            self.assertEqual(view['engagement_blockers'], ['engagement_inactive'])
+            self.assertEqual(view['blocked'], [capability])
+            self.assertEqual(view['audit'][capability]['record_id'], 'paused-audit')
+            denied = await self.client.post(path, json={'capability': 'nmap.tcp.connect.v1'})
+            self.assertEqual(denied.status_code, 409)
+            database.execute.side_effect = None
+            database.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: None)
+            self.assertEqual((await self.client.get(path)).status_code, 404)
+        read, _, write, missing = [call.args[0] for call in database.execute.await_args_list]
+        for query in (read, write, missing):
+            self.assertCountEqual(query.compile().params.values(), ['engagement', OWNER.user_id])
+        self.assertNotIn('FOR UPDATE', str(read))
+        self.assertIn('FOR UPDATE', str(write))
+        database.add.assert_not_called()
+        database.commit.assert_not_called()
+
+    async def test_typed_profile_blockers_report_saved_state_without_worker_probe(self):
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        targets = {'targets': ['192.0.2.10']}
+        session = SimpleNamespace(status=SessionStatus.ACTIVE)
+        database = SimpleNamespace(execute=AsyncMock(
+            return_value=SimpleNamespace(scalar_one_or_none=lambda: session)))
+        context = AsyncMock()
+        context.__aenter__.return_value = database
+        path = '/api/sessions/engagement/tool-restrictions'
+        cases = [
+            (targets, 'lab', {}, []),
+            ({**targets, 'program_policy': {}}, 'lab', {}, ['program_policy']),
+            ({**targets, 'mode': 'bug_bounty'}, 'lab', {}, ['bug_bounty_mode']),
+            (targets, 'bug_bounty', {}, ['bug_bounty_mode']),
+            ({}, 'lab', {'worker_blocked': True}, ['worker_execution_fenced', 'missing_scope']),
+        ]
+        with patch('api.routers.tool_registry.async_session', return_value=context), \
+             patch('api.routers.tool_registry.worker_jobs.client.capabilities', AsyncMock()) as worker:
+            for scope, mode, metadata, blockers in cases:
+                with self.subTest(blockers=blockers, mode=mode):
+                    session.scope, session.attack_mode, session.metadata_ = scope, mode, metadata
+                    response = await self.client.get(path)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.json()['engagement_blockers'], blockers)
+                    self.assertNotIn('192.0.2.10', response.text)
+            worker.assert_not_awaited()
+
+    async def test_owner_can_add_a_durable_typed_capability_block(self):
+        from datetime import datetime
+        from fastapi import HTTPException
+        from security_tools.adapters import ADAPTERS, AdapterError, encode
+
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        adapter = ADAPTERS['semgrep']
+        session = SimpleNamespace(status=SessionStatus.ACTIVE, attack_mode='lab', metadata_={},
+                                  scope={'targets': ['192.0.2.10']})
+        database = SimpleNamespace(add=lambda row: events.append(row), commit=AsyncMock())
+        events = []
+        context = AsyncMock()
+        context.__aenter__.return_value = database
+        path = '/api/sessions/engagement/tool-restrictions'
+        with patch('api.routers.tool_registry.async_session', return_value=context), \
+             patch('api.routers.tool_registry.owned_engagement', AsyncMock(return_value=session)) as owned:
+            self.assertEqual((await self.client.get(path)).json()['blocked'], [])
+            for _ in range(2):
+                result = await self.client.post(path, json={'capability': adapter.capability})
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.json()['blocked'], [adapter.capability])
+            owned.assert_awaited_with(database, 'engagement', OWNER.user_id)
+            database.commit.assert_awaited_once()
+            self.assertEqual(events[0].metadata_, {'capability': adapter.capability})
+            from security_tools.restrictions import check_capability
+            with self.assertRaisesRegex(AdapterError, 'blocked for this engagement'):
+                check_capability(encode({'schema_version': 1, 'tool': 'semgrep',
+                                         'parameters': {'artifact_sha256': 'a' * 64}}), session.scope)
+            from memory.execution_authorization import ExecutionAuthorization
+            authorization = ExecutionAuthorization()
+            command = encode({'schema_version': 1, 'tool': 'semgrep',
+                              'parameters': {'artifact_sha256': 'a' * 64}})
+            with self.assertRaises(HTTPException) as denied:
+                authorization._validate(command, {'scope': session.scope})
+            self.assertEqual(denied.exception.status_code, 403)
+            self.assertEqual(denied.exception.detail['code'], 'capability_blocked')
+            database.execute = AsyncMock(return_value=SimpleNamespace(
+                all=lambda: [('audit-fixture', datetime(2026, 1, 1), adapter.capability)]))
+            audit = (await self.client.get(path)).json()['audit']
+            self.assertEqual(audit[adapter.capability], {
+                'record_id': 'audit-fixture', 'recorded_at': '2026-01-01T00:00:00+00:00'})
+            values = database.execute.await_args.args[0].compile().params.values()
+            self.assertIn(OWNER.user_id, values)
+            self.assertIn('engagement', values)
+            owned.side_effect = HTTPException(404, 'Engagement not found')
+            self.assertEqual((await self.client.post(path, json={'capability': adapter.capability})).status_code, 404)
+            database.commit.assert_awaited_once()
+
     async def asyncTearDown(self):
         app.dependency_overrides.clear()
         await super().asyncTearDown()
@@ -230,6 +342,7 @@ class RegistryAPITests(OfflineCase):
             response = await self.client.get("/api/tool-registry")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["worker"]["status"], "not_configured")
+        self.assertEqual(response.json()["worker"]["typed_contract_status"], "unavailable")
         remote.assert_not_awaited()
 
     async def test_advertised_names_never_imply_version_health_or_execution(self):
@@ -261,8 +374,65 @@ class RegistryAPITests(OfflineCase):
                  patch("api.routers.tool_registry.worker_jobs.client.capabilities", remote):
                 response = await self.client.get("/api/tool-registry")
             self.assertEqual(response.json()["worker"]["status"], "unreachable")
+            self.assertEqual(response.json()["worker"]["typed_contract_status"], "unavailable")
             self.assertFalse(any(tool["worker_advertised"] for tool in response.json()["tools"]))
             self.assertNotIn("private", response.text)
+
+    async def test_only_advertised_typed_profiles_expose_valid_declared_pins(self):
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        capability = 'httpx.http.probe.v1'
+        image = 'sha256:' + 'a' * 64
+        pin = {'declared_version': '1.7.1', 'image_id': image}
+        advertised = advertisement(tools=['curl', 'httpx'])
+        advertised.update(typed_adapters={capability: 1}, typed_profile_pins={
+            capability: pin, 'nmap.tcp.connect.v1': pin})
+        with patch("config.settings.settings.KALI_AGENT_URL", "http://private-worker.invalid"), \
+             patch("api.routers.tool_registry.worker_jobs.client.capabilities", AsyncMock(return_value=advertised)):
+            response = await self.client.get("/api/tool-registry")
+            rows = {row['tool']: row for row in response.json()['typed_adapters']}
+            self.assertTrue(rows['httpx']['worker_available'])
+            self.assertEqual(rows['httpx']['declared_version'], '1.7.1')
+            self.assertEqual(rows['httpx']['image_id'], image)
+            self.assertFalse(rows['httpx']['runtime_validated'])
+            self.assertIsNone(rows['nmap']['declared_version'])
+            pin['declared_version'] = 'private/invalid/location'
+            pin['image_id'] = '/private/pin'
+            response = await self.client.get("/api/tool-registry")
+            rows = {row['tool']: row for row in response.json()['typed_adapters']}
+            self.assertIsNone(rows['httpx']['declared_version'])
+            self.assertIsNone(rows['httpx']['image_id'])
+            self.assertNotIn('/private/', response.text)
+
+    async def test_worker_contract_comparison_preserves_advertised_state(self):
+        from security_tools.adapters import contract_digest
+
+        app.dependency_overrides[get_current_user] = lambda: OWNER
+        capability = 'semgrep.source.scan.v1'
+        local_digest = contract_digest()
+        other_digest = '0' * 64 if local_digest != '0' * 64 else '1' * 64
+        worker = advertisement(tools=['curl', 'semgrep'], typed_adapters={capability: 1})
+        cases = (
+            ({'typed_registry_sha256': local_digest}, 'matched', local_digest),
+            ({'typed_registry_sha256': other_digest}, 'mismatch', other_digest),
+            ({}, 'not_reported', None),
+            ({'typed_registry_sha256': None}, 'unavailable', None),
+            ({'typed_registry_sha256': '/private/invalid/digest'}, 'invalid', None),
+        )
+        with patch('config.settings.settings.KALI_AGENT_URL', 'http://private-worker.invalid'), \
+             patch('api.routers.tool_registry.worker_jobs.client.capabilities', AsyncMock()) as remote:
+            for fields, status, observed in cases:
+                with self.subTest(status=status):
+                    remote.return_value = {**worker, **fields}
+                    response = await self.client.get('/api/tool-registry')
+                    self.assertEqual(response.status_code, 200)
+                    data = response.json()
+                    self.assertEqual(data['worker']['status'], 'online')
+                    self.assertEqual(data['worker'].get('typed_contract_status'), status)
+                    self.assertEqual(data['worker']['typed_registry_sha256'], observed)
+                    self.assertNotIn('/private/', response.text)
+                    row = next(row for row in data['typed_adapters'] if row['capability'] == capability)
+                    self.assertTrue(row['worker_available'])
+                    self.assertFalse(row['runtime_validated'])
 
     async def test_bad_registry_returns_sanitized_503_without_worker_call(self):
         app.dependency_overrides[get_current_user] = lambda: OWNER
@@ -272,3 +442,23 @@ class RegistryAPITests(OfflineCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private", response.text)
         remote.assert_not_awaited()
+
+
+class PlanningRestrictionTests(OfflineCase):
+    async def test_planner_rejects_blocked_capability_before_execution(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState
+        from agents.orchestrator_agent import orchestrator_agent
+        from security_tools.adapters import encode
+        scope = {'targets': ['192.0.2.1'], 'ports': [80], 'blocked_typed_capabilities': ['httpx.http.probe.v1']}
+        command = encode({'tool': 'httpx', 'parameters': {'url': 'http://192.0.2.1'}})
+        engine = AutonomousEngine()
+        state = SessionRunState('engagement', 'owner', 'http_check', '192.0.2.1', 'expert',
+                                capabilities={'typed_adapters': {'httpx.http.probe.v1': 1}})
+        state.completed_observations = ['port_discovery']
+        feedback: list = []
+        with patch('agents.autonomous_engine.execution_authorization._context', AsyncMock(return_value={'scope': scope})), \
+             patch.object(engine, '_specialist_context', AsyncMock(return_value={})), \
+             patch.object(orchestrator_agent, 'process', AsyncMock(return_value={'commands': [{'command': command}]})):
+            proposal = await engine._validated_plan(state, orchestrator_agent, [], [], feedback)
+        self.assertIsNone(proposal)
+        self.assertTrue(any('blocked by the engagement owner' in item for item in feedback))

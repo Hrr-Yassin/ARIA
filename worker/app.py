@@ -132,14 +132,23 @@ def create_app(service: WorkerService | None = None, token: str | None = None) -
         if not app.state.healthy:
             raise HTTPException(503, 'Worker reconciliation unavailable')
         from worker.http_profile import available, specialties_available
-        from security_tools.adapters import ADAPTERS
+        from security_tools.adapters import ADAPTERS, contract_digest
+
+        try:
+            typed_registry_sha256 = contract_digest()
+        except OSError:
+            typed_registry_sha256 = None
         profiles = app.state.service.profiles
         return {'specialist_http_version': 1 if specialties_available() else 0, 'authenticated_http_version': 1 if available() else 0, 'protocol': 'aria-jobs-v1', 'idempotency': True, 'cancellation': True,
                 'execution_constraints': {'version': 1, 'networks': list(app.state.service.ceiling),
                                           'tcp_ports': sorted(app.state.service.allowed_ports)},
                 'network_scope': True, 'program_policy_version': 1,
                 'tools': sorted({'curl', 'nmap', *profiles}), 'max_timeout': 300,
-                'typed_adapters': {ADAPTERS[name].capability: 1 for name in profiles}}
+                'typed_registry_sha256': typed_registry_sha256,
+                'typed_adapters': {ADAPTERS[name].capability: 1 for name in profiles},
+                'typed_profile_pins': {
+                    ADAPTERS[name].capability: {'declared_version': profile.tool_version, 'image_id': profile.image_id}
+                    for name, profile in profiles.items()}}
 
     @app.post('/jobs', dependencies=[Depends(authenticate)])
     async def submit(request: Request):

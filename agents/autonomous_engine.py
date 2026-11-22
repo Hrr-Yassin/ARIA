@@ -1499,6 +1499,12 @@ class AutonomousEngine:
                     from orchestrator.execution_policy import validate_command
                     validator = validate_command
                 checked = validator(command.get('command', ''), context['scope'])
+                from security_tools.restrictions import CapabilityBlocked, check_capability
+                try:
+                    # Same owner restriction the execution boundary enforces; reject at planning time.
+                    check_capability(checked.command, context['scope'])
+                except CapabilityBlocked:
+                    raise ValueError('Capability is blocked by the engagement owner; choose another observation') from None
                 if command_was_executed(state, checked.command):
                     raise ValueError('Command already executed in this run; propose a missing observation')
                 from security_tools.adapters import ADAPTERS

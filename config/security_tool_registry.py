@@ -331,7 +331,15 @@ class Registry(ClosedModel):
             entries.append(entry)
         from security_tools.adapters import catalog as adapter_catalog, contract_digest
         typed_adapters = adapter_catalog(advertised)
+        pins = (advertised or {}).get('typed_profile_pins')
         for adapter in typed_adapters:
+            pin = pins.get(adapter['capability']) if adapter['worker_available'] and isinstance(pins, dict) else None
+            version = pin.get('declared_version') if isinstance(pin, dict) else None
+            image = pin.get('image_id') if isinstance(pin, dict) else None
+            adapter['declared_version'] = (
+                version if isinstance(version, str) and len(version) <= 64
+                and re.fullmatch(r'[0-9]+(?:\.[0-9]+)+[a-zA-Z0-9.+_-]*', version) else None)
+            adapter['image_id'] = image if isinstance(image, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', image) else None
             for role in adapter['agent_roles']:
                 if adapter['capability'] not in mapping[role]:
                     mapping[role].append(adapter['capability'])

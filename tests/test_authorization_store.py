@@ -62,6 +62,27 @@ class StoreTests(OfflineCase):
                 await authoritative_context('', 'session')
             factory.assert_not_called()
 
+    async def test_block_revokes_previously_approved_typed_request_before_dispatch(self):
+        from memory.execution_authorization import ExecutionAuthorization, digest
+        from security_tools.adapters import encode
+
+        artifact = 'a' * 64
+        command = encode({'schema_version': 1, 'tool': 'semgrep',
+                          'parameters': {'artifact_sha256': artifact}})
+        old = {'scope': {'targets': ['192.0.2.1'], 'artifact_sha256': [artifact]}}
+        current = {'scope': {**old['scope'], 'blocked_typed_capabilities': ['semgrep.source.scan.v1']}}
+        original = Proposal('action', 'session', 'owner', command, 'semgrep', 'orange',
+                            digest(old), 9999999999, 'approved')
+        store = SimpleNamespace(get=AsyncMock(return_value=original), transition=AsyncMock())
+        worker = AsyncMock()
+        service = ExecutionAuthorization(store, AsyncMock(return_value=current), worker)
+        with self.assertRaises(HTTPException) as denied:
+            await service.execute('owner', 'session', command, action_id='action')
+        self.assertEqual(denied.exception.status_code, 403)
+        self.assertEqual(denied.exception.detail['code'], 'capability_blocked')
+        store.transition.assert_not_awaited()
+        worker.assert_not_awaited()
+
     async def test_socket_uses_live_role_and_denies_disabled_or_missing_accounts(self):
         from api.auth import authenticate_socket_token, create_token
         token=create_token('owner','owner','admin','expert')

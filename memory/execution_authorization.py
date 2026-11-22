@@ -19,6 +19,7 @@ from memory.knowledge_store import scope_identity_digest
 from orchestrator.execution_policy import PolicyError, validate_command
 from memory.worker_jobs import worker_jobs
 from security.credentials import auth_revision
+from security_tools.restrictions import CapabilityBlocked, check_capability
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,11 @@ class ExecutionAuthorization:
 
     def _validate(self, command, context, tool=''):
         try:
+            check_capability(command, context['scope'])
             return validate_command(command, context['scope'], tool)
+        except CapabilityBlocked:
+            raise HTTPException(403, {'code': 'capability_blocked',
+                                      'message': 'Capability is blocked for this engagement'}) from None
         except (PolicyError, ValueError, TypeError, KeyError):
             raise HTTPException(403, 'Command is not permitted by engagement policy') from None
 
@@ -148,7 +153,15 @@ class ExecutionAuthorization:
         context = await self._context(user_id, session_id)
         proposal = await self._stored(self.store.get, action_id)
         if (not proposal or proposal.session_id != session_id or proposal.expires_at <= time.time()
-                or proposal.scope_hash != digest(context) or (requester and proposal.requester_id != user_id)):
+                or (requester and proposal.requester_id != user_id)):
+            raise HTTPException(403, 'Authorization is absent, expired or no longer valid')
+        if proposal.scope_hash != digest(context):
+            if proposal.command.startswith('aria-tool ') and context['scope'].get('blocked_typed_capabilities'):
+                try:
+                    self._validate(proposal.command, context, proposal.tool)
+                except HTTPException as error:
+                    if isinstance(error.detail, dict) and error.detail.get('code') == 'capability_blocked':
+                        raise
             raise HTTPException(403, 'Authorization is absent, expired or no longer valid')
         return proposal, context
 
