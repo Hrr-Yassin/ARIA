@@ -5,6 +5,7 @@ import { labels, overview, type Detail, type Go, type Lazy } from './panels'
 import { MissionStore, views, type View } from './store'
 import { agents, analytics, defaultFilters, events, infrastructure, investigation, operations, sessions, settings } from './views'
 import { workspace, syncWorkspace } from './workspace'
+import { profilePanel } from './profiles'
 
 const root = document.querySelector<HTMLElement>('#app')!
 const content = el('main', 'content')
@@ -253,7 +254,7 @@ function render() {
   else if (current === 'investigation') nodes = investigation(store, detail, lazy)
   else if (current === 'analytics') nodes = analytics(store, detail, lazy, filters, queueRender)
   else if (current === 'infrastructure') nodes = infrastructure(store, detail, lazy)
-  else nodes = settings(store)
+  else nodes = [...settings(store), profilePanel(store, queueRender)]
   contents.replaceChildren(...nodes)
   for (const panel of contents.querySelectorAll<HTMLElement>('section.card')) {
     const heading = panel.querySelector<HTMLElement>(':scope > .card-heading')
