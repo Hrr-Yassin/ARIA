@@ -1995,11 +1995,15 @@ class AutonomousEngine:
         from orchestrator.reasoning import planner_summary
         owner = state.owner_id or state.user_id
         try:
-            prior_record = await investigation_state.current(state.session_id, owner)
+            prior_record, aliases = await investigation_state.snapshot(state.session_id, owner)
         except Exception:
             raise InvestigationReviewError('reasoning_state_unavailable',
                 'Investigation reasoning state is unavailable; no provider call was made.') from None
+        # Reasoning stores canonical ledger evidence IDs; the model cites worker job IDs.
         prior_reasoning = planner_summary(prior_record.get('state'))
+        for item in prior_reasoning.get('live_hypotheses', []):
+            for field in ('support', 'contradict'):
+                item[field] = [aliases.get(ref, ref) for ref in item[field]]
         prior_ids = [h['id'] for h in prior_reasoning.get('live_hypotheses', [])]
         schema = review_schema(allowed, follow_ups, prior_ids)
         raw = await self._review_response(state, evidence, follow_ups, schema, prior_reasoning)
@@ -2035,11 +2039,23 @@ class AutonomousEngine:
                      if encode_operation(item['operation']) in state.executed_commands]
         cycle_key = f"{state.run_id}:{sha256_text(json.dumps(sorted(allowed)))}"
         try:
+            from memory.investigation_state import canonical_worker_evidence
+            canonical = await canonical_worker_evidence(state.session_id, owner, sorted(allowed))
+
+            def ids(refs: list[str]) -> list[str]:
+                return [canonical.get(ref, ref) for ref in refs]
+            proposed = []
+            for item in review.hypotheses:
+                data = item.model_dump()
+                data['evidence_job_ids'] = ids(data['evidence_job_ids'])
+                data['contradicting_evidence_job_ids'] = ids(data['contradicting_evidence_job_ids'])
+                proposed.append(ProposedHypothesis.from_dict(data))
             reasoning_state, reasoning = await investigation_state.advance(state.session_id, owner, cycle_key, CycleInput(
-                evidence=evidence, interpretations=list(review.observations),
-                hypotheses=[ProposedHypothesis.from_dict(h.model_dump()) for h in review.hypotheses],
+                evidence=[{**item, 'job_id': canonical.get(item['job_id'], item['job_id'])} for item in evidence],
+                interpretations=list(review.observations), hypotheses=proposed,
                 available_follow_ups=follow_ups, completed_follow_ups=completed,
-                retractions=[Retraction(**r.model_dump()) for r in review.retractions],
+                retractions=[Retraction(prior_hypothesis_id=r.prior_hypothesis_id, reason=r.reason,
+                                        evidence_job_ids=ids(r.evidence_job_ids)) for r in review.retractions],
                 missing_information=list(review.missing_information), run_id=state.run_id))
         except Exception:
             raise InvestigationReviewError('reasoning_state_unavailable',

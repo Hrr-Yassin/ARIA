@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict
 from worker.policy import validate_worker_command
 
+CLAIM_ID = re.compile(r"h-[0-9a-f]{12}")
+
 
 class AgentResult(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -60,9 +62,20 @@ def professional_result(agent, request, result, scope, evidence, capabilities):
             valid = [ref for ref in cited if ref in contract.evidence_references]
             if len(valid)!=len(cited):
                 contract.rejections.append({'code':'unknown_evidence_reference','detail':'Hypothesis cited evidence outside the owned evidence catalog'})
-            contract.hypotheses.append({'description':hypothesis.get('description') or hypothesis.get('vulnerability') or hypothesis.get('finding') or hypothesis.get('title') or 'Unverified candidate',
+            entry = {'description':hypothesis.get('description') or hypothesis.get('vulnerability') or hypothesis.get('finding') or hypothesis.get('title') or 'Unverified candidate',
                 'verified':False,'evidence_references':valid,
-                'prerequisites':hypothesis.get('conditions_unverified') or hypothesis.get('missing_validations') or []})
+                'prerequisites':hypothesis.get('conditions_unverified') or hypothesis.get('missing_validations') or []}
+            # Stable reasoning claim identity and reviewer disposition; both are
+            # validated assertions about a prior claim, never verification.
+            if hypothesis.get('disposition') in {'supported', 'rejected', 'inconclusive'}:
+                entry['disposition'] = hypothesis['disposition']
+            claim_id = hypothesis.get('claim_id')
+            if isinstance(claim_id, str) and CLAIM_ID.fullmatch(claim_id):
+                entry['claim_id'] = claim_id
+            alternatives = hypothesis.get('alternative_explanations')
+            if isinstance(alternatives, list):
+                entry['alternative_explanations'] = [str(a)[:200] for a in alternatives if isinstance(a, str) and a][:3]
+            contract.hypotheses.append(entry)
             if not valid: contract.uncertainty.append('A hypothesis has no attributed supporting evidence; validate applicability before reporting it as a finding')
     if agent in {'vuln','correlation','report'} and not contract.hypotheses:
         contract.uncertainty.append('Service or version matches alone do not establish a vulnerability; applicability and conflicting evidence still need validation')

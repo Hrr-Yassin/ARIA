@@ -40,6 +40,18 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
                                 AsyncMock(side_effect=reasoning_current)))
         self.enterContext(patch('memory.investigation_state.investigation_state.advance',
                                 AsyncMock(side_effect=reasoning_advance)))
+        self.reasoning_aliases: dict = {}
+        async def reasoning_snapshot(sid, owner):
+            return self.reasoning_records.get(sid, {}), dict(self.reasoning_aliases)
+        self.enterContext(patch('memory.investigation_state.investigation_state.snapshot',
+                                AsyncMock(side_effect=reasoning_snapshot)))
+        # Ledger cataloging is covered by the persistence tests; offline fixtures map
+        # each worker job to a deterministic ledger ID unless a test overrides it.
+        self.evidence_canonical: dict = {}
+        async def canonical(sid, owner, job_ids):
+            return {job: self.evidence_canonical.get(job, job) for job in job_ids}
+        self.enterContext(patch('memory.investigation_state.canonical_worker_evidence',
+                                AsyncMock(side_effect=canonical)))
         # Durable review journal SQL/concurrency is exercised in the dedicated
         # disposable PostgreSQL suite. Other service fixtures remain offline.
         self.enterContext(patch('memory.investigation_reviews.review_journal.acquire',

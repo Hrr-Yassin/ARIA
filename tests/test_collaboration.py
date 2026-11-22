@@ -35,6 +35,17 @@ def hyp(description, refs, **extra):
     return {'description': description, 'evidence_references': list(refs), **extra}
 
 
+def bind_claim_ids(response, context):
+    """Echo stable claim IDs offered in research context, as an instructed model would."""
+    offered = {h['claim']: h['id'] for h in (context.get('investigation_reasoning') or {}).get('hypotheses', [])}
+    response = copy.deepcopy(response)
+    for hyp in response['agent_result']['hypotheses']:
+        target = hyp.pop('claim_of', None)
+        if target and target in offered:
+            hyp['claim_id'] = offered[target]
+    return response
+
+
 class ScriptedSpecialist:
     """Analysis-only stand-in for an LLM specialist; records calls and overlap."""
 
@@ -55,7 +66,8 @@ class ScriptedSpecialist:
             behaviour = self.harness.script[self.role]
             if isinstance(behaviour, Exception):
                 raise behaviour
-            return behaviour.pop(0) if isinstance(behaviour, list) else behaviour
+            chosen = behaviour.pop(0) if isinstance(behaviour, list) else behaviour
+            return bind_claim_ids(chosen, data.get('research_context', {}))
         finally:
             self.harness.active -= 1
 
@@ -135,9 +147,11 @@ class CollaborationHarness(OfflineCase):
                     alternative_explanations=['Static site']),
                 refs=['ev-http', 'ev-port']),
             'correlation': [result(
-                hyp('The application may expose an /admin path.', ['ev-admin'], disposition='rejected'),
+                hyp('The /admin path returned 404 in the bounded follow-up.', ['ev-admin'], disposition='rejected',
+                    claim_of='The application may expose an /admin path.'),
                 hyp('The /health path may disclose internal service status details.', ['ev-path'],
-                    disposition='inconclusive', alternative_explanations=['Fixed OK string']),
+                    disposition='inconclusive', alternative_explanations=['Fixed OK string'],
+                    claim_of='The /health path may disclose internal service status details.'),
                 refs=['ev-admin', 'ev-path']), result(
                 hyp('The admin path claim remains unsupported after the 404 follow-up.', ['ev-admin'],
                     disposition='inconclusive', alternative_explanations=['Path exists elsewhere']),
@@ -183,8 +197,11 @@ class CollaborationTests(CollaborationHarness):
         contradiction = next(c for c in supervision['contradictions'] if 'challenged_by' in c)
         self.assertEqual(contradiction['challenged_by'], 'cross-review')
         self.assertIn('analysis-web', contradiction['originated_by'])
-        challenge = [r for r in second['plan']['replans'] if r['event'] == 'contradiction_challenge']
-        self.assertEqual(len(challenge), 1)
+        # The reviewer already saw every record behind the claim, so no second review is spent.
+        skipped = [r for r in second['plan']['replans'] if r['event'] == 'challenge_skipped']
+        self.assertEqual([r['reviewed_by'] for r in skipped], [['cross-review']])
+        self.assertEqual(supervision['avoided_specialist_calls'], 1)
+        self.assertEqual(self.calls.count('correlation'), 1)
         # Shared evidence provenance: every task cites cataloged ledger evidence.
         view = await team_store.view('engagement', 'owner')
         catalog = {e['id'] for e in view['evidence']}
@@ -193,6 +210,57 @@ class CollaborationTests(CollaborationHarness):
                 self.assertLessEqual(set(task['result']['evidence_references']), catalog)
         # Reasoning reached the reviewer as task-scoped context.
         self.assertIn('investigation_reasoning', self.contexts['correlation'])
+
+    async def test_contradiction_outside_reviewer_evidence_triggers_challenge(self):
+        self.standard_script()
+        body = self.plan_body()
+        body.delegations[2] = body.delegations[2].model_copy(update={'evidence_inputs': ['ev-http', 'ev-admin']})
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', body)
+        first = await coordinator.advance('engagement', 'owner', plan['id'])
+        await self.complete(first['plan'], 'analysis-web', 'analysis-vuln')
+        second = await coordinator.advance('engagement', 'owner', plan['id'])
+        events = [r['event'] for r in second['plan']['replans']]
+        self.assertIn('contradiction_challenge', events)
+        self.assertEqual(self.calls.count('correlation'), 2)
+
+    async def test_rejection_without_stable_claim_id_is_not_guessed(self):
+        self.standard_script()
+        self.script['correlation'] = [result(hyp('The application may expose an /admin path.', ['ev-admin'],
+                                                 disposition='rejected'), refs=['ev-admin'])]
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        first = await coordinator.advance('engagement', 'owner', plan['id'])
+        await self.complete(first['plan'], 'analysis-web', 'analysis-vuln')
+        second = await coordinator.advance('engagement', 'owner', plan['id'])
+        supervision = second['plan']['supervision']
+        self.assertEqual(supervision['unattributed_rejections'][0]['reason'], 'missing_claim_id')
+        self.assertFalse([c for c in supervision['contradictions'] if 'challenged_by' in c])
+
+    async def test_dependent_cannot_be_claimed_without_owner_completion(self):
+        self.standard_script()
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        await coordinator.advance('engagement', 'owner', plan['id'])
+        with self.assertRaises(HTTPException) as denied:
+            await TeamCoordinator().run('engagement', 'owner', plan['task_ids']['cross-review'],
+                                        str(uuid.uuid4()), 'intermediate')
+        self.assertEqual(denied.exception.status_code, 409)
+        view = await team_store.view('engagement', 'owner')
+        # The orchestrator never completes tasks on the owner's behalf.
+        self.assertFalse([t for t in view['tasks'] if t['state'] == 'completed'])
+        self.assertNotIn('correlation', self.calls)
+
+    async def test_review_skipped_when_analyses_leave_no_claims(self):
+        self.script = {'web_intel': result(refs=['ev-http', 'ev-path']), 'vuln': result(refs=['ev-http', 'ev-port']),
+                       'correlation': result(refs=['ev-http'])}
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        first = await coordinator.advance('engagement', 'owner', plan['id'])
+        await self.complete(first['plan'], 'analysis-web', 'analysis-vuln')
+        second = await coordinator.advance('engagement', 'owner', plan['id'])
+        self.assertEqual(second['states']['cross-review'], 'cancelled')
+        self.assertNotIn('correlation', self.calls)
 
     async def test_retry_and_restart_never_duplicate_specialist_calls(self):
         self.standard_script()
@@ -276,4 +344,21 @@ class CollaborationEvaluation(OfflineCase):
         self.assertEqual(result['collaborative']['quality']['false_claims_accepted'], '0/2')
         self.assertEqual(result['collaborative']['quality']['true_claims_retained'], '2/2')
         self.assertGreater(result['collaborative']['cost']['max_pairwise_overlap_seconds'], 0.2)
-        self.assertEqual(result['collaborative']['cost']['specialist_calls'], 4)
+        self.assertEqual(result['collaborative']['cost']['specialist_calls'], 3)
+
+
+class ResultContractClaims(OfflineCase):
+    async def test_professional_result_keeps_valid_claim_identity_only(self):
+        from agents.result_contract import professional_result
+        evidence = [{'id': 'ev-1', 'summary': 'HTTP 200'}]
+        contract = professional_result('correlation', {'objective': 'Review'}, {'correlations': [
+            {'finding': 'Rejected', 'evidence_references': ['ev-1'], 'disposition': 'rejected',
+             'claim_id': 'h-0123456789ab', 'alternative_explanations': ['Default page']},
+            {'finding': 'Forged', 'evidence_references': ['ev-1'], 'disposition': 'verified',
+             'claim_id': 'h-<script>'}]}, {}, evidence, set())
+        first, second = contract.hypotheses
+        self.assertEqual((first['disposition'], first['claim_id']), ('rejected', 'h-0123456789ab'))
+        self.assertEqual(first['alternative_explanations'], ['Default page'])
+        self.assertNotIn('disposition', second)
+        self.assertNotIn('claim_id', second)
+        self.assertFalse(first['verified'])

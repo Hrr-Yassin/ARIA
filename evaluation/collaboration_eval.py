@@ -61,8 +61,9 @@ VULN = _result([_h('An /admin path may be exposed by the application.', ['ev-htt
                    alternative_explanations=['Static site']),
                 _h(TRUE_CLAIMS[1], ['ev-port', 'ev-http'], alternative_explanations=['Separate proxy'])],
                ['ev-http', 'ev-port'])
-REVIEW = _result([_h(FALSE_CLAIMS[1], ['ev-admin'], disposition='rejected'),
-                  _h(TRUE_CLAIMS[0], ['ev-path'], disposition='inconclusive',
+REVIEW = _result([_h('The /admin path returned 404 in the bounded follow-up.', ['ev-admin'],
+                     disposition='rejected', claim_of=FALSE_CLAIMS[1]),
+                  _h(TRUE_CLAIMS[0], ['ev-path'], disposition='inconclusive', claim_of=TRUE_CLAIMS[0],
                      alternative_explanations=['Fixed OK string'])], ['ev-admin', 'ev-path'])
 CHALLENGE = _result([_h('The admin path claim remains unsupported after the 404 follow-up.', ['ev-admin'],
                         disposition='inconclusive', alternative_explanations=['Path exists elsewhere'])],
@@ -114,7 +115,15 @@ class Ledger:
                 await asyncio.sleep(LATENCY_S)
                 ledger.calls.append({'role': self.role, 'started': begin, 'finished': time.perf_counter(),
                                      'prompt_chars': len(json.dumps(data, default=str))})
-                return self.script[self.role].pop(0)
+                response = copy.deepcopy(self.script[self.role].pop(0))
+                # Echo offered stable claim IDs, as the reviewer instruction asks a model to.
+                offered = {h['claim']: h['id'] for h in ((data.get('research_context') or {})
+                           .get('investigation_reasoning') or {}).get('hypotheses', [])}
+                for hyp in response['agent_result']['hypotheses']:
+                    target = hyp.pop('claim_of', None)
+                    if target in offered:
+                        hyp['claim_id'] = offered[target]
+                return response
         self.Specialist = Specialist
         self.TeamCoordinator = TeamCoordinator
         return self
@@ -156,7 +165,15 @@ def _cost(calls: list[dict[str, Any]], wall: float) -> dict[str, Any]:
     for i, a in enumerate(calls):
         for b in calls[i + 1:]:
             overlap = max(overlap, min(a['finished'], b['finished']) - max(a['started'], b['started']))
-    return {'specialist_calls': len(calls), 'specialist_prompt_chars': sum(c['prompt_chars'] for c in calls),
+    busy, end = 0.0, float('-inf')
+    for start, finish in sorted((c['started'], c['finished']) for c in calls):
+        if start > end:
+            busy, end = busy + finish - start, finish
+        elif finish > end:
+            busy, end = busy + finish - end, finish
+    return {'specialist_busy_seconds': round(busy, 3),
+            'orchestration_overhead_seconds': round(max(wall - busy, 0.0), 3),
+            'specialist_calls': len(calls), 'specialist_prompt_chars': sum(c['prompt_chars'] for c in calls),
             'estimated_prompt_tokens': sum(c['prompt_chars'] for c in calls) // 4,
             'wall_seconds': round(wall, 3), 'serial_specialist_seconds': round(len(calls) * LATENCY_S, 3),
             'max_pairwise_overlap_seconds': round(max(overlap, 0.0), 3)}
@@ -224,7 +241,8 @@ async def _collaborative() -> dict[str, Any]:
         return {'quality': {**_score(accepted, len(sup['contradictions']), duplicates),
                             'duplicate_specialist_conclusions_merged': len(sup['duplicated_conclusions']),
                             'unsupported_claims_rejected': len(sup['unsupported_claims']),
-                            'replans': [r['event'] for r in outcome['plan']['replans']]},
+                            'replans': [r['event'] for r in outcome['plan']['replans']],
+                            'avoided_specialist_calls': sup['avoided_specialist_calls']},
                 'cost': _cost(ledger.calls, wall), 'accepted': accepted,
                 'owner_review_rounds': rounds, 'final_status': outcome['plan']['status'],
                 'note': 'Contested claims are excluded from accepted conclusions; they remain under challenge.'}

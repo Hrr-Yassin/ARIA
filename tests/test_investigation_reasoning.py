@@ -229,6 +229,24 @@ class SupervisedReview(OfflineCase):
         self.assertEqual(len(prior['live_hypotheses']), 1)
         self.assertIn('unsupported_conclusion', prior['rejected_claims'][0]['reasons'])
 
+    async def test_reasoning_uses_canonical_ledger_ids_and_model_sees_job_ids(self):
+        from agents.autonomous_engine import AutonomousEngine, SessionRunState
+        engine = AutonomousEngine()
+        state = SessionRunState('engagement', 'owner', 'discovery', '192.0.2.1', 'expert')
+        state.evidence_job_ids = ['owned-job']
+        self.evidence_canonical['owned-job'] = 'ev-ledger-1'
+        self.reasoning_aliases['ev-ledger-1'] = 'owned-job'
+        output = {'observations': [], 'limitations': [], 'hypotheses': [
+            {'description': 'The response may come from a default installation page',
+             'evidence_job_ids': ['owned-job'], 'follow_up': 'none', 'validation_criterion': 'Compare body',
+             'alternative_explanations': ['Custom app']}]}
+        await self.review(engine, state, output)
+        stored = next(iter(self.reasoning_records['engagement']['state']['hypotheses'].values()))
+        self.assertEqual(stored['support'], ['ev-ledger-1'])
+        state.run_id = 'second-run'
+        _, _, prompt = await self.review(engine, state, output)
+        self.assertEqual(prompt['prior_reasoning']['live_hypotheses'][0]['support'], ['owned-job'])
+
     async def test_unknown_retraction_target_is_rejected(self):
         from agents.autonomous_engine import AutonomousEngine, InvestigationReviewError, SessionRunState
         engine = AutonomousEngine()

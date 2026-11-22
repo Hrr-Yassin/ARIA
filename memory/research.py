@@ -264,13 +264,13 @@ class ResearchStore:
     async def ingest_review(self, sid: str, owner: str, run_id: str, review: dict) -> list[str]:
         """Persist current-run receipt-bound proposals idempotently, never confirm."""
         from memory.team_tasks import EvidenceInput
+        from memory.investigation_state import worker_evidence_request
         ids = []
         for index, item in enumerate(review['hypotheses']):
             refs = []
             for job in item['evidence_job_ids']:
                 event = await team_store.catalog(sid, owner, EvidenceInput(
-                    request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'research-evidence:{sid}:{job}'),
-                    source_kind='worker', source_id=job))
+                    request_id=worker_evidence_request(sid, job), source_kind='worker', source_id=job))
                 refs.append(event['data']['id'])
             event = await self.create(sid, owner, CreateHypothesis(
                 request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'research-review:{sid}:{run_id}:{index}'),

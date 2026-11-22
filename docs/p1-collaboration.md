@@ -62,12 +62,20 @@ The P0 supervisor alone removes the overclaim. Only the dependent cross-review, 
 
 The two independent analyses overlapped for the full 0.25 s. The review and challenge stages are dependent, so the total wall time roughly equals four serial calls. Concurrency saved one stage, and the added stages took it back.
 
+## Gap closure (2026-11-22, after commit 689ae2d)
+
+| Gap | Resolution | Evidence |
+| --- | --- | --- |
+| Evidence identifiers | The ledger catalog ID is canonical. The engine catalogs worker receipts with the shared request identity (`worker_evidence_request`) and stores ledger IDs in reasoning. The model still cites job IDs, and prior support is translated back for the prompt. | Engine test; PostgreSQL: reasoning IDs ⊆ ledger catalog, no raw job IDs; research catalog identity resolves to the same entry. |
+| PostgreSQL restart | `integration/collaboration_postgres.py` runs a fresh rootless postgres:16.6. The crash process is SIGKILLed during a specialist call; the restart process runs the production `team_store.recover()`, redelivers, replans and completes owner reviews. | `running` → `blocked`; redelivery returned a duplicate; the web specialist was called once; a second restart made 0 new calls; 3 reasoning cycles; 5 plan revisions; 13.8 s. |
+| Wording-similarity retractions | Replaced by stable claim IDs. `professional_result` now preserves validated `claim_id` (`h-` plus 12 hex characters) and `disposition`, which were previously dropped, so real reviewer rejections never reached reasoning. A rejection binds only to a live hypothesis on the task's evidence; otherwise it is reported as `unattributed_rejections`. | Tests for a forged ID, a missing ID and a valid ID; PostgreSQL contradiction via `claim_id`. |
+| Human approval for dependents | Unchanged gate, now with an explicit regression test: a dependent claim before owner completion returns 409, and the orchestrator never completes tasks. | `test_dependent_cannot_be_claimed_without_owner_completion`. |
+| Unnecessary specialist calls | A challenge is skipped when a reviewer already judged the claim over a superset of its evidence. A dependent review with no live claims is cancelled. Overhead is measured. | Evaluation: 4 → 3 calls, prompt characters 8,344 → 5,784, wall time 1.00 → 0.68 s, coordinator overhead 0.14 s; quality unchanged. |
+
 ## Remaining P1 gaps
 
-1. **No live model measurement.** Provider usage is counted, not billed. The live run is blocked by model-provider sharing policy, the same blocker as P0.
-2. **Owner review is simulated in evaluation.** In production every dependency waits for human completion, so wall time is dominated by review latency, which was not measured.
-3. **Retractions match reviewer claims to hypotheses by lexical similarity (≥0.5)**, not by explicit prior-claim indices.
-4. **Restart mid-run relies on the existing reconciliation** (`running` → `blocked`), followed by a single replacement. There is no disposable-PostgreSQL restart test yet.
-5. **The P0 engine and specialists cite the same receipt under different identifiers** (worker job ID versus ledger evidence ID). Reasoning merges them only by claim text.
-6. **No UI for plans.** Plans and supervision are visible through the API and the mission timeline stage only.
-7. **The scenario is author-written and small** (one scenario, three arms). There is no independent or blinded case set.
+1. **No live model measurement.** Model-provider sharing is denied on every approved engagement.
+2. **Owner review latency is unmeasured.** The evaluation simulates review.
+3. **Recovery replaces an interrupted specialist rather than resuming it.** The interrupted attempt's provider call may have been billed. This is disclosed, and capped by one replacement.
+4. **No UI for plans.**
+5. **The evaluation scenario is small and author-written.**

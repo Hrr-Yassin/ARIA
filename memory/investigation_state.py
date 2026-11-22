@@ -22,10 +22,41 @@ COLLECTION = 'investigation_reasoning'
 ENTITY = 'current'
 
 
+def worker_evidence_request(sid: str, job_id: str) -> uuid.UUID:
+    """The single catalog identity of a worker receipt, shared by every reasoning path."""
+    return uuid.uuid5(uuid.NAMESPACE_URL, f'research-evidence:{sid}:{job_id}')
+
+
+async def canonical_worker_evidence(sid: str, owner: str, job_ids: list[str]) -> dict[str, str]:
+    """Map worker job IDs to their ledger evidence IDs, cataloging receipts idempotently.
+
+    The ledger evidence ID is the canonical identifier used by reasoning,
+    specialists and research; worker job IDs remain the model-facing citation.
+    """
+    from memory.team_tasks import EvidenceInput
+    mapping: dict[str, str] = {}
+    for job_id in dict.fromkeys(job_ids):
+        event = await team_store.catalog(sid, owner, EvidenceInput(
+            request_id=worker_evidence_request(sid, job_id), source_kind='worker', source_id=job_id))
+        mapping[job_id] = event['data']['id']
+    return mapping
+
+
+def evidence_aliases(view: dict[str, Any]) -> dict[str, str]:
+    """Ledger evidence ID -> worker job ID for cataloged worker receipts."""
+    return {e['id']: e['source_id'] for e in view.get('evidence', [])
+            if e.get('source_kind') == 'worker' and isinstance(e.get('source_id'), str)}
+
+
 class InvestigationStateStore:
     async def current(self, sid: str, owner: str) -> dict[str, Any]:
         ledger = await team_store.view(sid, owner)
         return next(iter(ledger.get(COLLECTION, [])), {})
+
+    async def snapshot(self, sid: str, owner: str) -> tuple[dict[str, Any], dict[str, str]]:
+        """Reasoning record plus ledger-to-worker evidence aliases from one ledger read."""
+        ledger = await team_store.view(sid, owner)
+        return next(iter(ledger.get(COLLECTION, [])), {}), evidence_aliases(ledger)
 
     async def advance(self, sid: str, owner: str, cycle_key: str,
                       cycle_input: CycleInput) -> tuple[dict[str, Any], dict[str, Any]]:

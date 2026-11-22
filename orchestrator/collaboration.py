@@ -31,7 +31,7 @@ from pydantic import Field, model_validator
 
 from memory.team_tasks import (CreateTask, Criterion, Reference, Role, Strict, TaskBudget, TaskSpec,
                                Transition, digest, team_store)
-from orchestrator.reasoning import CycleInput, ProposedHypothesis, Retraction, _similar, claim_key
+from orchestrator.reasoning import CycleInput, ProposedHypothesis, Retraction, claim_key
 
 COLLECTION = 'orchestration_plans'
 Key = Annotated[str, Field(pattern=r'^[a-z0-9][a-z0-9._~-]{0,63}$')]
@@ -206,8 +206,16 @@ class CollaborationCoordinator:
 
     @staticmethod
     def _cycle_input(task: dict[str, Any], evidence_index: dict[str, dict[str, Any]],
-                     reasoning_state: dict[str, Any] | None) -> CycleInput:
+                     reasoning_state: dict[str, Any] | None) -> tuple[CycleInput, list[dict[str, Any]]]:
+        """Translate a collected result into one reasoning cycle.
+
+        Reviewer dispositions bind to prior claims only through a stable
+        ``claim_id`` that names a live hypothesis resting on this task's
+        evidence. A rejection without such an identity is reported as
+        unattributed instead of being guessed from wording.
+        """
         result = task.get('result') or {}
+        task_refs = set(task['evidence_inputs'])
         evidence = [{'job_id': ref, 'output': [{
             'kind': str(evidence_index[ref].get('source_kind', 'evidence')),
             'locator': str(evidence_index[ref].get('source_id', ref)),
@@ -216,19 +224,23 @@ class CollaborationCoordinator:
             for ref in task['evidence_inputs'] if ref in evidence_index]
         proposals: list[ProposedHypothesis] = []
         retractions: list[Retraction] = []
-        live = [h for h in ((reasoning_state or {}).get('hypotheses') or {}).values()
-                if h['status'] in {'active', 'contested'}]
+        unattributed: list[dict[str, Any]] = []
+        eligible = {hid for hid, h in ((reasoning_state or {}).get('hypotheses') or {}).items()
+                    if h['status'] in {'active', 'contested'} and task_refs & set(h['support'] + h['contradict'])}
         for hyp in result.get('hypotheses', [])[:6]:
             text = str(hyp.get('description', ''))[:300]
             refs = [r for r in hyp.get('evidence_references', []) if isinstance(r, str)]
+            claim_id = hyp.get('claim_id') if hyp.get('claim_id') in eligible else None
             if not text:
                 continue
             if hyp.get('disposition') == 'rejected':
-                match = max(live, key=lambda h: _similar(h['claim'], text), default=None)
-                if match and _similar(match['claim'], text) >= 0.5 and refs:
-                    retractions.append(Retraction(prior_hypothesis_id=match['id'],
+                if claim_id and refs:
+                    retractions.append(Retraction(prior_hypothesis_id=claim_id,
                                                   reason=f'{task["owner_role"]} specialist rejected: {text[:180]}',
                                                   evidence_job_ids=refs))
+                else:
+                    unattributed.append({'claim': text, 'claim_id': hyp.get('claim_id'),
+                                         'reason': 'unknown_claim_id' if hyp.get('claim_id') else 'missing_claim_id'})
                 continue
             uncertainty = hyp.get('uncertainty')
             alternatives = [str(a)[:200] for a in hyp.get('alternative_explanations', []) if a][:3]
@@ -237,10 +249,11 @@ class CollaborationCoordinator:
             proposals.append(ProposedHypothesis(
                 description=text, evidence_job_ids=refs, alternative_explanations=alternatives,
                 confidence=0.35 if hyp.get('disposition') == 'supported' else 0.25,
-                missing_information=[str(p)[:200] for p in hyp.get('prerequisites', []) if p][:2]))
+                missing_information=[str(p)[:200] for p in hyp.get('prerequisites', []) if p][:2],
+                prior_hypothesis_id=claim_id or 'none'))
         return CycleInput(evidence=evidence, interpretations=[], hypotheses=proposals,
                           available_follow_ups={}, retractions=retractions,
-                          run_id=str(task.get('run_id', '')))
+                          run_id=str(task.get('run_id', ''))), unattributed
 
     async def _interpret(self, sid: str, owner: str, plan: dict[str, Any], view: dict[str, Any]) -> list[str]:
         evidence_index = {e['id']: e for e in view['evidence']}
@@ -254,7 +267,7 @@ class CollaborationCoordinator:
             if seen and seen.get('run_id') == task.get('run_id'):
                 continue
             prior = await self.reasoning.current(sid, owner)
-            cycle = self._cycle_input(task, evidence_index, prior.get('state'))
+            cycle, unattributed = self._cycle_input(task, evidence_index, prior.get('state'))
             _, report = await self.reasoning.advance(
                 sid, owner, f'task:{task_id}:{task.get("run_id")}', cycle)
             plan['interpretations'][key] = {
@@ -262,7 +275,8 @@ class CollaborationCoordinator:
                 'hypotheses': report['hypothesize']['proposal_ids'],
                 'rejected': report['hypothesize']['rejected'], 'retracted': report['hypothesize']['retracted'],
                 'merged': report['hypothesize']['merged'], 'contested': report['contradictions']['contested'],
-                'decision_revised': bool(report['decision']['revised'])}
+                'decision_revised': bool(report['decision']['revised']),
+                'unattributed_rejections': unattributed}
             interpreted.append(key)
         return interpreted
 
@@ -296,7 +310,11 @@ class CollaborationCoordinator:
                     seen_pairs.add(pair)
                     contradictions.append({'competing': list(pair),
                                            'delegations': sorted(origin[hid] | origin[other])})
+        unattributed = [{'delegation': key, **u} for key, item in plan['interpretations'].items()
+                        for u in item.get('unattributed_rejections', [])]
         return {'unsupported_claims': unsupported, 'duplicated_conclusions': duplicated,
+                'unattributed_rejections': unattributed,
+                'avoided_specialist_calls': len(plan.get('avoided_calls', [])),
                 'duplicated_work_reused': list(plan.get('reused_work', [])),
                 'contradictions': contradictions,
                 'accepted_hypotheses': sorted(h for h in origin if hyps.get(h, {}).get('status') in {'active', 'contested'}),
@@ -353,15 +371,32 @@ class CollaborationCoordinator:
         # 2. Contested hypotheses get one targeted challenge; work focused only on
         #    rejected hypotheses is cancelled before it wastes a model call.
         hyps = (reasoning_state or {}).get('hypotheses', {})
-        challenged = {r.get('hypothesis') for r in plan['replans'] if r.get('event') == 'contradiction_challenge'}
+        challenged = {r.get('hypothesis') for r in plan['replans']
+                      if r.get('event') in {'contradiction_challenge', 'challenge_skipped'}}
         evidence = {e['id'] for e in view['evidence']}
         for hid, hyp in hyps.items():
             if hyp['status'] != 'contested' or hid in challenged:
                 continue
             if not any(hid in item['hypotheses'] for item in plan['interpretations'].values()):
                 continue
-            refs = [r for r in dict.fromkeys(hyp['support'] + hyp['contradict']) if r in evidence][:50]
+            observations = (reasoning_state or {}).get('observations', {})
+            superseding = [observations[o['superseded_by']]['evidence_ref'] for o in observations.values()
+                           if o.get('superseded') and o['evidence_ref'] in hyp['support']
+                           and o.get('superseded_by') in observations]
+            # Changed facts (for example a new tool observation) join the challenge evidence.
+            refs = [r for r in dict.fromkeys(hyp['support'] + hyp['contradict'] + superseding) if r in evidence][:50]
             if not refs:
+                continue
+            reviewed_by = [key for key, item in plan['interpretations'].items()
+                           if hid in item['retracted'] and item['role'] == 'correlation'
+                           and set(refs) <= set(tasks.get(item['task_id'], {}).get('evidence_inputs', []))]
+            if reviewed_by:
+                # A reviewer already judged this claim over a superset of its evidence;
+                # a second review of the same records would add cost, not information.
+                changes.append({'event': 'challenge_skipped', 'hypothesis': hid, 'reviewed_by': reviewed_by,
+                                'reason': 'reviewer already examined all supporting and contradicting evidence'})
+                plan['replans'].append(changes[-1])
+                plan.setdefault('avoided_calls', []).append(changes[-1])
                 continue
             challenge = Delegation(key=f'challenge-{hid[2:12]}', role='correlation',
                                    objective=f'Re-examine the contested claim against new evidence: {hyp["claim"][:300]}',
@@ -383,6 +418,26 @@ class CollaborationCoordinator:
                 reason='Replanned: every focus hypothesis was rejected by later evidence'))
             changes.append({'event': 'obsolete_cancelled', 'delegation': key})
             plan['replans'].append(changes[-1])
+            plan.setdefault('avoided_calls', []).append(changes[-1])
+        # 3. A ready review with no live claim on its evidence has nothing to challenge.
+        for key, delegation in delegations.items():
+            task = tasks.get(plan['task_ids'].get(key, ''))
+            if (not task or task['state'] != 'queued' or delegation.role != 'correlation'
+                    or not delegation.prerequisites
+                    or not all(tasks.get(plan['task_ids'].get(p, ''), {}).get('state') == 'completed'
+                               for p in delegation.prerequisites)):
+                continue
+            refs = set(delegation.evidence_inputs)
+            if any(h['status'] in {'active', 'contested'} and refs & set(h['support'] + h['contradict'])
+                   for h in hyps.values()):
+                continue
+            await team_store.transition(sid, owner, task['id'], Transition(
+                request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'aria-plan-noclaims:{plan["id"]}:{key}'),
+                expected_revision=task['revision'], state='cancelled',
+                reason='Skipped: prerequisite analyses left no live claim on this evidence to review'))
+            changes.append({'event': 'review_skipped', 'delegation': key, 'reason': 'no live claims to review'})
+            plan['replans'].append(changes[-1])
+            plan.setdefault('avoided_calls', []).append(changes[-1])
         return changes
 
     # ── scheduling ────────────────────────────────────────────────────────

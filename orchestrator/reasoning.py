@@ -603,6 +603,8 @@ def task_reasoning_context(state: dict[str, Any] | None, evidence_refs: Iterable
         'rejected_claims': [{'claim': r['claim'][:160], 'reasons': r['reasons']} for r in rejected[-limit:]],
         'open_dependencies': [d['requires'] for d in state.get('dependencies', {}).values()
                               if ids & set(d.get('hypotheses', []))][:limit],
-        'instruction': ('Test or challenge these unverified hypotheses with the assigned evidence; '
-                        'do not restate rejected claims without new evidence.'),
+        'instruction': ('Test or challenge these unverified hypotheses with the assigned evidence. When a '
+                        'conclusion concerns one of them, set claim_id to its id and disposition to supported, '
+                        'rejected or inconclusive, citing the evidence. Do not restate rejected claims without '
+                        'new evidence.'),
     }
