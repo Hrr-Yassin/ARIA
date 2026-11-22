@@ -170,6 +170,12 @@ class ModelAccounting:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             metadata = dict(session.metadata_ or {})
+            from memory.engagement_profiles import stored_profile
+            profile = stored_profile(getattr(session, 'scope', None) or {})
+            if profile and profile.get('model_sharing') != 'redacted_metadata' and provider != 'local':
+                # A profile can only restrict sharing; it never relaxes the application data policy.
+                raise HTTPException(403, {'code': 'model_provider_sharing_denied',
+                                          'message': 'The engagement authorization profile denies model provider sharing'})
             if metadata.get('application_mapping'):
                 from memory.application_map import unseal, known_secrets
                 key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:' + sid))
@@ -382,8 +388,14 @@ class ModelAccounting:
             selection = ({'provider': 'local', 'model': settings.LOCAL_LLM_MODEL}
                          if settings.LLM_ROUTING == 'local' else
                          {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL})
+            admission = admission_snapshot(metadata, limits, selection)
+            from memory.engagement_profiles import stored_profile
+            profile = stored_profile(getattr(session, 'scope', None) or {})
+            if profile and profile.get('model_sharing') != 'redacted_metadata' and selection['provider'] != 'local':
+                admission['reasons'].append('profile_model_sharing_denied')
+                admission['state'] = 'blocked'
             return {'limits': limits.model_dump(), 'configured_selection': selection,
-                    'admission': admission_snapshot(metadata, limits, selection),
+                    'admission': admission,
                     'tariff_quotes': metadata.get('model_tariffs', {}),
                     'approved_at': metadata.get('model_budget_approved_at'),
                     'usage': metadata.get('model_usage', {}),

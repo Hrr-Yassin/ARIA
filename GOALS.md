@@ -1,6 +1,19 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — Mission P3: LLM intelligence and cost efficiency
+## Current priority — Mission P4: operational authorization profiles
+
+Enforce four persisted, auditable authorization profiles (Private Lab, CTF, Authorized Pentest, Bug Bounty) through the single execution-authorization path, with operator control in Mission Control and no expansion of offensive capability.
+
+Status (2026-11-22): implemented and accepted offline, on disposable PostgreSQL, and through UI/backend contract tests.
+
+- Chat can no longer change the authorization mode.
+- A profile change invalidates prior approvals.
+- Denials happen before dispatch, persist across restart and are audited.
+- The running API and the served UI bundle were not restarted or rebuilt (owner authorization pending).
+
+See the [P4 report](docs/p4-authorization-profiles.md). P3 live acceptance remains blocked by provider-sharing policy.
+
+## Previous priority — Mission P3: LLM intelligence and cost efficiency
 
 Improve prompt quality, context use, model routing and supervisor decisions with measured effects. The work spends provider funds only under an approved sharing policy and budget.
 

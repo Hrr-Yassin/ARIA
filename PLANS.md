@@ -1,5 +1,21 @@
 # ARIA competence and reliability implementation plan
 
+## Mission P4 — Operational authorization profiles (2026-11-22)
+
+| ID | Requirement | Status | Evidence and limits | Next action |
+| --- | --- | --- | --- | --- |
+| R-P4-01 | Four persisted profiles with assets, exclusions, capabilities, approval, schedule, limits, retention, model sharing | VERIFIED | `memory/engagement_profiles.py`; PostgreSQL persistence across restart. | — |
+| R-P4-02 | Profile-specific documentation | VERIFIED | Ownership and inventory and isolation; challenge rules; authorization document SHA-256 and rules of engagement; active program snapshot provenance. | — |
+| R-P4-03 | No authorization from reachability | VERIFIED | Declared assets only; wildcards and broad ranges refused; lab targets must be private or lab-reserved. | — |
+| R-P4-04 | Central enforcement | VERIFIED | `ExecutionAuthorization._validate`, run at propose, decide, execute and dispatch; dispatch-time recheck test. | — |
+| R-P4-05 | Model cannot change permissions | VERIFIED | Chat `SET_MODE` is inert; profile injection at creation → 422; the owner-only route is the only writer. | — |
+| R-P4-06 | Profile change invalidates approvals | VERIFIED | Scope-digest binding plus worker-epoch bump; PostgreSQL: approval from revision 1 → 403. | — |
+| R-P4-07 | Denials persist and are audited | VERIFIED | `policy_denied` and `engagement_profile_change` records; prohibited capability denied on retries after restart. | — |
+| R-P4-08 | Redirects and discovered assets do not expand scope | VERIFIED | An undeclared host is rejected before dispatch. | — |
+| R-P4-09 | Mission Control controls reflect enforcement | VERIFIED (contract and build) | Settings → Authorization profile; contract tests; `tsc` clean; build verified into `.local-lab`. | Owner-approved restart and redeploy, then a browser run. |
+| R-P4-10 | Retention enforcement | NOT IMPLEMENTED | Recorded only. | Decide a deletion policy. |
+| R-P4-11 | Require a profile for all execution | NOT ENABLED | Unprofiled engagements use the legacy scope. | Owner decision. |
+
 ## Mission P3 — LLM intelligence and cost efficiency (2026-11-22)
 
 | ID | Requirement | Status | Evidence and limits | Next action |

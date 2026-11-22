@@ -27,6 +27,7 @@ from api.routers import reports as reports_router
 from api.routers import api_keys as api_keys_router
 from api.routers import admin as admin_router
 from api.routers import application_map as application_map_router
+from api.routers import engagement_profiles as engagement_profiles_router
 from api.routers import team as team_router
 from api.routers import programs as programs_router
 from api.routers import burp as burp_router
@@ -193,6 +194,7 @@ async def request_correlation(request: Request, call_next):
 # ── Routers ──────────────────────────────────────────────────────────────
 
 app.include_router(application_map_router.router, prefix="/api/application-map", tags=["application-map"])
+app.include_router(engagement_profiles_router.router, prefix="/api/engagements", tags=["engagement-profiles"])
 app.include_router(team_router.router, prefix="/api/team", tags=["team-tasks"])
 app.include_router(programs_router.router, prefix="/api/programs", tags=["program-policies"])
 app.include_router(burp_router.router, prefix="/api/burp", tags=["burp-community"])

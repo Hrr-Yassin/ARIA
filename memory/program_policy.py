@@ -303,7 +303,7 @@ class ProgramPolicyStore:
                       'content_sha256': latest.metadata_['content_sha256'], 'rules': rules.model_dump(),
                       'activated_by': owner_id, 'activation_id': str(uuid.uuid4())}
             # Budgets live in metadata and NEVER reset when a policy is revised.
-            restrictions = {key: session.scope[key] for key in ('blocked_typed_capabilities',)
+            restrictions = {key: session.scope[key] for key in ('blocked_typed_capabilities', 'engagement_profile')
                             if key in (session.scope or {})}
             session.scope = {'targets': [asset.host for asset in rules.assets], 'exclusions': [],
                              'program_policy': policy, **restrictions}

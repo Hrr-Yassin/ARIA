@@ -20,6 +20,30 @@ from orchestrator.execution_policy import PolicyError, validate_command
 from memory.worker_jobs import worker_jobs
 from security.credentials import auth_revision
 from security_tools.restrictions import CapabilityBlocked, check_capability
+from memory.engagement_profiles import ProfileDenied, check_operation, requires_approval, stored_profile
+
+
+async def recent_dispatch_count(session_id: str, window_seconds: int = 3600) -> int:
+    """Dispatches claimed for this engagement in the trailing window (profile hourly limits)."""
+    from datetime import datetime, timedelta, timezone as tz
+    from sqlalchemy import func
+    since = (datetime.now(tz.utc) - timedelta(seconds=window_seconds)).replace(tzinfo=None)
+    async with async_session() as db:
+        return int((await db.execute(select(func.count()).select_from(DecisionLog).where(
+            DecisionLog.session_id == session_id, DecisionLog.decision_type == 'execution_consumed',
+            DecisionLog.created_at >= since))).scalar_one())
+
+
+async def record_policy_denial(user_id: str, session_id: str, command: str, detail: dict) -> None:
+    """Best-effort operator record of a policy denial; never weakens the denial itself."""
+    try:
+        async with async_session() as db:
+            db.add(DecisionLog(session_id=session_id, user_id=user_id, decision_type='policy_denied',
+                               action_taken='denied', risk_color='red', human_involved=False,
+                               metadata_={**detail, 'command_hash': digest(command)}))
+            await db.commit()
+    except Exception:
+        pass
 
 
 @dataclass(frozen=True)
@@ -108,10 +132,12 @@ async def authoritative_context(user_id, session_id, *, allow_inactive_session=F
 
 
 class ExecutionAuthorization:
-    def __init__(self, store=None, context_loader=None, worker=None):
+    def __init__(self, store=None, context_loader=None, worker=None, rate_counter=None, audit=None):
         self.store = store or SQLAuthorizationStore()
         self.context_loader = context_loader or authoritative_context
         self.worker = worker or self._worker
+        self.rate_counter = rate_counter or recent_dispatch_count
+        self.audit = audit or record_policy_denial
 
     async def _context(self, user_id, session_id, *, allow_blocked=False):
         try:
@@ -127,7 +153,13 @@ class ExecutionAuthorization:
     def _validate(self, command, context, tool=''):
         try:
             check_capability(command, context['scope'])
-            return validate_command(command, context['scope'], tool)
+            validated = validate_command(command, context['scope'], tool)
+            # Operational authorization profile: same check at proposal, decision and dispatch.
+            check_operation(context['scope'], validated.command, validated.tool, validated.risk)
+            return validated
+        except ProfileDenied as denied:
+            raise HTTPException(403, {'code': 'profile_denied', 'reason': denied.code,
+                                      'message': str(denied)}) from None
         except CapabilityBlocked:
             raise HTTPException(403, {'code': 'capability_blocked',
                                       'message': 'Capability is blocked for this engagement'}) from None
@@ -140,12 +172,28 @@ class ExecutionAuthorization:
         except Exception:
             raise HTTPException(503, 'Authorization storage unavailable') from None
 
+    async def _audited(self, user_id, session_id, command, stage, operation):
+        try:
+            return await operation()
+        except HTTPException as error:
+            detail = error.detail if isinstance(error.detail, dict) else {}
+            if detail.get('code') in {'profile_denied', 'capability_blocked', 'profile_approval_required',
+                                      'profile_rate_limited'}:
+                await self.audit(user_id, session_id, command, {'stage': stage, **detail})
+            raise
+
     async def propose(self, user_id, session_id, command, tool='', require_approval=False, turn_id=''):
+        return await self._audited(user_id, session_id, command, 'propose',
+            lambda: self._propose(user_id, session_id, command, tool, require_approval, turn_id))
+
+    async def _propose(self, user_id, session_id, command, tool='', require_approval=False, turn_id=''):
         context = await self._context(user_id, session_id)
         validated = self._validate(command, context, tool)
+        profile = stored_profile(context['scope'])
+        pending = require_approval or requires_approval(profile, validated.risk)
         proposal = Proposal(str(uuid.uuid4()), session_id, user_id, validated.command,
                             validated.tool, validated.risk, digest(context), time.time() + 600,
-                            'pending' if validated.risk == 'red' or require_approval else 'authorized', turn_id=turn_id)
+                            'pending' if pending else 'authorized', turn_id=turn_id)
         await self._stored(self.store.add, proposal)
         return proposal
 
@@ -180,10 +228,16 @@ class ExecutionAuthorization:
         return updated
 
     async def execute(self, user_id, session_id, command, tool='', action_id='', timeout=120, executor=None, expected_revision=None, expected_worker_epoch=None):
+        return await self._audited(user_id, session_id, command, 'execute',
+            lambda: self._execute(user_id, session_id, command, tool, action_id, timeout, executor,
+                                  expected_revision, expected_worker_epoch))
+
+    async def _execute(self, user_id, session_id, command, tool='', action_id='', timeout=120, executor=None, expected_revision=None, expected_worker_epoch=None):
         if not action_id:
             # Legacy callers may request passive/scanning commands, but red-risk
             # requests cannot create their own approval. Every dispatch is durable.
-            proposal = await self.propose(user_id, session_id, command, tool)
+            # The outer execute() already audits denials; avoid recording them twice.
+            proposal = await self._propose(user_id, session_id, command, tool)
             action_id = proposal.id
         proposal, context = await self._load(action_id, user_id, session_id, requester=True)
         if expected_revision is not None and context.get("auth_revision", 0) != expected_revision:
@@ -195,12 +249,22 @@ class ExecutionAuthorization:
             raise HTTPException(403, 'Authorization does not match this command')
         if proposal.status not in {'approved', 'authorized'} or (validated.risk == 'red' and proposal.status != 'approved'):
             raise HTTPException(403, 'Explicit command-bound approval is required')
+        profile = stored_profile(context['scope'])
+        if profile is not None:
+            if requires_approval(profile, validated.risk) and proposal.status != 'approved':
+                raise HTTPException(403, {'code': 'profile_approval_required',
+                                          'message': f'The {profile["kind"]} profile requires explicit human approval'})
+            if await self.rate_counter(session_id) >= profile['limits']['max_operations_per_hour']:
+                raise HTTPException(429, {'code': 'profile_rate_limited',
+                                          'message': 'The profile hourly operation limit is reached'})
         try:
             timeout = int(timeout)
         except (TypeError, ValueError):
             raise HTTPException(422, 'Invalid timeout') from None
         if not 1 <= timeout <= settings.AUTONOMOUS_STEP_TIMEOUT_SECONDS:
             raise HTTPException(422, 'Timeout exceeds policy limit')
+        if profile is not None:
+            timeout = min(timeout, profile['limits']['max_timeout_seconds'])
         if validated.tool == 'aria-http' and timeout > 10:
             raise HTTPException(422, 'Authenticated HTTP is bounded to ten seconds')
         if validated.command.startswith('aria-tool '):

@@ -850,3 +850,20 @@
 - **Checks:** the offline suite passed 979/980 in 48.9 s; the one failure is the known pre-existing `test_team_tasks` test. Pyright reports 0 errors in the changed files.
 - **Live:** preflight `model_provider_sharing_denied`; 0 calls. The run is prepared (14 calls, 193,939 reserved tokens, $0.05). The deployed API was not restarted.
 
+## 2026-11-22 — Mission P4 authorization profiles
+
+- **Audit:**
+  - chat `SET_MODE` could change the session authorization mode without confirmation;
+  - session creation did not protect a profile key;
+  - program activation would have erased extra scope keys;
+  - the bug-bounty program policy was reused.
+- **Implemented:**
+  - four validated profiles stored in `scope.engagement_profile`;
+  - enforcement in `ExecutionAuthorization` (capabilities, validity, schedule, program match, approval floor, hourly limit, timeout cap);
+  - `policy_denied` and `engagement_profile_change` audit records;
+  - profile-level model-sharing restriction, where the most restrictive setting wins;
+  - owner-only API;
+  - Mission Control Settings panel.
+- **Acceptance:** 15 policy tests; a dispatch-time recheck test; 2 UI contract tests; and a disposable PostgreSQL run across two processes with a tripwire worker that passed every check (10.8 s). Full offline suite 995/996, with the known pre-existing failure. Pyright reports 0 errors in P4 files.
+- **Not done:** no browser run against a deployed API (restart not authorized); retention enforcement; a mandatory profile for all execution.
+
