@@ -26,6 +26,20 @@ class OfflineCase(unittest.IsolatedAsyncioTestCase):
         self.research_sync = patch('memory.research.research_store.sync_specialists', AsyncMock())
         self.research_sync.start()
         self.research_view.start(); self.research_ingest.start()
+        # Durable reasoning ledger writes are covered in test_investigation_reasoning;
+        # other service fixtures run the pure kernel in memory.
+        self.reasoning_records: dict = {}
+        async def reasoning_current(sid, owner):
+            return self.reasoning_records.get(sid, {})
+        async def reasoning_advance(sid, owner, cycle_key, cycle_input):
+            from orchestrator.reasoning import run_cycle
+            state, report = run_cycle(self.reasoning_records.get(sid, {}).get('state'), cycle_input)
+            self.reasoning_records[sid] = {'state': state, 'last_report': report, 'cycle_key': cycle_key}
+            return state, report
+        self.enterContext(patch('memory.investigation_state.investigation_state.current',
+                                AsyncMock(side_effect=reasoning_current)))
+        self.enterContext(patch('memory.investigation_state.investigation_state.advance',
+                                AsyncMock(side_effect=reasoning_advance)))
         # Durable review journal SQL/concurrency is exercised in the dedicated
         # disposable PostgreSQL suite. Other service fixtures remain offline.
         self.enterContext(patch('memory.investigation_reviews.review_journal.acquire',

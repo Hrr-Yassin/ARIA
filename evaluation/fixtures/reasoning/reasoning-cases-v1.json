@@ -1,0 +1,143 @@
+{
+  "schema_version": "aria.reasoning-eval.v1",
+  "frozen_at": "2026-11-22",
+  "authorship": "Author-written development cases over retained evidence. Not an independent or blinded holdout.",
+  "evidence": {
+    "httpx": {"job_id": "job-httpx", "provenance": "tests/fixtures/security_tools/httpx.json (retained synthetic receipt)",
+              "output": [{"kind": "http", "locator": "http://192.0.2.1:8080/", "summary": "HTTP 200 title 'Synthetic fixture' tech Fixture"}]},
+    "httpx_changed": {"job_id": "job-httpx-later", "provenance": "Variant of tests/fixtures/security_tools/httpx.json with a later 503 response (labelled synthetic change)",
+              "output": [{"kind": "http", "locator": "http://192.0.2.1:8080/", "summary": "HTTP 503 title 'Maintenance'"}]},
+    "nmap": {"job_id": "job-nmap", "provenance": "tests/fixtures/security_tools/nmap.json (retained synthetic receipt)",
+             "output": [{"kind": "port", "locator": "192.0.2.1:8080/tcp", "summary": "tcp/8080 open"}]},
+    "nmap_empty": {"job_id": "job-nmap-empty", "provenance": "Normalized nmap receipt with no open-port observation",
+             "output": []},
+    "ffuf": {"job_id": "job-ffuf", "provenance": "tests/fixtures/security_tools/ffuf.json (retained synthetic receipt)",
+             "output": [{"kind": "http_path", "locator": "http://192.0.2.1:8080/health", "summary": "status 200 length 10"}]},
+    "ffuf_admin_404": {"job_id": "job-ffuf-admin", "provenance": "Bounded ffuf follow-up result for /admin and /test (labelled synthetic outcome)",
+             "output": [{"kind": "http_path", "locator": "http://192.0.2.1:8080/admin", "summary": "status 404 length 0"},
+                        {"kind": "http_path", "locator": "http://192.0.2.1:8080/test", "summary": "status 404 length 0"}]},
+    "nuclei": {"job_id": "job-nuclei", "provenance": "tests/fixtures/security_tools/nuclei.json (retained synthetic receipt)",
+               "output": [{"kind": "template", "locator": "http://192.0.2.1:8080/", "summary": "aria-http-observation severity info"}]},
+    "msf_http": {"job_id": "job-lab-http", "provenance": "tests/fixtures/planner/observed_typed_review.json retained authorized lab observation (192.168.77.20)",
+                 "output": [{"kind": "http", "locator": "http://192.168.77.20", "summary": "HTTP 200 title 'Metasploitable2 - Linux'"}]},
+    "msf_ports": {"job_id": "job-lab-ports", "provenance": "Retained authorized lab observation: TCP 21, 22, 80, 139, 445 open on 192.168.77.20",
+                  "output": [{"kind": "port", "locator": "192.168.77.20:21/tcp", "summary": "tcp/21 open ftp"},
+                             {"kind": "port", "locator": "192.168.77.20:80/tcp", "summary": "tcp/80 open http"}]}
+  },
+  "follow_ups": {
+    "bounded_http_paths": {"requires_approval": true, "validation_criterion": "Compare HTTP statuses for /admin and /test without redirects; a non-404 response is a path candidate, not a vulnerability."},
+    "http_observation_template": {"requires_approval": true, "validation_criterion": "Capture the pinned informational single-response observation; it does not establish a vulnerability."}
+  },
+  "cases": [
+    {
+      "id": "banner-overclaim",
+      "objective": "Interpret retained lab observations without inferring vulnerabilities from banners.",
+      "cycles": [
+        {"evidence": ["msf_http", "msf_ports", "nmap_empty"], "follow_ups": ["bounded_http_paths"], "completed": [],
+         "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP title says Metasploitable2", "FTP and HTTP are open"], "limitations": ["Banner only"],
+           "hypotheses": [
+             {"description": "The FTP service is confirmed vulnerable to the vsftpd 2.3.4 backdoor.", "evidence_job_ids": ["job-lab-ports"], "follow_up": "none", "validation_criterion": "None needed", "confidence": 0.9, "label": "false_positive"},
+             {"description": "The HTTP service may expose administrative or test paths worth a bounded status comparison.", "evidence_job_ids": ["job-lab-http"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin or /test", "alternative_explanations": ["Default page with no extra paths"], "confidence": 0.3, "label": "supported"},
+             {"description": "An additional closed-port scan result may hide a filtered SMB service.", "evidence_job_ids": ["job-nmap-empty"], "follow_up": "none", "validation_criterion": "Check SMB", "alternative_explanations": ["No service"], "confidence": 0.4, "label": "false_positive"}
+           ]}}
+      ]
+    },
+    {
+      "id": "competing-explanations",
+      "objective": "Keep rival explanations for a reachable /health path alive until a discriminating observation exists.",
+      "cycles": [
+        {"evidence": ["httpx", "ffuf"], "follow_ups": ["bounded_http_paths", "http_observation_template"], "completed": [],
+         "expect_action": "http_observation_template", "expect_competing": [[0, 1]],
+         "scripted": {"observations": ["/health returns 200 with length 10"], "limitations": [],
+           "hypotheses": [
+             {"description": "The /health path may disclose internal service status details.", "evidence_job_ids": ["job-ffuf"], "follow_up": "http_observation_template", "validation_criterion": "Informational response body differs from a fixed liveness string", "alternative_explanations": ["Generic liveness probe"], "competes_with": [1], "confidence": 0.35, "label": "supported"},
+             {"description": "The /health path is probably a generic liveness probe returning a fixed short string.", "evidence_job_ids": ["job-ffuf"], "follow_up": "none", "validation_criterion": "Body is a constant like OK", "alternative_explanations": ["Status disclosure"], "competes_with": [0], "confidence": 0.5, "label": "supported"},
+             {"description": "The root page may expose additional admin paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["Static page"], "confidence": 0.2, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "contradiction-retraction",
+      "objective": "Withdraw a path hypothesis once the bounded follow-up contradicts it, and refuse to re-propose it without new evidence.",
+      "cycles": [
+        {"evidence": ["httpx"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP 200 synthetic page"], "limitations": [],
+           "hypotheses": [
+             {"description": "The application may expose an /admin path.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["No admin path"], "confidence": 0.3, "label": "supported", "tag": "admin"}
+           ]}},
+        {"evidence": ["httpx", "ffuf_admin_404"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"],
+         "expect_action": "no_further_analysis", "expect_contradicted": ["admin"],
+         "scripted": {"observations": ["/admin and /test returned 404"], "limitations": [], "hypotheses": [],
+           "retractions": [{"tag": "admin", "reason": "Bounded comparison returned 404 for /admin", "evidence_job_ids": ["job-ffuf-admin"]}]}},
+        {"evidence": ["httpx"], "follow_ups": ["bounded_http_paths"], "completed": ["bounded_http_paths"], "expect_action": "no_further_analysis",
+         "scripted": {"observations": ["HTTP 200 synthetic page"], "limitations": [],
+           "hypotheses": [
+             {"description": "The application may expose an /admin path.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["No admin path"], "confidence": 0.3, "label": "false_positive"}
+           ]}}
+      ]
+    },
+    {
+      "id": "duplicate-restatement",
+      "objective": "Recognise a restated hypothesis as the same line of investigation.",
+      "expect_unique_hypotheses": 1,
+      "cycles": [
+        {"evidence": ["httpx"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP 200"], "limitations": [],
+           "hypotheses": [{"description": "The web root may expose administrative paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["Static site"], "confidence": 0.3, "label": "supported"}]}},
+        {"evidence": ["httpx", "nmap"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths", "expect_stable": true,
+         "scripted": {"observations": ["HTTP 200 on open tcp/8080"], "limitations": [],
+           "hypotheses": [{"description": "Administrative paths may be exposed by the web root.", "evidence_job_ids": ["job-httpx", "job-nmap"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["Static site"], "confidence": 0.35, "label": "supported"}]}}
+      ]
+    },
+    {
+      "id": "evidence-change-replan",
+      "objective": "Revise the active decision when the evidence it rests on changes.",
+      "cycles": [
+        {"evidence": ["httpx"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP 200"], "limitations": [],
+           "hypotheses": [{"description": "The root page may link to a hidden test path.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /test", "alternative_explanations": ["No test path"], "confidence": 0.3, "label": "supported", "tag": "test"}]}},
+        {"evidence": ["httpx_changed"], "follow_ups": [], "completed": [], "expect_action": "collect_missing_information", "expect_revised": true,
+         "scripted": {"observations": ["Service now returns 503 maintenance"], "limitations": ["Earlier 200 response superseded"],
+           "hypotheses": [{"description": "The service may be temporarily in maintenance mode rather than serving the application.", "evidence_job_ids": ["job-httpx-later"], "follow_up": "none", "validation_criterion": "Later response returns 200 again", "alternative_explanations": ["Permanent decommission"], "confidence": 0.4, "label": "supported"}]}}
+      ]
+    },
+    {
+      "id": "stable-decision",
+      "objective": "Keep a sound decision when a later review merely reorders the same hypotheses.",
+      "cycles": [
+        {"evidence": ["httpx", "ffuf"], "follow_ups": ["bounded_http_paths", "http_observation_template"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["HTTP 200 and /health 200"], "limitations": [],
+           "hypotheses": [
+             {"description": "The web root may expose admin or test paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin or /test", "alternative_explanations": ["Static site"], "confidence": 0.45, "label": "supported"},
+             {"description": "An informational template may describe the root response.", "evidence_job_ids": ["job-httpx"], "follow_up": "http_observation_template", "validation_criterion": "Template observation captured", "alternative_explanations": ["No template match"], "confidence": 0.1, "label": "supported"}
+           ]}},
+        {"evidence": ["httpx", "ffuf"], "follow_ups": ["bounded_http_paths", "http_observation_template"], "completed": [], "expect_action": "bounded_http_paths", "expect_stable": true,
+         "scripted": {"observations": ["Same responses"], "limitations": [],
+           "hypotheses": [
+             {"description": "An informational template may describe the root response.", "evidence_job_ids": ["job-httpx"], "follow_up": "http_observation_template", "validation_criterion": "Template observation captured", "alternative_explanations": ["No template match"], "confidence": 0.12, "label": "supported"},
+             {"description": "The web root may expose admin or test paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin or /test", "alternative_explanations": ["Static site"], "confidence": 0.45, "label": "supported"}
+           ]}},
+        {"evidence": ["httpx", "ffuf"], "follow_ups": ["bounded_http_paths", "http_observation_template"], "completed": [], "expect_action": "bounded_http_paths", "expect_stable": true,
+         "scripted": {"observations": ["Same responses"], "limitations": [],
+           "hypotheses": [
+             {"description": "An informational template may describe the root response.", "evidence_job_ids": ["job-httpx"], "follow_up": "http_observation_template", "validation_criterion": "Template observation captured", "alternative_explanations": ["No template match"], "confidence": 0.15, "label": "supported"},
+             {"description": "The web root may expose admin or test paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin or /test", "alternative_explanations": ["Static site"], "confidence": 0.45, "label": "supported"}
+           ]}}
+      ]
+    },
+    {
+      "id": "informational-template-overclaim",
+      "objective": "Treat an informational template match as an observation, not a vulnerability.",
+      "cycles": [
+        {"evidence": ["nuclei", "httpx"], "follow_ups": ["bounded_http_paths"], "completed": [], "expect_action": "bounded_http_paths",
+         "scripted": {"observations": ["Info-level template matched"], "limitations": [],
+           "hypotheses": [
+             {"description": "Nuclei proves the service is exploitable.", "evidence_job_ids": ["job-nuclei"], "follow_up": "none", "validation_criterion": "None", "confidence": 0.95, "label": "false_positive"},
+             {"description": "The info-level match may only describe a generic HTTP response.", "evidence_job_ids": ["job-nuclei"], "follow_up": "none", "validation_criterion": "Template output contains no vulnerability indicator", "alternative_explanations": ["Fingerprint of a specific product"], "confidence": 0.5, "label": "supported"},
+             {"description": "The root response may expose further paths.", "evidence_job_ids": ["job-httpx"], "follow_up": "bounded_http_paths", "validation_criterion": "Non-404 for /admin", "alternative_explanations": ["Static page"], "confidence": 0.95, "label": "supported", "overconfident": true}
+           ]}}
+      ]
+    }
+  ]
+}

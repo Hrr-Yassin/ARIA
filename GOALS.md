@@ -1,6 +1,12 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — ARIA Mission Control 2.0
+## Current priority — Mission P0: advanced autonomous reasoning engine
+
+Improve ARIA's investigation reasoning over retained, authorized evidence without expanding live testing. Keep a persistent investigation state with observations, assumptions, competing hypotheses, supporting and contradicting evidence, decisions, dependencies and verification results. Run each evidence review through OBSERVE → ANALYZE → HYPOTHESIZE → PRIORITIZE → PLAN → REVIEW → REPLAN. A deterministic supervisor challenges unsupported claims before they reach research. Preserve authorization, evidence integrity, model-sharing and human-signoff controls. No conclusion from this cycle confirms a vulnerability.
+
+Status (2026-11-22): the first increment is committed and accepted for offline development scope. On a frozen, author-written set of 7 cases and 13 cycles, the reasoning arm beat the pre-change pipeline on false-positive rejection, contradiction handling, decision consistency, replanning and redundancy. The live DeepSeek V4 Flash evaluation is BLOCKED by owner policy: every approved engagement with enough headroom denies model-provider sharing or its budget preflight. Zero calls were made and $0 spent. See [P0 acceptance](docs/p0-reasoning-acceptance.md). P1 multi-agent orchestration is the active increment.
+
+## Previous priority — ARIA Mission Control 2.0
 
 Unify the owner-facing overview and record workspace in the existing application. Preserve the session, execution, evidence, and accounting authorities. Verify the interface in visible Chromium and Firefox with an auditable baseline, representative workflows, renderer measurements, and a graphical engineering report. The full request and its unmet requirements remain tracked separately from the verified observability and containment scope. [Mission Control contracts](docs/mission-control-contracts.md)
 

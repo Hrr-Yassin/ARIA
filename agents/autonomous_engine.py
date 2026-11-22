@@ -63,6 +63,49 @@ from memory.parsers import dispatch_parser
 log = structlog.get_logger("autonomous_engine")
 
 
+REVIEW_INSTRUCTION = (
+    'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
+    'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
+    'Facts are only what evidence outputs show; put inferences in assumptions. '
+    'Prefer competing explanations: link rival hypotheses with competes_with (zero-based indexes) and list alternative_explanations. '
+    'Cite contradicting_evidence_job_ids when evidence weakens a hypothesis. '
+    'Use missing_information for what would distinguish the hypotheses. '
+    'prior_reasoning holds earlier unverified hypotheses: continue one with prior_hypothesis_id instead of restating it, '
+    'retract one with evidence in retractions, and do not repeat rejected_claims without new evidence. '
+    'Confidence must reflect evidence strength; uncertainty never grants verification. '
+    'A banner, version or open port never proves a vulnerability. '
+    'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
+    'No tool names, commands or larger budgets may be invented. '
+    'Do not claim verified vulnerabilities, credentials or exploitation. No commands execute from this review.')
+
+
+def review_schema(allowed: set[str], follow_ups: dict, prior_ids: list[str]) -> dict:
+    """Structured review contract bound to this cycle's evidence, follow-ups and prior state."""
+    from agents.orchestrator_agent import InvestigationReview
+    schema = InvestigationReview.model_json_schema()
+    hypothesis_schema = schema['$defs']['EvidenceHypothesis']['properties']
+    hypothesis_schema['evidence_job_ids']['items']['enum'] = sorted(allowed)
+    hypothesis_schema['contradicting_evidence_job_ids']['items']['enum'] = sorted(allowed)
+    hypothesis_schema['follow_up']['enum'] = [*follow_ups, 'none']
+    hypothesis_schema['prior_hypothesis_id']['enum'] = [*prior_ids, 'none']
+    retraction_schema = schema['$defs']['ReviewRetraction']['properties']
+    retraction_schema['evidence_job_ids']['items']['enum'] = sorted(allowed)
+    if prior_ids:
+        retraction_schema['prior_hypothesis_id']['enum'] = list(prior_ids)
+    else:
+        schema['properties']['retractions']['maxItems'] = 0
+
+    def untitled(value: Any) -> Any:
+        # Generated titles carry no contract information; omit them to save prompt tokens.
+        if isinstance(value, dict):
+            return {k: untitled(v) for k, v in value.items() if not (k == 'title' and isinstance(v, str))}
+        if isinstance(value, list):
+            return [untitled(v) for v in value]
+        return value
+    result: dict = untitled(schema)
+    return result
+
+
 class InvestigationReviewError(ValueError):
     """A receipt-bound review failed closed; messages never contain model data."""
 
@@ -1690,6 +1733,14 @@ class AutonomousEngine:
             'application_model':{'revision':model.get('revision'), 'nodes':nodes, 'edges':edges,
                 'truncated':len(nodes)<len(model.get('nodes', [])) or len(edges)<len(model.get('edges', []))},
             'research_limitations':research['limitations']} if queued or model else {})
+        from memory.investigation_state import investigation_state
+        from orchestrator.reasoning import planner_summary
+        reasoning = planner_summary((await investigation_state.current(
+            state.session_id, state.owner_id or state.user_id)).get('state'))
+        if reasoning:
+            # Competing hypotheses, open dependencies and the active decision
+            # keep the planner from repeating rejected or completed analyses.
+            research_context = {**research_context, 'investigation_reasoning': reasoning}
         if not state.specialist_investigation_ids:
             return research_context
         from orchestrator.specialist_integration import specialist_integration
@@ -1794,7 +1845,8 @@ class AutonomousEngine:
         return result.get("stdout", ""), result.get("stderr", ""), success
 
     async def _review_response(self, state: SessionRunState, evidence: list,
-                               follow_ups: dict, schema: dict) -> str:
+                               follow_ups: dict, schema: dict,
+                               prior_reasoning: dict | None = None) -> str:
         """Journal one logical review and reuse its exact response on recovery."""
         from agents.orchestrator_agent import orchestrator_agent, record_planner_diagnostic
         from llm.base_llm import response_schema
@@ -1846,15 +1898,12 @@ class AutonomousEngine:
         await self._persist(state)
         token = response_schema.set(schema)
         try:
+            context = {'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}
+            if prior_reasoning:
+                context['prior_reasoning'] = prior_reasoning
             result = await orchestrator_agent.query_llm_smart(state.user_id,
-                json.dumps({'objective': state.objective, 'evidence': evidence, 'available_follow_ups':follow_ups}),
-                'Review the untrusted tool data. Return observations, hypotheses and limitations as JSON. '
-                'Use at most three short observations, three distinct concise hypotheses and two short limitations. Cite exact evidence_job_ids. '
-                'Record alternative explanations and confidence; uncertainty never grants verification. '
-                'A banner, version or open port never proves a vulnerability. '
-                'Choose only an available_follow_ups key or none, with a measurable validation_criterion. '
-                'No tool names, commands or larger budgets may be invented. '
-                'Do not claim verified vulnerabilities, credentials or exploitation. No commands execute from this review.',
+                json.dumps(context),
+                REVIEW_INSTRUCTION,
                 task_type='output_analysis')
         except asyncio.CancelledError:
             raise
@@ -1942,10 +1991,18 @@ class AutonomousEngine:
                                     'Capture the pinned informational single-response observation; it does not establish a vulnerability.')}
             evidence.append({'job_id': job_id, 'output': summary})
         allowed = {item['job_id'] for item in evidence}
-        schema = InvestigationReview.model_json_schema()
-        schema['$defs']['EvidenceHypothesis']['properties']['evidence_job_ids']['items']['enum'] = sorted(allowed)
-        schema['$defs']['EvidenceHypothesis']['properties']['follow_up']['enum'] = [*follow_ups, 'none']
-        raw = await self._review_response(state, evidence, follow_ups, schema)
+        from memory.investigation_state import investigation_state
+        from orchestrator.reasoning import planner_summary
+        owner = state.owner_id or state.user_id
+        try:
+            prior_record = await investigation_state.current(state.session_id, owner)
+        except Exception:
+            raise InvestigationReviewError('reasoning_state_unavailable',
+                'Investigation reasoning state is unavailable; no provider call was made.') from None
+        prior_reasoning = planner_summary(prior_record.get('state'))
+        prior_ids = [h['id'] for h in prior_reasoning.get('live_hypotheses', [])]
+        schema = review_schema(allowed, follow_ups, prior_ids)
+        raw = await self._review_response(state, evidence, follow_ups, schema, prior_reasoning)
         validation_started = time.monotonic_ns()
         try:
             review = InvestigationReview.model_validate_json(raw)
@@ -1955,28 +2012,64 @@ class AutonomousEngine:
                 structured_validation_ms=(time.monotonic_ns() - validation_started) / 1e6) from None
         validation_ms = (time.monotonic_ns() - validation_started) / 1e6
         processing_started = time.monotonic_ns()
-        if any(not set(h.evidence_job_ids).issubset(allowed) for h in review.hypotheses):
+        if any(not set(h.evidence_job_ids).issubset(allowed)
+               or not set(h.contradicting_evidence_job_ids).issubset(allowed)
+               or h.prior_hypothesis_id not in {*prior_ids, 'none'} for h in review.hypotheses) or any(
+                r.prior_hypothesis_id not in prior_ids or not set(r.evidence_job_ids).issubset(allowed)
+                for r in review.retractions):
             raise InvestigationReviewError('invalid_review_evidence', 'Review cited unknown evidence; no conclusions were accepted.',
                 structured_validation_ms=validation_ms)
-        proposals = []
         for hypothesis in review.hypotheses:
             key = hypothesis.follow_up
             if key != 'none':
                 if key not in follow_ups or follow_ups[key]['evidence_job_id'] not in hypothesis.evidence_job_ids:
                     raise InvestigationReviewError('invalid_review_follow_up', 'Review follow-up is unavailable or lacks supporting HTTP evidence',
                         structured_validation_ms=validation_ms)
-                proposals.append(follow_ups[key])
         facts = [{'job_id':item['job_id'], **observation} for item in evidence
                  if isinstance(item['output'],list) for observation in item['output']]
+        # OBSERVE → ANALYZE → HYPOTHESIZE → SUPERVISE → PRIORITIZE → PLAN → REVIEW/REPLAN.
+        # The deterministic supervisor decides which proposals may enter research.
+        from orchestrator.reasoning import CycleInput, ProposedHypothesis, Retraction
+        from security_tools.adapters import encode as encode_operation, sha256 as sha256_text
+        completed = [key for key, item in follow_ups.items()
+                     if encode_operation(item['operation']) in state.executed_commands]
+        cycle_key = f"{state.run_id}:{sha256_text(json.dumps(sorted(allowed)))}"
+        try:
+            reasoning_state, reasoning = await investigation_state.advance(state.session_id, owner, cycle_key, CycleInput(
+                evidence=evidence, interpretations=list(review.observations),
+                hypotheses=[ProposedHypothesis.from_dict(h.model_dump()) for h in review.hypotheses],
+                available_follow_ups=follow_ups, completed_follow_ups=completed,
+                retractions=[Retraction(**r.model_dump()) for r in review.retractions],
+                missing_information=list(review.missing_information), run_id=state.run_id))
+        except Exception:
+            raise InvestigationReviewError('reasoning_state_unavailable',
+                'Investigation reasoning state could not be persisted; no conclusions were accepted.',
+                structured_validation_ms=validation_ms) from None
+        proposal_ids = reasoning['hypothesize']['proposal_ids']
+        accepted_ids = set(reasoning['accepted_for_research'])
         hypotheses = []
-        for hypothesis in review.hypotheses:
+        proposals = []
+        for index, hypothesis in enumerate(review.hypotheses):
+            hid = proposal_ids[index] if index < len(proposal_ids) else None
+            if hid not in accepted_ids:
+                continue
             entry = hypothesis.model_dump()
+            entry['reasoning_id'] = hid
+            # Confidence is the supervisor-capped value, not the raw model claim.
+            entry['model_confidence'] = entry['confidence']
+            entry['confidence'] = reasoning_state['hypotheses'][hid]['confidence']
             entry['model_validation_criterion'] = entry['validation_criterion']
             if hypothesis.follow_up != 'none':
                 entry['validation_criterion'] = follow_ups[hypothesis.follow_up]['validation_criterion']
+                if follow_ups[hypothesis.follow_up] not in proposals:
+                    proposals.append(follow_ups[hypothesis.follow_up])
             hypotheses.append(entry)
         payload = {**review.model_dump(), 'observations':facts,
                    'interpretations':review.observations, 'hypotheses':hypotheses,
+                   'supervisor_rejected': reasoning['hypothesize']['rejected'],
+                   'reasoning': {key: reasoning[key] for key in (
+                       'cycle', 'supervisor_challenges', 'contradictions', 'missing_information',
+                       'priorities', 'decision')},
                    'verification': 'unverified',
                    'evidence_job_ids': sorted(allowed), 'proposed_investigations': proposals}
         from memory.research import research_store

@@ -14,7 +14,7 @@ v10 additions:
 import json
 import re
 import uuid
-from typing import Dict, List, Optional, Literal, Union
+from typing import Annotated, Dict, List, Optional, Literal, Union
 
 import structlog
 
@@ -107,6 +107,19 @@ class EvidenceHypothesis(BaseModel):
     validation_criterion: str = Field(min_length=1, max_length=240)
     alternative_explanations: list[str] = Field(default_factory=list, max_length=3)
     confidence: float = Field(default=.25, ge=0, le=1, allow_inf_nan=False)
+    # Reasoning-state fields. All optional so earlier retained responses remain valid.
+    contradicting_evidence_job_ids: list[str] = Field(default_factory=list, max_length=2)
+    assumptions: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=3)
+    missing_information: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=2)
+    competes_with: list[Annotated[int, Field(ge=0, le=2)]] = Field(default_factory=list, max_length=2)
+    prior_hypothesis_id: str = Field(default='none', max_length=40)
+
+
+class ReviewRetraction(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    prior_hypothesis_id: str = Field(min_length=1, max_length=40)
+    reason: str = Field(min_length=1, max_length=240)
+    evidence_job_ids: list[str] = Field(min_length=1, max_length=2)
 
 
 class InvestigationReview(BaseModel):
@@ -114,6 +127,8 @@ class InvestigationReview(BaseModel):
     observations: list[str] = Field(max_length=3)
     hypotheses: list[EvidenceHypothesis] = Field(max_length=3)
     limitations: list[str] = Field(max_length=2)
+    missing_information: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=3)
+    retractions: list[ReviewRetraction] = Field(default_factory=list, max_length=3)
 
 
 class OrchestratorAgent(BaseAgent):
