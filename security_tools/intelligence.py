@@ -45,12 +45,19 @@ _VERSION = re.compile(r'^[0-9]+(?:\.[0-9]+)+[a-zA-Z0-9.+_-]*$')
 # ── Capability discovery and version compatibility ─────────────────────────
 
 def readiness(advertisement: dict[str, Any] | None, *, local_digest: str,
-              blocked: Iterable[str] = (), worker_status: str = 'online') -> dict[str, Any]:
+              blocked: Iterable[str] = (), worker_status: str = 'online',
+              recent_outcomes: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
     """Explain per capability whether it is ready, and why not.
 
     ``advertisement`` is the worker's authenticated ``/capabilities`` payload.
     Missing version pins are reported as unconfirmed rather than assumed.
+    Advertisement is not execution: the latest recorded outcome under the
+    current contract digest decides ``runtime_verified`` or ``failing``.
     """
+    latest: dict[str, dict[str, Any]] = {}
+    for outcome in recent_outcomes:
+        if outcome.get('registry_sha256') == local_digest and isinstance(outcome.get('capability'), str):
+            latest[outcome['capability']] = outcome
     advertised = (advertisement or {}).get('typed_adapters') or {}
     pins = (advertisement or {}).get('typed_profile_pins') or {}
     worker_digest = (advertisement or {}).get('typed_registry_sha256')
@@ -92,6 +99,9 @@ def readiness(advertisement: dict[str, Any] | None, *, local_digest: str,
             reasons.append('image_drift')
         if capability in blocked_set:
             reasons.append('blocked_by_owner')
+        last = latest.get(capability)
+        if last and not last.get('evidence_usable'):
+            reasons.append('last_execution_failed')
         if not available:
             status = 'unavailable'
         elif 'blocked_by_owner' in reasons:
@@ -100,19 +110,25 @@ def readiness(advertisement: dict[str, Any] | None, *, local_digest: str,
             status = 'unvalidated'
         elif {'worker_contract_mismatch', 'version_drift', 'image_drift'} & set(reasons):
             status = 'incompatible'
+        elif 'last_execution_failed' in reasons:
+            status = 'failing'
         elif {'version_unpinned', 'image_unpinned', 'worker_contract_unconfirmed'} & set(reasons):
             status = 'unconfirmed'
         else:
             status = 'ready'
         entries.append({'capability': capability, 'tool': adapter.name, 'status': status,
                         'ready': status == 'ready', 'selectable': status in {'ready', 'unconfirmed'},
-                        'reasons': reasons, 'declared_version': version, 'validated_version': baseline.get('version'),
+                        'reasons': reasons, 'declared_version': version,
+                        'runtime_verified': bool(last and last.get('evidence_usable')),
+                        'last_outcome': ({k: last.get(k) for k in ('category', 'job_id', 'evidence_id', 'exit_code')}
+                                         if last else None), 'validated_version': baseline.get('version'),
                         'image_id': image, 'validation_receipt_job': baseline.get('receipt_job'),
                         'limitation': baseline.get('limitation'), 'risk': adapter.risk, 'role': adapter.role})
     return {'worker_status': worker_status, 'contract': contract, 'local_registry_sha256': local_digest,
             'capabilities': entries,
             'summary': {status: sum(e['status'] == status for e in entries)
-                        for status in ('ready', 'unconfirmed', 'incompatible', 'unvalidated', 'blocked', 'unavailable')},
+                        for status in ('ready', 'failing', 'unconfirmed', 'incompatible', 'unvalidated', 'blocked',
+                                       'unavailable')},
             'authorization': 'Readiness grants no execution permission; each run needs owner approval.'}
 
 
@@ -265,6 +281,7 @@ def tool_cycle_input(evidence_id: str, result: dict[str, Any], run_id: str = '')
         tool_outcomes=[{'evidence_id': evidence_id, 'job_id': provenance.get('job_id'),
                         'capability': result.get('capability'), **outcome,
                         'request_sha256': provenance.get('request_sha256'),
+                        'registry_sha256': provenance.get('registry_sha256'),
                         'output_sha256': provenance.get('output_sha256'),
                         'declared_tool_version': provenance.get('declared_tool_version'),
                         'image_id': provenance.get('image_id')}])
@@ -287,7 +304,8 @@ async def ingest_tool_result(sid: str, owner: str, result: dict[str, Any]) -> di
     _, report = await investigation_state.advance(
         sid, owner, f'tool:{job_id}', tool_cycle_input(evidence_id, result, run_id=job_id))
     return {'status': 'ingested', 'evidence_id': evidence_id,
-            'outcome': classify_outcome(result.get('state', 'unknown'), result.get('output') or {}),
+            'outcome': classify_outcome(result.get('state', 'unknown'), result.get('output') or {},
+                                        result.get('exit_code')),
             'changed_evidence': report['observe']['changed_evidence'],
             'requires_revalidation': report['analyze']['requires_revalidation'],
             'decision': report['decision']}

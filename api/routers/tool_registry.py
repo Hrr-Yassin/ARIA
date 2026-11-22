@@ -63,10 +63,11 @@ async def tool_readiness(session_id: str, user: TokenData = Depends(get_current_
             status = 'online' if isinstance(advertised, dict) else 'unreachable'
         except Exception:
             advertised = None  # Do not expose worker endpoints or transport failures.
-    report = readiness(advertised if status == 'online' else None, local_digest=contract_digest(),
-                       blocked=blocked, worker_status=status)
     ledger = await team_store.view(session_id, user.user_id)
     state = (next(iter(ledger.get('investigation_reasoning', [])), {}) or {}).get('state') or {}
+    report = readiness(advertised if status == 'online' else None, local_digest=contract_digest(),
+                       blocked=blocked, worker_status=status,
+                       recent_outcomes=state.get('verification_results', {}).values())
     report['recommendations'] = select_tools(state, report, target=target, scope=scope)
     report['recent_outcomes'] = list(state.get('verification_results', {}).values())[-20:]
     report['session_id'] = session_id

@@ -65,6 +65,20 @@ class Readiness(OfflineCase):
         offline = readiness(None, local_digest=contract_digest(), worker_status='unreachable')
         self.assertEqual(offline['summary']['unavailable'], 10)
 
+    def test_advertisement_is_not_execution_last_outcome_decides(self):
+        failed = {'capability': 'httpx.http.probe.v1', 'registry_sha256': contract_digest(), 'category': 'tool_failure',
+                  'evidence_usable': False, 'job_id': 'job-1', 'exit_code': 65}
+        report = by_cap(readiness(advertisement(), local_digest=contract_digest(), recent_outcomes=[failed]))
+        self.assertEqual(report['httpx.http.probe.v1']['status'], 'failing')
+        self.assertFalse(report['httpx.http.probe.v1']['selectable'])
+        ok = {**failed, 'category': 'observed', 'evidence_usable': True, 'job_id': 'job-2'}
+        report = by_cap(readiness(advertisement(), local_digest=contract_digest(), recent_outcomes=[failed, ok]))
+        self.assertEqual(report['httpx.http.probe.v1']['status'], 'ready')
+        self.assertTrue(report['httpx.http.probe.v1']['runtime_verified'])
+        stale = {**failed, 'registry_sha256': '0' * 64}
+        self.assertEqual(by_cap(readiness(advertisement(), local_digest=contract_digest(),
+                                          recent_outcomes=[stale]))['httpx.http.probe.v1']['status'], 'ready')
+
     def test_live_advertisement_without_pins_is_unconfirmed_not_ready(self):
         # Shape observed from the running lab worker on 2026-11-22 (no version pins, no contract digest).
         report = readiness({'typed_adapters': {c: 1 for c in READY}}, local_digest=contract_digest())
