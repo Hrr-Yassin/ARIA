@@ -748,3 +748,28 @@
 - **Offline failure.** The `test_team_tasks` overlapping-review timeout comes from an assertion inside its fake provider. It expects `'no commands'` in the prompt of the uncommitted, pre-P0 `CorrelationAgent.review_saved` (file mtime 12:46). It reproduces with the P0 edits reverted, and the saved-review path does not use the reasoning engine. Unrelated to P0; left for the owner of that change.
 - **Checks.** Pyright reports 0 errors in the P0 modules. Targeted suites pass 80/80. The report is at `docs/p0-reasoning-acceptance.md`.
 
+## 2026-11-22 — Mission P0 committed; P1 orchestration first increment
+
+- **P0 commit `6e53c18`.** Contains only the P0 files and hunks. The earlier uncommitted modifications stay in the working tree. The staged tree was tested in isolation (66 tests OK). The acceptance report is `docs/p0-reasoning-acceptance.md`. The live evaluation remains blocked by `model_provider_sharing_denied` and `model_budget_denied`, with zero spend.
+- **P1 implemented, uncommitted:**
+  - `orchestrator/collaboration.py`: delegation plans, idempotent task creation and work reuse, a concurrent bounded scheduler over `TeamCoordinator.run`, P0 interpretation of results, supervision, and replanning;
+  - an `orchestration_plans` ledger collection;
+  - task-scoped reasoning context in `TeamCoordinator.run`;
+  - two owner API routes.
+- **Validation:**
+  - 8 tests in `tests/test_collaboration.py` pass.
+  - The full offline suite passes 948/949 in 45.3 s. The one failure is the same pre-existing correlation-prompt test.
+  - Pyright reports 0 errors in the P1 modules and none on the lines added to `team_coordinator.py` and `api/routers/team.py`.
+- **Evaluation** (`python -m evaluation.collaboration_eval`; scripted specialists at 0.25 s per call; shared first-pass errors):
+
+  | Metric | Single specialist | Single + supervisor | Collaborative |
+  | --- | --- | --- | --- |
+  | False claims accepted | 2/2 | 1/2 | 0/2 |
+  | True claims retained | 2/2 | 2/2 | 2/2 |
+  | Specialist calls | 1 | 1 | 4 |
+  | Prompt characters | 1,890 | 1,890 | 8,344 |
+  | Wall time | 0.32 s | 0.28 s | 1.00 s |
+
+  In the collaborative arm, the two analyses overlapped for 0.25 s. The arm detected 2 contradictions, merged 2 duplicate conclusions, rejected 1 unsupported claim and made 1 contradiction replan. Mechanics only; no model-intelligence claim.
+- **Gaps:** listed in `docs/p1-collaboration.md`. They include live measurement, human-review latency, lexical retraction matching, a PostgreSQL restart test, evidence-ID unification and the absence of a UI.
+

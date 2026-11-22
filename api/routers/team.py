@@ -11,6 +11,7 @@ from agents.coordinator_agent import coordinator_agent
 from memory.finding_verification import Candidate, Review, verification_store
 from orchestrator.specialist_investigations import InvestigationRequest, plan_investigation
 from memory.research import ApplicationModel, CreateHypothesis, ResearchTransition, research_store
+from orchestrator.collaboration import DelegationPlan
 
 router = APIRouter()
 
@@ -155,3 +156,17 @@ async def create_verification_finding(session_id: str, body: Candidate, user: To
 @router.post('/{session_id}/findings/{finding_id}/review')
 async def review_verification_finding(session_id: str, finding_id: str, body: Review, user: TokenData = Depends(get_current_user)):
     return await verification_store.review(session_id, user.user_id, finding_id, body)
+
+
+@router.post('/{session_id}/collaboration-plans')
+async def collaboration_plan_create(session_id: str, body: DelegationPlan,
+                                    user: TokenData = Depends(get_current_user)):
+    from orchestrator.collaboration import collaboration
+    return await collaboration.create_plan(session_id, user.user_id, body)
+
+
+@router.post('/{session_id}/collaboration-plans/{plan_id}/advance')
+async def collaboration_plan_advance(session_id: str, plan_id: str, user: TokenData = Depends(get_current_user)):
+    """Interpret, supervise, replan and dispatch ready analysis tasks; never dispatches tools."""
+    from orchestrator.collaboration import collaboration
+    return await collaboration.advance(session_id, user.user_id, plan_id, skill=user.skill_level)

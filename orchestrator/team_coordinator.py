@@ -116,6 +116,14 @@ class TeamCoordinator:
                     if task['owner_role']=='correlation' else
                     'Propose evidence-linked hypotheses, alternative explanations and controlled tests; keep claims unverified.'),
                 'verification':'untrusted research assertions; no execution authority'}
+            # P0 reasoning restricted to this task's evidence (ledger IDs or worker sources).
+            from orchestrator.reasoning import task_reasoning_context
+            reasoning_record = next(iter(view.get('investigation_reasoning', [])), {})
+            task_refs = set(task['evidence_inputs']) | {entry.get('source_id') for entry in evidence
+                                                        if isinstance(entry.get('source_id'), str)}
+            reasoning = task_reasoning_context(reasoning_record.get('state'), task_refs)
+            if reasoning:
+                research_context['investigation_reasoning'] = reasoning
             response = await specialist.process(sid, owner, {
                 'user_input': task['objective'], 'description': task['objective'],
                 'target': view.get('target', ''),

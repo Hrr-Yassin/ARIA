@@ -116,7 +116,7 @@ def public(value):
 def materialize(events: list[dict]) -> dict:
     state = {'tasks': {}, 'evidence': {}, 'knowledge': {}, 'coverage': {}, 'verification_findings': {}, 'report_drafts': {}, 'report_signoffs': {},
              'report_outcomes': {}, 'report_retests': {}, 'report_correspondence': {},
-             'research_hypotheses': {}, 'research_models': {}, 'investigation_reasoning': {}, 'cursor': 0}
+             'research_hypotheses': {}, 'research_models': {}, 'investigation_reasoning': {}, 'orchestration_plans': {}, 'cursor': 0}
     for event in events:
         state[event['collection']][event['entity_id']] = event['data']
         state['cursor'] = max(state['cursor'], event['sequence'])

@@ -1,6 +1,12 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — Mission P0: advanced autonomous reasoning engine
+## Current priority — Mission P1: intelligent multi-agent orchestration
+
+Turn specialist coordination into an evidence-driven collaborative workflow that reuses the P0 reasoning engine. The workflow covers structured delegation, concurrent independent analyses, owner-gated dependent tasks, shared ledger evidence, supervisory review, adaptive replanning and restart-safe state. No new offensive execution workflows.
+
+Status (2026-11-22): first increment implemented, uncommitted. 8 focused tests demonstrate every acceptance criterion with scripted specialists. In a controlled scenario where every arm makes the same first-pass errors, the collaborative workflow accepted 0/2 false claims, against 2/2 for a single specialist and 1/2 with the P0 supervisor alone. It cost 4× the specialist calls. See [P1 report](docs/p1-collaboration.md), which also lists the remaining gaps.
+
+## Previous priority — Mission P0: advanced autonomous reasoning engine
 
 Improve ARIA's investigation reasoning over retained, authorized evidence without expanding live testing. Keep a persistent investigation state with observations, assumptions, competing hypotheses, supporting and contradicting evidence, decisions, dependencies and verification results. Run each evidence review through OBSERVE → ANALYZE → HYPOTHESIZE → PRIORITIZE → PLAN → REVIEW → REPLAN. A deterministic supervisor challenges unsupported claims before they reach research. Preserve authorization, evidence integrity, model-sharing and human-signoff controls. No conclusion from this cycle confirms a vulnerability.
 

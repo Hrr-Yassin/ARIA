@@ -31,7 +31,7 @@ Source = Literal['team', 'campaign']
 CAPTURED_STAGES = {
     'tasks': 'Agent task', 'evidence': 'Evidence', 'coverage': 'Verification',
     'verification_findings': 'Verification', 'research_hypotheses': 'Planning',
-    'research_models': 'Observation', 'investigation_reasoning': 'Planning', 'knowledge': 'Observation',
+    'research_models': 'Observation', 'investigation_reasoning': 'Planning', 'orchestration_plans': 'Planning', 'knowledge': 'Observation',
     'report_drafts': 'Review', 'report_signoffs': 'Review', 'report_outcomes': 'Outcome',
     'report_retests': 'Verification', 'report_correspondence': 'Review',
 }

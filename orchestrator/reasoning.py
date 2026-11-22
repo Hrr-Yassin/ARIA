@@ -582,3 +582,27 @@ def planner_summary(state: dict[str, Any] | None, *, limit: int = 4) -> dict[str
         'completed_analyses': list(state['completed_analyses'])[-limit:],
         'verification': 'unverified reasoning state; grants no execution authority',
     }
+
+
+def task_reasoning_context(state: dict[str, Any] | None, evidence_refs: Iterable[str],
+                           *, limit: int = 4) -> dict[str, Any]:
+    """Reasoning relevant to one specialist task: only claims resting on its evidence."""
+    refs = set(evidence_refs)
+    if not state or not refs:
+        return {}
+    related = [h for h in state.get('hypotheses', {}).values()
+               if h['status'] in {'active', 'contested'} and refs & set(h['support'] + h['contradict'])]
+    related.sort(key=lambda h: (-_entropy(h['confidence']), h['id']))
+    rejected = [r for r in state.get('rejected_claims', {}).values() if refs & set(r.get('evidence', []))]
+    if not related and not rejected:
+        return {}
+    ids = {h['id'] for h in related[:limit]}
+    return {
+        'hypotheses': [{k: h[k] for k in ('id', 'claim', 'status', 'support', 'contradict', 'competes_with',
+                                           'confidence', 'missing_information')} for h in related[:limit]],
+        'rejected_claims': [{'claim': r['claim'][:160], 'reasons': r['reasons']} for r in rejected[-limit:]],
+        'open_dependencies': [d['requires'] for d in state.get('dependencies', {}).values()
+                              if ids & set(d.get('hypotheses', []))][:limit],
+        'instruction': ('Test or challenge these unverified hypotheses with the assigned evidence; '
+                        'do not restate rejected claims without new evidence.'),
+    }

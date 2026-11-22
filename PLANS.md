@@ -1,5 +1,19 @@
 # ARIA competence and reliability implementation plan
 
+## Mission P1 — Intelligent multi-agent orchestration (2026-11-22)
+
+| ID | Requirement | Status | Evidence and limits | Next action |
+| --- | --- | --- | --- | --- |
+| R-P1-01 | Structured delegation (objective, prerequisites, evidence, criteria, limits) | IMPLEMENTED | `orchestrator/collaboration.py` `Delegation`/`DelegationPlan`: acyclic, no duplicated work, evidence must be cataloged. | — |
+| R-P1-02 | Concurrent independent analyses | VERIFIED (scripted) | A barrier test shows 2 specialists active at once. The evaluation shows a full 0.25 s overlap. | Live provider timing. |
+| R-P1-03 | Dependent tasks wait for prerequisites | VERIFIED (scripted) | The review stays queued until both analyses are owner-completed. The existing ledger gate is preserved. | Measure human-review latency. |
+| R-P1-04 | P0 reasoning in planning and interpretation | IMPLEMENTED | `task_reasoning_context` reaches specialists. Results pass through `run_cycle` (merge, compete, reject, retract). `delegations_from_reasoning` builds plans from live hypotheses. | Unify worker-job and ledger evidence identifiers. |
+| R-P1-05 | Shared observations through the ledger | VERIFIED (scripted) | Results cite only cataloged ledger evidence, and plans, tasks and reasoning share those IDs. | — |
+| R-P1-06 | Supervision: contradictions, duplicates, unsupported claims | VERIFIED (scripted) | Supervision reports each category with delegation attribution. | Use explicit prior-claim indices instead of similarity matching. |
+| R-P1-07 | Adaptive replanning on failure or contradicting evidence | VERIFIED (scripted) | Failed specialist → replacement plus re-pointed dependents. Contested claim → targeted challenge. Obsolete queued work → cancelled. | — |
+| R-P1-08 | Restart persistence and no duplicate execution | VERIFIED (in-memory ledger) | Redelivery returns a duplicate claim. A fresh coordinator resumes with zero extra specialist calls. | Disposable PostgreSQL restart test. |
+| R-P1-09 | Measured benefit against a single-specialist baseline | VERIFIED (scripted) / BLOCKED (live) | `python -m evaluation.collaboration_eval`: false claims accepted 2/2 → 1/2 → 0/2; specialist calls 1 → 4; prompt chars ×4.4. | Live run once model-provider sharing is approved. |
+
 ## Mission P0 — Advanced autonomous reasoning engine (2026-11-22)
 
 Audit findings at entry: `memory/research.py` persisted hypotheses with a state machine, but recorded no contradicting evidence, competing explanations, assumptions, missing information, decisions or dependencies. Each LLM evidence review in `agents/autonomous_engine.py` ran with no knowledge of earlier reviews. Every schema-valid hypothesis entered research, including banner-based overclaims. Model confidence was stored unchanged, and nothing prevented re-proposing a contradicted claim or replanning a completed analysis.
