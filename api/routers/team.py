@@ -2,6 +2,7 @@
 import uuid
 import asyncio
 from fastapi import APIRouter, Depends, Query
+from pydantic import Field
 from api.auth import TokenData, get_current_user
 from llm.engagement_budget import ModelLimits, model_accounting
 from memory.team_tasks import (
@@ -99,6 +100,18 @@ async def model_status(session_id: str, user: TokenData = Depends(get_current_us
 @router.put('/{session_id}/model-budget')
 async def configure_model_budget(session_id: str, body: ModelLimits, user: TokenData = Depends(get_current_user)):
     return await model_accounting.configure(session_id, user.user_id, body)
+
+
+class ReconcileAttempt(Strict):
+    attempt_id: str = Field(min_length=1, max_length=100)
+    reason: str = Field(min_length=1, max_length=2000)
+    evidence: dict = Field(default_factory=dict)
+
+
+@router.post('/{session_id}/model-budget/reconcile')
+async def reconcile_model_attempt(session_id: str, body: ReconcileAttempt, user: TokenData = Depends(get_current_user)):
+    """Owner settles an unknown-usage attempt at its full reservation; audited."""
+    return await model_accounting.reconcile_unknown(session_id, user.user_id, body.attempt_id, body.reason, body.evidence)
 
 
 @router.post('/{session_id}/model-tariff/refresh')

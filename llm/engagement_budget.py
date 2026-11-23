@@ -404,4 +404,48 @@ class ModelAccounting:
                     'cost_basis': 'Verified OpenRouter quotes or owner-entered tariffs; actual usage may be unknown. Reservations never refunded.'}
 
 
+    async def reconcile_unknown(self, sid: str, owner: str, attempt_id: str, reason: str,
+                                evidence: dict | None = None) -> dict:
+        """Owner settlement of a failed attempt whose usage is unknown.
+
+        The attempt is settled at its full reserved tokens and cost, so spending is
+        never understated against the approved ceiling. Accounting resumes only when
+        every unknown attempt has been settled. The decision is audited.
+        """
+        from sqlalchemy.orm.attributes import flag_modified
+        if not isinstance(reason, str) or not reason.strip():
+            raise HTTPException(422, 'A reconciliation reason is required')
+        async with async_session() as db:
+            session = await owned_engagement(db, sid, owner)
+            metadata = dict(session.metadata_ or {})
+            raw = dict(metadata.get('model_usage') or {})
+            used, invalid = _read_usage(raw)
+            if invalid or not used['stopped'] or used['stop_reason'] != 'unknown_usage':
+                raise HTTPException(409, 'Only accounting stopped for unknown usage can be reconciled')
+            rows = (await db.execute(select(DecisionLog).where(
+                DecisionLog.session_id == sid, DecisionLog.decision_type == 'model_attempt'))).scalars().all()
+            row = next((r for r in rows if (r.metadata_ or {}).get('id') == attempt_id), None)
+            attempt = dict(row.metadata_ or {}) if row else {}
+            if (not row or attempt.get('state') != 'failed' or attempt.get('reported_cost_microusd') is not None
+                    or attempt.get('reconciliation')):
+                raise HTTPException(409, 'Attempt is not an unsettled failed attempt with unknown usage')
+            tokens, cost = int(attempt['reserved_tokens']), int(attempt['reserved_cost_microusd'])
+            raw['reported_tokens'] = used['reported_tokens'] + tokens
+            raw['reported_cost_microusd'] = used['reported_cost_microusd'] + cost
+            raw['reconciled_unknown_calls'] = int(raw.get('reconciled_unknown_calls', 0) or 0) + 1
+            if raw['reconciled_unknown_calls'] >= used['unknown_usage_calls']:
+                raw['stopped'], raw['stop_reason'] = False, ''
+            record = {'attempt_id': attempt_id, 'settled_tokens': tokens, 'settled_cost_microusd': cost,
+                      'basis': 'settled at full reservation (conservative)', 'reason': reason.strip()[:2000],
+                      'evidence': evidence or {}, 'resumed': not raw.get('stopped', False), 'actor': owner}
+            attempt['reconciliation'] = record
+            row.metadata_ = attempt
+            flag_modified(row, 'metadata_')
+            metadata['model_usage'] = raw
+            session.metadata_ = metadata
+            db.add(DecisionLog(session_id=sid, user_id=owner, decision_type='model_accounting_reconciled',
+                               human_involved=True, human_decision='settle_at_reservation', metadata_=record))
+            await db.commit()
+            return {'usage': raw, 'reconciliation': record}
+
 model_accounting = ModelAccounting()

@@ -231,3 +231,33 @@ class EngagementBudgets(OfflineCase):
         from pydantic import ValidationError
         tariff={'provider':'groq','model':'test','microusd_per_million':1000000}
         with self.assertRaises(ValidationError): ModelLimits(tariffs=[tariff,tariff])
+
+
+class UnknownUsageReconciliation(EngagementBudgets):
+    async def test_owner_settles_at_reservation_and_resumes_with_audit(self):
+        from tests.test_provider_tariffs import fixture_quote
+        from llm.provider_tariffs import select_quote
+        quote = select_quote(*fixture_quote())
+        self.session.metadata_['model_tariffs'] = {quote['model']: quote}
+        await self.accounting.configure('engagement', 'owner', ModelLimits.model_validate({'tariffs': [{
+            'provider': 'openrouter', 'model': quote['model'], 'quote_id': quote['id'],
+            'microusd_per_million': quote['microusd_per_million']}]}))
+        attempt = await self.accounting.reserve('owner', 'openrouter', quote['model'], 'x', '')
+        row = next(row for row in self.rows if row.id == attempt['id'])
+        self.db.get = AsyncMock(return_value=row)
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: self.session))
+        await self.accounting.settle(attempt, {'success': False, 'error': 'rate_limited'})
+        self.assertTrue(self.session.metadata_['model_usage']['stopped'])
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [row])))
+        result = await self.accounting.reconcile_unknown('engagement', 'owner', attempt['id'], 'HTTP 429; key shows no spend',
+                                                         {'provider_usage_daily_usd': 0})
+        usage = self.session.metadata_['model_usage']
+        self.assertFalse(usage['stopped'])
+        self.assertEqual(usage['reported_cost_microusd'], attempt['reserved_cost_microusd'])     # never understated
+        self.assertEqual(result['reconciliation']['basis'], 'settled at full reservation (conservative)')
+        self.assertEqual(self.rows[-1].decision_type, 'model_accounting_reconciled')
+        self.assertTrue(self.rows[-1].human_involved)
+        with self.assertRaises(HTTPException):          # cannot settle twice, nor when not stopped
+            await self.accounting.reconcile_unknown('engagement', 'owner', attempt['id'], 'again')
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: self.session))
+        await self.accounting.reserve('owner', 'openrouter', quote['model'], 'x', '')            # accounting resumed
