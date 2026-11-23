@@ -145,9 +145,13 @@ async def tool_readiness(session_id: str, user: TokenData = Depends(get_current_
             advertised = None  # Do not expose worker endpoints or transport failures.
     ledger = await team_store.view(session_id, user.user_id)
     state = (next(iter(ledger.get('investigation_reasoning', [])), {}) or {}).get('state') or {}
+    from memory.engagement_profiles import stored_profile
+    profile = stored_profile(scope)
+    if profile is None and scope.get('profile_required'):
+        profile = {'permitted_capabilities': [], 'prohibited_capabilities': []}   # nothing may run yet
     report = readiness(advertised if status == 'online' else None, local_digest=contract_digest(),
                        blocked=blocked, worker_status=status,
-                       recent_outcomes=state.get('verification_results', {}).values())
+                       recent_outcomes=state.get('verification_results', {}).values(), profile=profile)
     report['recommendations'] = select_tools(state, report, target=target, scope=scope)
     report['recent_outcomes'] = list(state.get('verification_results', {}).values())[-20:]
     report['session_id'] = session_id

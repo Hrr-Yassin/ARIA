@@ -46,7 +46,8 @@ _VERSION = re.compile(r'^[0-9]+(?:\.[0-9]+)+[a-zA-Z0-9.+_-]*$')
 
 def readiness(advertisement: dict[str, Any] | None, *, local_digest: str,
               blocked: Iterable[str] = (), worker_status: str = 'online',
-              recent_outcomes: Iterable[dict[str, Any]] = ()) -> dict[str, Any]:
+              recent_outcomes: Iterable[dict[str, Any]] = (),
+              profile: dict[str, Any] | None = None) -> dict[str, Any]:
     """Explain per capability whether it is ready, and why not.
 
     ``advertisement`` is the worker's authenticated ``/capabilities`` payload.
@@ -99,12 +100,16 @@ def readiness(advertisement: dict[str, Any] | None, *, local_digest: str,
             reasons.append('image_drift')
         if capability in blocked_set:
             reasons.append('blocked_by_owner')
+        # The engagement authorization profile is enforced by ExecutionAuthorization; readiness mirrors it.
+        if profile is not None and (capability in profile.get('prohibited_capabilities', [])
+                                    or capability not in profile.get('permitted_capabilities', [])):
+            reasons.append('not_permitted_by_profile')
         last = latest.get(capability)
         if last and not last.get('evidence_usable'):
             reasons.append('last_execution_failed')
         if not available:
             status = 'unavailable'
-        elif 'blocked_by_owner' in reasons:
+        elif {'blocked_by_owner', 'not_permitted_by_profile'} & set(reasons):
             status = 'blocked'
         elif not baseline.get('runtime_validated'):
             status = 'unvalidated'

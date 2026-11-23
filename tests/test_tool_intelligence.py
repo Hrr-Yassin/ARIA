@@ -79,6 +79,18 @@ class Readiness(OfflineCase):
         self.assertEqual(by_cap(readiness(advertisement(), local_digest=contract_digest(),
                                           recent_outcomes=[stale]))['httpx.http.probe.v1']['status'], 'ready')
 
+    def test_profile_restrictions_are_reflected_in_readiness(self):
+        profile = {'permitted_capabilities': ['httpx.http.probe.v1', 'nmap.tcp.connect.v1'],
+                   'prohibited_capabilities': ['ffuf.http.paths.v1']}
+        report = by_cap(readiness(advertisement(), local_digest=contract_digest(), profile=profile))
+        self.assertEqual(report['httpx.http.probe.v1']['status'], 'ready')
+        self.assertEqual(report['ffuf.http.paths.v1']['status'], 'blocked')
+        self.assertIn('not_permitted_by_profile', report['semgrep.source.scan.v1']['reasons'])
+        self.assertFalse(report['semgrep.source.scan.v1']['selectable'])
+        none = by_cap(readiness(advertisement(), local_digest=contract_digest(),
+                                profile={'permitted_capabilities': [], 'prohibited_capabilities': []}))
+        self.assertFalse(any(e['selectable'] for e in none.values()))   # profile required but missing: nothing
+
     def test_live_advertisement_without_pins_is_unconfirmed_not_ready(self):
         # Shape observed from the running lab worker on 2026-11-22 (no version pins, no contract digest).
         report = readiness({'typed_adapters': {c: 1 for c in READY}}, local_digest=contract_digest())
