@@ -303,6 +303,38 @@ class CollaborationTests(CollaborationHarness):
         delegations = {d['key']: d for d in outcome['plan']['delegations']}
         self.assertEqual(delegations['cross-review~r1']['prerequisites'], ['analysis-web', 'analysis-vuln~r1'])
 
+    async def test_two_failed_prerequisites_rewire_the_dependent_once(self):
+        self.standard_script()
+        self.script['web_intel'] = RuntimeError('provider unavailable')
+        self.script['vuln'] = RuntimeError('provider unavailable')
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        outcome = await coordinator.advance('engagement', 'owner', plan['id'], max_rounds=1)
+        self.assertEqual({outcome['states'][k] for k in ('analysis-web', 'analysis-vuln')}, {'failed'})
+        self.script['web_intel'] = result(hyp('The site may serve a default page.', ['ev-http'],
+                                              alternative_explanations=['Custom app']), refs=['ev-http'])
+        self.script['vuln'] = result(hyp('Port 8080 may host the application.', ['ev-port'],
+                                         alternative_explanations=['Proxy']), refs=['ev-port'])
+        outcome = await coordinator.advance('engagement', 'owner', plan['id'])
+        delegations = {d['key']: d for d in outcome['plan']['delegations']}
+        self.assertEqual(delegations['cross-review~r1']['prerequisites'], ['analysis-web~r1', 'analysis-vuln~r1'])
+        self.assertEqual(outcome['states']['cross-review'], 'cancelled')
+        self.assertEqual(sum(1 for k in delegations if k.startswith('cross-review')), 2)
+
+    async def test_deterministic_budget_denial_is_not_retried(self):
+        self.standard_script()
+        denied = {'agent_result': AgentResult(interpreted_request='x', status='blocked', uncertainty=['Denied'],
+            rejections=[{'code': 'task_model_budget_exhausted', 'detail': 'Task model budget is exhausted.'}]).model_dump()}
+        self.script['vuln'] = denied
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        outcome = await coordinator.advance('engagement', 'owner', plan['id'])
+        self.assertEqual(outcome['states']['analysis-vuln'], 'blocked')
+        self.assertNotIn('analysis-vuln~r1', outcome['states'])
+        self.assertEqual(outcome['plan']['status'], 'blocked')
+        self.assertEqual(outcome['plan']['replans'][0]['event'], 'blocked_by_denial')
+        self.assertEqual(self.calls.count('vuln'), 1)
+
     async def test_duplicate_work_reuses_existing_task(self):
         self.standard_script()
         coordinator = self.coordinator()

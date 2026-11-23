@@ -36,6 +36,9 @@ from orchestrator.reasoning import CycleInput, ProposedHypothesis, Retraction, c
 COLLECTION = 'orchestration_plans'
 Key = Annotated[str, Field(pattern=r'^[a-z0-9][a-z0-9._~-]{0,63}$')]
 TERMINAL_FAILURE = {'failed', 'blocked'}
+# Denials that an identical replacement cannot overcome: they need an owner decision.
+DETERMINISTIC_DENIALS = {'task_model_budget_exhausted', 'model_budget_exhausted', 'model_budget_denied',
+                         'model_provider_sharing_denied', 'profile_denied', 'capability_blocked'}
 MAX_REPLANS = 1
 MAX_DELEGATIONS = 24
 
@@ -48,7 +51,8 @@ class Delegation(Strict):
     evidence_inputs: list[Reference] = Field(min_length=1, max_length=50)
     completion_criteria: list[Criterion] = Field(min_length=1, max_length=10)
     expected_output: str = Field(default='Evidence-linked unverified hypotheses with alternatives', max_length=500)
-    budget: TaskBudget = Field(default_factory=lambda: TaskBudget(max_attempts=1, max_model_calls=2, max_tokens=20000))
+    # Sized for real specialist prompts: each call reserves prompt bytes plus an 8192-token output allowance.
+    budget: TaskBudget = Field(default_factory=lambda: TaskBudget(max_attempts=1, max_model_calls=2, max_tokens=60000))
     focus_hypotheses: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -328,17 +332,25 @@ class CollaborationCoordinator:
         delegations = {d['key']: Delegation.model_validate(d) for d in plan['delegations']}
         changes: list[dict[str, Any]] = []
         replanned = {r['replaces'] for r in plan['replans'] if r.get('replaces')}
-        # 1. A failed specialist is replaced once; queued dependents are re-pointed.
+        # 1. A failed specialist is replaced once, unless the failure is a deterministic
+        #    policy or budget denial (an identical replacement would fail the same way).
+        #    All failures of this round are replaced first; each queued dependent is then
+        #    re-pointed exactly once to every replacement it needs.
+        replacements: dict[str, str] = {}
         for key, task_id in list(plan['task_ids'].items()):
             task = tasks.get(task_id)
             if not task or task['state'] not in TERMINAL_FAILURE or key in replanned:
                 continue
+            denial = sorted({r.get('code') for r in ((task.get('result') or {}).get('rejections') or [])}
+                            & DETERMINISTIC_DENIALS)
             generation = key.count('~r') + 1
-            if generation > MAX_REPLANS:
+            if denial or generation > MAX_REPLANS:
                 plan['status'] = 'blocked'
-                changes.append({'event': 'replan_exhausted', 'delegation': key, 'reason': task.get('reason')})
+                event = 'blocked_by_denial' if denial else 'replan_exhausted'
+                changes.append({'event': event, 'delegation': key, 'reason': task.get('reason'), 'denials': denial,
+                                'replaces': key})
+                plan['replans'].append(changes[-1])
                 replanned.add(key)
-                plan['replans'].append(changes[-1] | {'replaces': key})
                 continue
             original = delegations[key]
             replacement = original.model_copy(update={'key': f'{key.split("~r")[0]}~r{generation}'})
@@ -346,28 +358,32 @@ class CollaborationCoordinator:
                 sid, owner, plan['id'], replacement, plan['task_ids'], tasks)
             delegations[replacement.key] = replacement
             plan['delegations'].append(replacement.model_dump(mode='json'))
-            rewired = []
-            for dep_key, dep in list(delegations.items()):
-                dep_task = tasks.get(plan['task_ids'].get(dep_key, ''))
-                if key not in dep.prerequisites or not dep_task or dep_task['state'] != 'queued':
-                    continue
-                await team_store.transition(sid, owner, dep_task['id'], Transition(
-                    request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'aria-plan-cancel:{plan["id"]}:{dep_key}'),
-                    expected_revision=dep_task['revision'], state='cancelled',
-                    reason=f'Replanned: prerequisite {key} failed; replaced by {replacement.key}'))
-                new_dep = dep.model_copy(update={
-                    'key': f'{dep_key.split("~r")[0]}~r{generation}',
-                    'prerequisites': [replacement.key if p == key else p for p in dep.prerequisites]})
-                plan['task_ids'][new_dep.key], _ = await self._create_task(
-                    sid, owner, plan['id'], new_dep, plan['task_ids'], tasks)
-                delegations[new_dep.key] = new_dep
-                plan['delegations'].append(new_dep.model_dump(mode='json'))
-                rewired.append({'from': dep_key, 'to': new_dep.key})
-                replanned.add(dep_key)
+            replacements[key] = replacement.key
             changes.append({'event': 'specialist_failed', 'replaces': key, 'replacement': replacement.key,
-                            'reason': task.get('reason'), 'rewired': rewired})
+                            'reason': task.get('reason'), 'rewired': []})
             plan['replans'].append(changes[-1])
             replanned.add(key)
+        for dep_key, dep in list(delegations.items()):
+            failed = [p for p in dep.prerequisites if p in replacements]
+            dep_task = tasks.get(plan['task_ids'].get(dep_key, ''))
+            if not failed or not dep_task or dep_task['state'] != 'queued':
+                continue
+            await team_store.transition(sid, owner, dep_task['id'], Transition(
+                request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'aria-plan-cancel:{plan["id"]}:{dep_key}'),
+                expected_revision=dep_task['revision'], state='cancelled',
+                reason=f'Replanned: prerequisites {", ".join(failed)} failed and were replaced'))
+            generation = max(replacements[p].count('~r') for p in failed)
+            new_dep = dep.model_copy(update={
+                'key': f'{dep_key.split("~r")[0]}~r{generation}',
+                'prerequisites': [replacements.get(p, p) for p in dep.prerequisites]})
+            plan['task_ids'][new_dep.key], _ = await self._create_task(
+                sid, owner, plan['id'], new_dep, plan['task_ids'], tasks)
+            delegations[new_dep.key] = new_dep
+            plan['delegations'].append(new_dep.model_dump(mode='json'))
+            replanned.add(dep_key)
+            for change in changes:
+                if change.get('replaces') in failed and change['event'] == 'specialist_failed':
+                    change['rewired'].append({'from': dep_key, 'to': new_dep.key})
         # 2. Contested hypotheses get one targeted challenge; work focused only on
         #    rejected hypotheses is cancelled before it wastes a model call.
         hyps = (reasoning_state or {}).get('hypotheses', {})
