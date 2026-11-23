@@ -47,6 +47,35 @@ def provider_receipt(data: dict) -> dict:
     return receipt
 
 
+def rate_limit_diagnostics(response) -> dict:
+    """Sanitized, bounded facts from a 429 so the cause can be distinguished later.
+
+    Keeps the provider's error code and message, the upstream provider name and
+    rate-limit headers. Never the request, credentials or raw upstream payload.
+    """
+    import re as _re
+
+    def clean(value, limit):
+        return _re.sub(r'[^\x20-\x7e]', '', str(value))[:limit] if value is not None else None
+    headers = getattr(response, 'headers', {}) or {}
+    out = {'http_status': getattr(response, 'status_code', None),
+           'retry_after': clean(headers.get('retry-after'), 40),
+           'ratelimit': {name: clean(headers.get(name), 40) for name in
+                         ('x-ratelimit-limit', 'x-ratelimit-remaining', 'x-ratelimit-reset') if headers.get(name)}}
+    try:
+        body = response.json()
+    except Exception:  # noqa: BLE001 - diagnostics are best effort
+        body = None
+    error = body.get('error') if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        raw_metadata = error.get('metadata')
+        metadata: dict = raw_metadata if isinstance(raw_metadata, dict) else {}
+        out.update(code=error.get('code') if isinstance(error.get('code'), (int, str)) else None,
+                   message=clean(error.get('message'), 200),
+                   provider_name=clean(metadata.get('provider_name'), 60))
+    return out
+
+
 class OpenRouterClient(BaseLLMClient):
 
     def __init__(self, api_key: str = "", model: str = "deepseek/deepseek-v4-flash", temperature: float = 0.1):
@@ -92,7 +121,8 @@ class OpenRouterClient(BaseLLMClient):
                 )
                 with timing.phase('response_processing_ms'):
                     if r.status_code == 429:
-                        result = {"success": False, "content": "", "error": "rate_limited"}
+                        result = {"success": False, "content": "", "error": "rate_limited",
+                                  "provider_error": rate_limit_diagnostics(r)}
                     else:
                         r.raise_for_status()
                         data = r.json()

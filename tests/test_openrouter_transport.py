@@ -95,3 +95,18 @@ class OpenRouterTransport(OfflineCase):
         self.assertEqual(verify_receipt(attempt, require_success=False)['total_usd'],'2E-7')
         attempt['reported_cost_microusd']=0
         with self.assertRaises(AssertionError): verify_receipt(attempt, require_success=False)
+
+
+class RateLimitDiagnostics(OfflineCase):
+    def test_429_keeps_provider_cause_without_secrets(self):
+        import httpx
+        from llm.openrouter_client import rate_limit_diagnostics
+        response = httpx.Response(429, headers={'retry-after': '7', 'x-ratelimit-remaining': '0'}, json={
+            'error': {'code': 429, 'message': 'deepseek/deepseek-v4-flash is temporarily rate-limited upstream',
+                      'metadata': {'provider_name': 'Baidu', 'raw': 'x' * 5000}}})
+        out = rate_limit_diagnostics(response)
+        self.assertEqual((out['http_status'], out['retry_after'], out['provider_name'], out['code']), (429, '7', 'Baidu', 429))
+        self.assertEqual(out['ratelimit'], {'x-ratelimit-remaining': '0'})
+        self.assertNotIn('raw', out)
+        self.assertLessEqual(len(out['message']), 200)
+        self.assertEqual(rate_limit_diagnostics(httpx.Response(429, text='not json'))['http_status'], 429)

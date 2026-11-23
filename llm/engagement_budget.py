@@ -338,6 +338,8 @@ class ModelAccounting:
                              'error_code': str(result.get('error', ''))[:100],
                              'reported_tokens': tokens, 'reported_cost_microusd': cost,
                              'provider_usage': result.get('provider_usage'),
+                             'provider_error': (result.get('provider_error')
+                                                if isinstance(result.get('provider_error'), dict) else None),
                              'finished_at': datetime.now(timezone.utc).isoformat()}
             from llm.request_metrics import safe_timings
             def token_count(key):
