@@ -261,3 +261,22 @@ class UnknownUsageReconciliation(EngagementBudgets):
             await self.accounting.reconcile_unknown('engagement', 'owner', attempt['id'], 'again')
         self.db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one=lambda: self.session))
         await self.accounting.reserve('owner', 'openrouter', quote['model'], 'x', '')            # accounting resumed
+
+    async def test_settlement_survives_reservation_and_owner_resume_requires_all_settled(self):
+        from memory.database_models import DecisionLog
+        failed = lambda i: DecisionLog(id=f'a{i}', session_id='engagement', user_id='owner', decision_type='model_attempt',
+            metadata_={'id': f'a{i}', 'state': 'failed', 'reported_cost_microusd': None, 'reserved_tokens': 100,
+                       'reserved_cost_microusd': 10})
+        rows = [failed(1), failed(2)]
+        # Canonical ledger after two unknown attempts (no auxiliary counters survive reservations).
+        self.session.metadata_['model_usage'] = {'calls': 2, 'reserved_tokens': 200, 'reserved_cost_microusd': 20,
+            'reported_tokens': 0, 'reported_cost_microusd': 0, 'unknown_usage_calls': 2, 'unknown_cost_calls': 2,
+            'stopped': True, 'stop_reason': 'unknown_usage'}
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows)))
+        first = await self.accounting.reconcile_unknown('engagement', 'owner', 'a1', 'first')
+        self.assertFalse(first['reconciliation']['resumed'])
+        with self.assertRaises(HTTPException):
+            await self.accounting.resume_if_settled('engagement', 'owner', 'too early')
+        second = await self.accounting.reconcile_unknown('engagement', 'owner', 'a2', 'second')
+        self.assertTrue(second['reconciliation']['resumed'])
+        self.assertEqual(self.session.metadata_['model_usage']['reported_cost_microusd'], 20)

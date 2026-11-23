@@ -434,8 +434,10 @@ class ModelAccounting:
             tokens, cost = int(attempt['reserved_tokens']), int(attempt['reserved_cost_microusd'])
             raw['reported_tokens'] = used['reported_tokens'] + tokens
             raw['reported_cost_microusd'] = used['reported_cost_microusd'] + cost
-            raw['reconciled_unknown_calls'] = int(raw.get('reconciled_unknown_calls', 0) or 0) + 1
-            if raw['reconciled_unknown_calls'] >= used['unknown_usage_calls']:
+            # Settlements are counted from the attempt records themselves: the usage ledger
+            # is canonicalised on every reservation, so an auxiliary counter would not survive.
+            settled = 1 + sum(1 for r in rows if r is not row and (r.metadata_ or {}).get('reconciliation'))
+            if settled >= used['unknown_usage_calls']:
                 raw['stopped'], raw['stop_reason'] = False, ''
             record = {'attempt_id': attempt_id, 'settled_tokens': tokens, 'settled_cost_microusd': cost,
                       'basis': 'settled at full reservation (conservative)', 'reason': reason.strip()[:2000],
@@ -449,5 +451,32 @@ class ModelAccounting:
                                human_involved=True, human_decision='settle_reserved', metadata_=record))
             await db.commit()
             return {'usage': raw, 'reconciliation': record}
+
+    async def resume_if_settled(self, sid: str, owner: str, reason: str) -> dict:
+        """Owner resumes unknown-usage accounting once every unknown attempt is settled."""
+        async with async_session() as db:
+            session = await owned_engagement(db, sid, owner)
+            metadata = dict(session.metadata_ or {})
+            raw = dict(metadata.get('model_usage') or {})
+            used, invalid = _read_usage(raw)
+            if invalid or not used['stopped'] or used['stop_reason'] != 'unknown_usage':
+                raise HTTPException(409, 'Accounting is not stopped for unknown usage')
+            rows = (await db.execute(select(DecisionLog).where(
+                DecisionLog.session_id == sid, DecisionLog.decision_type == 'model_attempt'))).scalars().all()
+            unsettled = [r.metadata_.get('id') for r in rows if (r.metadata_ or {}).get('state') == 'failed'
+                         and (r.metadata_ or {}).get('reported_cost_microusd') is None
+                         and not (r.metadata_ or {}).get('reconciliation')]
+            settled = sum(1 for r in rows if (r.metadata_ or {}).get('reconciliation'))
+            if unsettled or settled < used['unknown_usage_calls']:
+                raise HTTPException(409, {'code': 'unsettled_attempts', 'attempts': unsettled})
+            raw['stopped'], raw['stop_reason'] = False, ''
+            metadata['model_usage'] = raw
+            session.metadata_ = metadata
+            record = {'settled_attempts': settled, 'unknown_usage_calls': used['unknown_usage_calls'],
+                      'reason': reason.strip()[:2000], 'actor': owner}
+            db.add(DecisionLog(session_id=sid, user_id=owner, decision_type='model_accounting_resumed',
+                               human_involved=True, human_decision='resume', metadata_=record))
+            await db.commit()
+            return record
 
 model_accounting = ModelAccounting()
