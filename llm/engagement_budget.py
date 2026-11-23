@@ -444,7 +444,7 @@ class ModelAccounting:
             metadata['model_usage'] = raw
             session.metadata_ = metadata
             db.add(DecisionLog(session_id=sid, user_id=owner, decision_type='model_accounting_reconciled',
-                               human_involved=True, human_decision='settle_at_reservation', metadata_=record))
+                               human_involved=True, human_decision='settle_reserved', metadata_=record))
             await db.commit()
             return {'usage': raw, 'reconciliation': record}
 
