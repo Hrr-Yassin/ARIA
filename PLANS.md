@@ -1,5 +1,19 @@
 # ARIA competence and reliability implementation plan
 
+## Mission P5 — Real autonomous operational acceptance (2026-11-23)
+
+| ID | Requirement | Status | Evidence and limits | Next action |
+| --- | --- | --- | --- | --- |
+| R-P5-01 | P4 deployed safely with rollback | VERIFIED | Bundle backup, rebuild, restart; profile routes live. | — |
+| R-P5-02 | Profiles required for new engagements; legacy restricted migration | VERIFIED | `af29075`; UI-created engagement is `profile_required`. | — |
+| R-P5-03 | UI restrictions match backend decisions | VERIFIED (profile) / GAP (readiness UI) | Chromium: the panel equals the backend profile; readiness fixed to honour the profile (`c243198`) but is not shown in the UI. | Add readiness to Mission Control (deployed-file change). |
+| R-P5-04 | Controlled lab: inventory, scope, isolation, limits, approval gates | VERIFIED | Private Lab profile with approval `all`; worker ceiling matches. The lab VM was found shut off. | Owner starts the VM. |
+| R-P5-05 | Real approved tool execution and evidence | VERIFIED | nmap job `339f5c74…`, receipt verified, evidence `31347928…`. | Further approved runs. |
+| R-P5-06 | End-to-end autonomous investigation | BLOCKED | Model calls returned HTTP 429; accounting stopped. | Provider availability plus owner reconciliation. |
+| R-P5-07 | Single versus collaborative on identical real observations | BLOCKED | Plans created on the real receipts; 0 analyses completed. | Rerun when calls succeed. |
+| R-P5-08 | Recovery behaviour | VERIFIED (partial) | Accounting stop and owner reconciliation; five replanning defects fixed; PostgreSQL crash test passes. | — |
+| R-P5-09 | Mission Control in visible Chromium | VERIFIED 20/21 | Screenshots in `.local-lab/p5/browser/`. | Readiness UI. |
+
 ## Mission P4 — Operational authorization profiles (2026-11-22)
 
 | ID | Requirement | Status | Evidence and limits | Next action |

@@ -1,6 +1,16 @@
 # ARIA cybersecurity competence and quality engineering mission
 
-## Current priority — Mission P4: operational authorization profiles
+## Current priority — Mission P5: real autonomous operational acceptance
+
+Accept the end-to-end pipeline on the authorized lab with real operations, owner approval gates and measured outcomes.
+
+Status (2026-11-23): **partial.** See the [P5 report](docs/p5-operational-acceptance.md).
+
+- **Accepted on the live lab:** P4 deployment with rollback; the lab engagement migrated to a Private Lab profile; new engagements profile-required; one owner-approved nmap run with a verified receipt and evidence ingested; visible-Chromium Mission Control 20/21.
+- **Not demonstrated:** model-driven autonomy. Both real DeepSeek calls were rate-limited (HTTP 429, $0 actual spend), and accounting stopped as designed.
+- **Defects exposed by real operations and fixed:** evidence conflicts, specialist context, task budgets, replanning collisions, plan reuse, readiness versus profile.
+
+## Previous priority — Mission P4: operational authorization profiles
 
 Enforce four persisted, auditable authorization profiles (Private Lab, CTF, Authorized Pentest, Bug Bounty) through the single execution-authorization path, with operator control in Mission Control and no expansion of offensive capability.
 

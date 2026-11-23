@@ -867,3 +867,25 @@
 - **Acceptance:** 15 policy tests; a dispatch-time recheck test; 2 UI contract tests; and a disposable PostgreSQL run across two processes with a tripwire worker that passed every check (10.8 s). Full offline suite 995/996, with the known pre-existing failure. Pyright reports 0 errors in P4 files.
 - **Not done:** no browser run against a deployed API (restart not authorized); retention enforcement; a mandatory profile for all execution.
 
+## 2026-11-23 — Mission P5 operational acceptance (partial)
+
+- **Deployed P4** with an owner-approved restart and rebuild; rollback at `.local-lab/p5-rollback/`.
+- **Profile migration:** `c5486358` became Private Lab (revision 1); revision 2 enabled sharing after owner approval.
+- **Real tool run:** owner-approved nmap job `339f5c74…` (6.97 s, receipt verified), all 5 ports filtered. The lab VM was shut off.
+- **Model calls:** 2 real DeepSeek calls, both HTTP 429. Actual spend $0 (OpenRouter `usage_daily` 0). The ARIA ledger shows 595 micro-USD settled conservatively; accounting is stopped.
+- **Fixes from real operations:**
+
+  | Fix | Commit |
+  | --- | --- |
+  | Readiness honours profiles | `c243198` |
+  | Evidence-conflict detection | `f540ccc` |
+  | Specialist receipt facts | `aa3c694` |
+  | Task budgets and replanning | `464e67f`, `0a21c68` |
+  | Plan reuse | `fd99571` |
+  | Owner reconciliation | `a6c23c1`, `c1889fc` |
+  | New engagements profile-required | `af29075` |
+
+- **Browser:** visible Chromium 20/21 (tool readiness not in the UI).
+- **Checks:** full offline suite 1025/1026 (the known pre-existing failure); Pyright clean on changed files.
+- **Unverified:** model-driven autonomy and the live collaboration comparison.
+
