@@ -239,3 +239,50 @@ class NoModelControlOfPermissions(OfflineCase):
             app.dependency_overrides.pop(get_current_user, None)
         self.assertEqual(response.status_code, 422)
 
+
+
+class ProfileRequirement(OfflineCase):
+    def service(self, scope):
+        self.worker = AsyncMock()
+        return ExecutionAuthorization(MemoryStore(), AsyncMock(return_value={'scope': scope, 'owner_id': 'owner'}),
+                                      self.worker, rate_counter=AsyncMock(return_value=0), audit=AsyncMock())
+
+    async def test_new_engagement_denies_all_execution_until_profiled(self):
+        service = self.service({'targets': ['192.168.77.20'], 'exclusions': [], 'profile_required': True})
+        with self.assertRaises(HTTPException) as denied:
+            await service.propose('owner', 'engagement', 'curl http://192.168.77.20/', 'curl')
+        detail = denied.exception.detail
+        self.assertEqual(detail.get('reason') if isinstance(detail, dict) else None, 'profile_required')
+        self.worker.assert_not_awaited()
+
+    async def test_profiled_engagement_stays_profile_required(self):
+        scope = apply_profile({'targets': ['192.168.77.20']}, lab(), 1, 'owner', 'migrate legacy engagement')
+        self.assertTrue(scope['profile_required'])
+        from memory.engagement_profiles import describe
+        self.assertEqual(describe(None, True)['state'], 'profile_required')
+        self.assertEqual(describe(None)['state'], 'legacy')
+
+    async def test_legacy_engagement_rules_are_unchanged_not_widened(self):
+        legacy = {'targets': ['192.168.77.20'], 'exclusions': []}
+        service = self.service(legacy)
+        self.assertEqual((await service.propose('owner', 'engagement', 'curl http://192.168.77.20/', 'curl')).status,
+                         'authorized')
+        with self.assertRaises(HTTPException):          # omission of a profile grants nothing beyond the legacy scope
+            await service.propose('owner', 'engagement', 'curl http://192.168.77.21/', 'curl')
+
+    async def test_session_creation_sets_requirement_and_rejects_client_flags(self):
+        from api.auth import get_current_user
+        from api.main import app
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(user_id='owner', role='admin')
+        create = AsyncMock(return_value={'session_id': 'new'})
+        try:
+            with patch('api.routers.sessions.session_manager.create_session', create):
+                ok = await self.client.post('/api/session/new', json={'target': '192.168.77.20'})
+                forged = await self.client.post('/api/session/new', json={
+                    'target': '192.168.77.20', 'scope': {'targets': ['192.168.77.20'], 'profile_required': False}})
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+        self.assertEqual(ok.status_code, 200, ok.text)
+        assert create.await_args is not None
+        self.assertTrue(create.await_args.args[4]['profile_required'])
+        self.assertEqual(forged.status_code, 422)

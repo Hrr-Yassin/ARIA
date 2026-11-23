@@ -23,11 +23,12 @@ class NewSession(BaseModel):
 async def create_session(body: NewSession, user: TokenData = Depends(get_current_user)):
     if body.scope and 'program_policy' in body.scope:
         raise HTTPException(422, 'Program policy is server-owned; use policy import, review and activation')
-    if body.scope and 'engagement_profile' in body.scope:
+    if body.scope and ({'engagement_profile', 'profile_required'} & set(body.scope)):
         raise HTTPException(422, 'Authorization profiles are server-owned; configure them through the profile control')
+    # New engagements cannot execute anything until the owner configures an authorization profile.
+    scope = {**(body.scope or {"targets": [body.target], "exclusions": []}), 'profile_required': True}
     result = await session_manager.create_session(
-        user.user_id, body.target, body.name, body.context_type,
-        body.scope or {"targets": [body.target], "exclusions": []})
+        user.user_id, body.target, body.name, body.context_type, scope)
     return result
 
 

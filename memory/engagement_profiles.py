@@ -242,7 +242,9 @@ def check_operation(scope: dict[str, Any], command: str, tool: str, risk: str,
     """
     profile = stored_profile(scope)
     if profile is None:
-        return None
+        if scope.get('profile_required'):
+            raise ProfileDenied('profile_required', 'Configure an authorization profile before any execution')
+        return None                     # legacy engagement created before profiles: unchanged scope rules
     now = now or datetime.now(timezone.utc)
     if profile.get('integrity') != 'valid':
         raise ProfileDenied('profile_invalid', 'The stored authorization profile failed validation')
@@ -284,7 +286,9 @@ def apply_profile(scope: dict[str, Any], profile: BaseModel, revision: int, owne
     if provenance:
         record['rules_provenance'] = provenance
     updated = {key: scope[key] for key in ('blocked_typed_capabilities', 'program_policy') if key in scope}
-    updated.update(targets=data['targets'], exclusions=data['exclusions'], engagement_profile=record)
+    # Once profiled, an engagement can never return to legacy (unprofiled) rules.
+    updated.update(targets=data['targets'], exclusions=data['exclusions'], engagement_profile=record,
+                   profile_required=True)
     if data['ports']:
         updated['ports'] = data['ports']
     if data['kind'] == 'bug_bounty':
@@ -292,12 +296,16 @@ def apply_profile(scope: dict[str, Any], profile: BaseModel, revision: int, owne
     return updated
 
 
-def describe(profile: dict[str, Any] | None) -> dict[str, Any]:
+def describe(profile: dict[str, Any] | None, required: bool = False) -> dict[str, Any]:
     """Operator view of the restrictions the backend enforces for this profile."""
+    if profile is None and required:
+        return {'configured': False, 'state': 'profile_required', 'enforced': ['all execution denied'],
+                'warning': 'No authorization profile: every operation is denied until the owner configures one.'}
     if profile is None:
-        return {'configured': False, 'enforced': ['legacy engagement scope only'],
-                'warning': 'No authorization profile: execution uses the legacy scope without profile controls.'}
-    return {'configured': True, 'kind': profile['kind'], 'revision': profile['revision'],
+        return {'configured': False, 'state': 'legacy', 'enforced': ['legacy engagement scope only'],
+                'warning': ('Legacy engagement created before authorization profiles: execution uses its existing '
+                            'scope. Configure a profile to migrate; migration cannot be undone.')}
+    return {'configured': True, 'state': 'profiled', 'kind': profile['kind'], 'revision': profile['revision'],
             'enforced': {'targets': profile['targets'], 'ports': profile.get('ports') or 'any declared by worker ceiling',
                          'exclusions': profile.get('exclusions', []),
                          'permitted_capabilities': profile['permitted_capabilities'],
@@ -321,6 +329,7 @@ class ProfileStore:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner, read_only=True)
             profile = stored_profile(session.scope or {})
+            required = bool((session.scope or {}).get('profile_required'))
             rows = (await db.execute(select(DecisionLog).where(
                 DecisionLog.session_id == sid,
                 DecisionLog.decision_type.in_(['engagement_profile_change', 'policy_denied']))
@@ -331,7 +340,7 @@ class ProfileStore:
             entry = {'id': row.id, 'at': created.isoformat() if isinstance(created, datetime) else None,
                      **(row.metadata_ or {})}
             (history if str(row.decision_type) == 'engagement_profile_change' else denied).append(entry)
-        return {'session_id': sid, 'profile': profile, 'restrictions': describe(profile),
+        return {'session_id': sid, 'profile': profile, 'restrictions': describe(profile, required),
                 'history': history[:50], 'denied_operations': denied[:50],
                 'kinds': list(ProfileKind.__args__)}  # type: ignore[attr-defined]
 
