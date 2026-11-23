@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from memory.program_policy import ProgramPolicyStore, validate_review, rank_candidate
 from orchestrator.execution_policy import validate_command, PolicyError
 from memory.worker_jobs import SQLJobStore, WorkerJobs
-from worker.policy import prepare
+from worker.policy import prepare, validate_worker_command
 from worker.service import WorkerService
 from security.program_fetch import fetch_policy, public_addresses, PolicyText
 from tests.program_fixtures import policy_fixture
@@ -20,6 +20,17 @@ from tests.test_worker_server import MemoryStore, FakeRuntime
 
 
 class PolicyAcceptance(OfflineCase):
+    async def test_bug_bounty_requires_reviewed_program_at_both_boundaries(self):
+        request = 'curl -I https://app.example.test/api'
+        generic_scope = {'targets': ['app.example.test'], 'mode': 'bug_bounty'}
+        _, _, reviewed = policy_fixture()
+        reviewed['mode'] = 'bug_bounty'
+        for validate in (validate_command, validate_worker_command):
+            with self.subTest(validator=validate.__name__):
+                with self.assertRaises(PolicyError):
+                    validate(request, generic_scope)
+                self.assertEqual(validate(request, reviewed).tool, 'curl')
+
     async def test_exact_wildcard_path_port_and_third_party_fixture_set(self):
         _, _, scope = policy_fixture()
         valid = ['curl -I https://app.example.test/api', 'curl https://app.example.test/api/items?limit=1']

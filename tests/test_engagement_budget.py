@@ -43,6 +43,69 @@ class EngagementBudgets(OfflineCase):
             await self.accounting.reserve('owner','groq','test','prompt','')
         self.assertEqual(self.rows,[])
 
+    async def test_saved_review_requires_explicit_budget_even_for_local_provider(self):
+        from llm.saved_review_privacy import saved_review
+
+        token = saved_review.set(True)
+        try:
+            for check_only in (True, False):
+                with self.assertRaises(HTTPException) as error:
+                    await self.accounting.reserve('owner', 'local', 'test', 'prompt', '', check_only=check_only)
+                self.assertEqual(error.exception.detail['code'], 'model_budget_approval_required')
+            self.assertEqual(self.rows, [])
+            self.assertNotIn('model_usage', self.session.metadata_)
+            await self.accounting.configure('engagement', 'owner', ModelLimits(max_cost_microusd=0))
+            self.assertTrue((await self.accounting.reserve(
+                'owner', 'local', 'test', 'prompt', '', check_only=True))['ready'])
+            await self.accounting.reserve('owner', 'local', 'test', 'prompt', '')
+            self.assertEqual(self.session.metadata_['model_usage']['calls'], 1)
+        finally:
+            saved_review.reset(token)
+
+    async def test_stored_application_map_denial_prevents_reservation(self):
+        from llm.planner_errors import budget_error
+        from memory.application_map import fresh, seal
+
+        await self.accounting.configure('engagement', 'owner', ModelLimits(max_cost_microusd=0))
+        self.session.metadata_['application_mapping'] = True
+        self.db.get = AsyncMock(return_value=SimpleNamespace(metadata_={'sealed': seal(fresh())}))
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
+        summary = await self.accounting.status('engagement', 'owner')
+        self.assertEqual(summary['admission']['state'], 'blocked')
+        self.assertIn('model_provider_sharing_denied', summary['admission']['reasons'])
+        self.assertEqual(summary['application_data_policy'], {
+            'state': 'configured', 'revision': 0, 'retention_days': 7, 'provider_sharing': 'deny',
+        })
+        self.assertEqual(summary['attempts'], [])
+        for check_only in (True, False):
+            with self.assertRaises(HTTPException) as error:
+                await self.accounting.reserve('owner', 'local', 'test', 'prompt', '', check_only=check_only)
+            self.assertEqual(error.exception.status_code, 403)
+            self.assertEqual(budget_error(error.exception), 'model_provider_sharing_denied')
+        self.assertNotIn('model_usage', self.session.metadata_)
+        self.assertEqual([row.decision_type for row in self.rows], ['model_limits'])
+
+    async def test_missing_or_unreadable_application_map_blocks_admission(self):
+        self.db.get = AsyncMock()
+        self.db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
+        self.assertEqual((await self.accounting.status('engagement', 'owner'))['application_data_policy'],
+                         {'state': 'unconfigured'})
+        self.db.get.assert_not_awaited()
+        self.session.metadata_['application_mapping'] = True
+
+        for stored in (None, SimpleNamespace(metadata_={'sealed': 'invalid-fixture-seal'})):
+            with self.subTest(map_missing=stored is None):
+                self.db.get.return_value = stored
+                status = await self.accounting.status('engagement', 'owner')
+                self.assertEqual(status['application_data_policy'], {'state': 'unavailable'})
+                self.assertEqual(status['admission']['state'], 'blocked')
+                self.assertIn('model_provider_sharing_unavailable', status['admission']['reasons'])
+                with self.assertRaises(HTTPException) as error:
+                    await self.accounting.reserve('owner', 'local', 'test', 'prompt', '')
+                self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(self.rows, [])
+        self.assertNotIn('model_usage', self.session.metadata_)
+
     async def test_reservations_survive_changed_limits_and_missing_usage(self):
         await self.configure(max_calls=1)
         attempt=await self.accounting.reserve('owner','groq','test','prompt','')

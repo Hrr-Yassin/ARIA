@@ -1,0 +1,37 @@
+{
+  "schema": "aria.saved-review-pilot.v1",
+  "source": {
+    "path": ".local-lab/phase2-adapters/baseline-head-result.json",
+    "artifact_sha256": "f71cc02220f54e01a0ad07aad392ee55c3aff760937448aa01cb3a887df8ba43",
+    "stdout_sha256": "9ef776a4cdb6d9378b16d2082d3df76f5abd0424f839a6d0a655ed5da9b6d04a",
+    "projection": "One successful recorded HEAD response. Preserve the status and all header names. Replace header values with the minimum facts needed for grading."
+  },
+  "observation": "A saved HEAD response returned HTTP 200. Its complete response header names were Date, Server, X-Powered-By and Content-Type. The Server header named Apache and included a software version. The X-Powered-By header named PHP and included a software version. The response Content-Type was text/html. No response body or paired identity control is available in this receipt.",
+  "cases": [
+    {
+      "id": "software-version-disclosure",
+      "objective": "Assess the claim that this response discloses software versions. Return one interpretation.",
+      "expected": "supported",
+      "reason": "The recorded Server and X-Powered-By values contained versions. The receipt establishes disclosure in this response and cannot verify actual installed versions or exploitability."
+    },
+    {
+      "id": "cookie-issued",
+      "objective": "Assess the claim that this HEAD response issued a cookie. Return one interpretation.",
+      "expected": "rejected",
+      "reason": "There is no Set-Cookie header in the complete recorded header block. This control applies to this response only."
+    },
+    {
+      "id": "authorization-policy",
+      "objective": "Assess the claim that this response establishes whether the application's authorization policy is enforced. Return one interpretation.",
+      "expected": "inconclusive",
+      "reason": "One HEAD response status supplies neither a declared policy nor a comparison between permitted and denied subjects."
+    }
+  ],
+  "procedure": [
+    "Use a fresh owned evaluation engagement. Catalog only the observation projection. Create one analyze task per case with that evidence, its objective and one allowed model attempt. Do not provide expected labels or grading text to the model.",
+    "For each case, record the initial task as the single-review baseline and the automatically created challenge as the collaboration stage. Both stages see the same recorded evidence and objective. The challenge additionally receives the initial task's attributed interpretation.",
+    "Score a stage's cited disposition against the frozen label. Score evidence accuracy, plausible alternatives, uncertainty and proposed saved-evidence checks against the case reason. Count missing results and failed calls separately. Report the confusion matrix by stage, including supported-claim false positives and false negatives. Review meaningful revisions and regressions case by case.",
+    "Reconcile actual provider, physical attempts, token use and cost with the task-linked attempt ledger. Record per-attempt latency and total elapsed time. Preserve grant and quote identity with the evaluation."
+  ],
+  "limits": "Three questions reuse one recorded response. This pilot measures evidence interpretation, one bounded disclosure and one negative control. It does not establish performance across independently vulnerable and secure applications."
+}

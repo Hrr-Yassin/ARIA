@@ -260,25 +260,26 @@ async def health():
 async def capabilities(user: TokenData = Depends(get_current_user)) -> dict:
     """Describe supported profiles separately from current worker availability."""
     import asyncio
+    from config.security_tool_registry import WorkerAdvertisement
     from memory.worker_jobs import worker_jobs
     worker = {"status": "not_configured", "available_tools": []}
-    advertised = {}
+    authenticated_http = False
     if settings.KALI_AGENT_URL:
         worker["status"] = "unreachable"
         try:
             async with asyncio.timeout(3):
                 advertised = await worker_jobs.client.capabilities()
-            tools = advertised.get("tools", [])
-            if not isinstance(tools, list) or any(not isinstance(tool, str) for tool in tools):
-                raise ValueError("Invalid worker tools")
-            worker = {"status": "online", "available_tools": sorted(set(tools) & {"curl", "nmap"})}
+            validated = WorkerAdvertisement.model_validate(advertised)
+            worker = {"status": "online", "available_tools": sorted(set(validated.tools) & {"curl", "nmap"})}
+            version = advertised.get("authenticated_http_version")
+            authenticated_http = type(version) is int and version == 1
         except Exception:
             pass  # Never expose endpoint, credentials, or transport errors.
     return {
         "worker": worker,
         "application_mapping": {
             "saved_evidence": True,
-            "authenticated_http_worker": advertised.get("authenticated_http_version") == 1,
+            "authenticated_http_worker": authenticated_http,
             "browser_enabled": settings.BROWSER_MAPPING_ENABLED,
             "approval_required": True,
             "methods": ["GET", "HEAD"],

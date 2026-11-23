@@ -30,6 +30,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
+from contextvars import ContextVar
 
 import structlog
 from fastapi import HTTPException
@@ -41,8 +42,13 @@ from llm.planner_errors import budget_error, public_error
 from llm.groq_client import GroqClient
 from llm.gemini_client import GeminiClient
 from llm.openrouter_client import OpenRouterClient
+from llm.saved_review_privacy import (
+    PreparedReview, ReviewPrivacyError, SECRET_LITERAL, prepared_review, require, saved_review,
+    validate_review_json, wrap_engagement_data,
+)
 
 log = structlog.get_logger(__name__)
+openrouter_only: ContextVar[bool] = ContextVar('openrouter_only', default=False)
 
 PROVIDER_CLIENTS = {
     "groq": GroqClient,
@@ -210,7 +216,7 @@ class LLMPoolManager:
 
         # An explicitly enabled hosted credential pins this pool to OpenRouter.
         # Exhaustion/cooldown must not redirect paid work to another provider.
-        hosted = any(key.provider == 'openrouter' and key.is_active for key in pool.keys)
+        hosted = openrouter_only.get() or any(key.provider == 'openrouter' and key.is_active for key in pool.keys)
         for key in pool.keys:
             if hosted and key.provider != 'openrouter':
                 continue
@@ -240,7 +246,7 @@ class LLMPoolManager:
 
         if not candidates:
             for key in pool.keys:
-                if key.key_id in exclude:
+                if key.key_id in exclude or (hosted and key.provider != 'openrouter'):
                     continue
                 if key.is_active and 0 < key.cooldown_until <= now:
                     key.requests_used = 0
@@ -305,10 +311,27 @@ class LLMPoolManager:
                     for host in attack_kb.get_all_hosts(sid):
                         for credential in host.credentials:
                             secrets.extend([credential.get('password', ''), credential.get('hash_value', '')])
-                prompt = '<untrusted_engagement_data>\n' + redact(prompt, secrets) + '\n</untrusted_engagement_data>'
+                protected_review = saved_review.get()
+                if protected_review:
+                    from llm.base_llm import response_schema
+                    validate_review_json(prompt, wrapped=False, secrets=secrets)
+                    require(bool(system) and not SECRET_LITERAL.search(system) and
+                            redact(prompt, secrets) == prompt and redact(system, secrets) == system)
+                    require(not response_schema.get())
+                prompt = wrap_engagement_data(redact(prompt, secrets))
                 system = redact(system, secrets)
+                if protected_review:
+                    validate_review_json(prompt, wrapped=True, secrets=secrets)
                 context_ms = (time.monotonic_ns() - preparing) / 1e6
-                return finish(await self._query_for_task(user_id, task_type, prompt, system))
+                if not protected_review:
+                    return finish(await self._query_for_task(user_id, task_type, prompt, system))
+                token = prepared_review.set(PreparedReview(prompt, system))
+                try:
+                    return finish(await self._query_for_task(user_id, task_type, prompt, system))
+                finally:
+                    prepared_review.reset(token)
+            except ReviewPrivacyError:
+                return finish({'success': False, 'content': '', 'error': 'saved_review_privacy_rejected'})
             except HTTPException as exc:
                 return finish({'success': False, 'content': '', 'error': budget_error(exc)})
             except Exception:
@@ -327,6 +350,8 @@ class LLMPoolManager:
         try:
             await self.refresh_user_keys(user_id)
             if settings.LLM_ROUTING == 'local':
+                if openrouter_only.get():
+                    return {'ready': False, 'code': 'openrouter_required', 'message': 'OpenRouter routing is required'}
                 provider, model = 'local', settings.LOCAL_LLM_MODEL
                 if not model:
                     return {'ready': False, 'code': 'model_not_configured', 'message': public_error('model_not_configured')}
@@ -386,6 +411,8 @@ class LLMPoolManager:
             }
 
         if settings.LLM_ROUTING == 'local':
+            if openrouter_only.get():
+                return {'success': False, 'content': '', 'error': 'openrouter_required', 'provider': 'none'}
             from llm.engagement_budget import model_accounting
             from llm.validation_budget import current_budget
             if not settings.LOCAL_LLM_MODEL:
@@ -458,6 +485,10 @@ class LLMPoolManager:
                     temperature=settings.LLM_TEMPERATURE,
                 )
 
+                from llm.engagement_budget import model_accounting
+                if saved_review.get():
+                    await model_accounting.reserve(user_id, key_state.provider, model, prompt, system,
+                                                   check_only=True)
                 if not await self._reserve_key(user_id, key_state.key_id):
                     key_state.is_active = False
                     continue
@@ -465,7 +496,6 @@ class LLMPoolManager:
                 budget = current_budget.get()
                 if budget is not None and not budget.reserve(prompt, system, 4096):
                     return {'success':False, 'content':'', 'error':'validation_budget_exhausted', 'provider':'none'}
-                from llm.engagement_budget import model_accounting
                 attempt = await model_accounting.reserve(user_id, key_state.provider, model, prompt, system)
                 if key_state.provider == 'openrouter':
                     client.tariff = attempt.get('tariff')

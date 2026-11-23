@@ -272,13 +272,13 @@
         <button id="team-save-coverage" class="btn btn-ghost">Save coverage</button>
         <div id="team-coverage"></div>
       </details>
-      <details><summary>Shared model budget</summary>
+      <details id="model-budget"><summary>Shared model budget</summary>
         <p class="settings-note">OpenRouter requires a verified tariff for the exact model before owner approval. Other providers use an owner-entered conservative rate. Missing provider cost remains unknown. Counters never reset when limits change.</p>
-        <label>Maximum provider calls<input id="team-model-calls" type="number" min="0" max="10000"></label>
-        <label>Maximum reserved tokens<input id="team-model-tokens" type="number" min="0" max="100000000"></label>
-        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001" value="2"></label>
-        <label>Provider<select id="team-model-provider"><option>groq</option><option>gemini</option><option>openrouter</option></select></label>
-        <label>Exact configured model name<input id="team-model-name"></label>
+        <label>Maximum provider calls<input id="team-model-calls" type="number" min="0" max="10000" value="100"></label>
+        <label>Maximum reserved tokens<input id="team-model-tokens" type="number" min="0" max="100000000" value="100000"></label>
+        <label>Maximum reserved cost (USD)<input id="team-model-cost" type="number" min="0" step="0.000001" value="0.50"></label>
+        <label>Provider<select id="team-model-provider"><option selected>openrouter</option><option>groq</option><option>gemini</option></select></label>
+        <label>Exact configured model name<input id="team-model-name" value="deepseek/deepseek-v4-flash"></label>
         <label>Conservative combined rate (USD per million tokens)<input id="team-model-rate" type="number" min="0" step="0.000001"></label>
         <button id="team-save-budget" class="btn btn-ghost">Approve spending limit</button>
         <button id="team-refresh-tariff" class="btn btn-ghost">Verify OpenRouter key and refresh tariff</button>

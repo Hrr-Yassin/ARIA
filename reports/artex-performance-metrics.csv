@@ -1,0 +1,174 @@
+workflow,cohort,sample,metric,value,unit
+overview,baseline,1,readyMs,320.513,ms
+overview,baseline,2,readyMs,239.799,ms
+overview,baseline,3,readyMs,244.472,ms
+overview,baseline,4,readyMs,271.78,ms
+overview,baseline,5,readyMs,191.088,ms
+overview,baseline,1,firstContentfulPaintMs,208,ms
+overview,baseline,2,firstContentfulPaintMs,144,ms
+overview,baseline,3,firstContentfulPaintMs,132,ms
+overview,baseline,4,firstContentfulPaintMs,164,ms
+overview,baseline,5,firstContentfulPaintMs,136,ms
+overview,baseline,1,domContentLoadedMs,138.8,ms
+overview,baseline,2,domContentLoadedMs,77.6,ms
+overview,baseline,3,domContentLoadedMs,75.1,ms
+overview,baseline,4,domContentLoadedMs,98.3,ms
+overview,baseline,5,domContentLoadedMs,71.8,ms
+overview,baseline,1,apiRequests,8,requests
+overview,baseline,2,apiRequests,7,requests
+overview,baseline,3,apiRequests,8,requests
+overview,baseline,4,apiRequests,8,requests
+overview,baseline,5,apiRequests,7,requests
+overview,baseline,1,localTransferBytes,128528,bytes
+overview,baseline,2,localTransferBytes,125821,bytes
+overview,baseline,3,localTransferBytes,128530,bytes
+overview,baseline,4,localTransferBytes,128530,bytes
+overview,baseline,5,localTransferBytes,125821,bytes
+overview,baseline,1,jsHeapBytes,5547295,bytes
+overview,baseline,2,jsHeapBytes,7047524,bytes
+overview,baseline,3,jsHeapBytes,8858884,bytes
+overview,baseline,4,jsHeapBytes,11136034,bytes
+overview,baseline,5,jsHeapBytes,13107642,bytes
+overview,candidate,1,readyMs,269.95,ms
+overview,candidate,2,readyMs,270.471,ms
+overview,candidate,3,readyMs,255.115,ms
+overview,candidate,4,readyMs,287.095,ms
+overview,candidate,5,readyMs,262.191,ms
+overview,candidate,1,firstContentfulPaintMs,192,ms
+overview,candidate,2,firstContentfulPaintMs,200,ms
+overview,candidate,3,firstContentfulPaintMs,180,ms
+overview,candidate,4,firstContentfulPaintMs,168,ms
+overview,candidate,5,firstContentfulPaintMs,160,ms
+overview,candidate,1,domContentLoadedMs,118,ms
+overview,candidate,2,domContentLoadedMs,117,ms
+overview,candidate,3,domContentLoadedMs,107.1,ms
+overview,candidate,4,domContentLoadedMs,107.3,ms
+overview,candidate,5,domContentLoadedMs,77.3,ms
+overview,candidate,1,apiRequests,8,requests
+overview,candidate,2,apiRequests,8,requests
+overview,candidate,3,apiRequests,6,requests
+overview,candidate,4,apiRequests,8,requests
+overview,candidate,5,apiRequests,8,requests
+overview,candidate,1,localTransferBytes,155880,bytes
+overview,candidate,2,localTransferBytes,155881,bytes
+overview,candidate,3,localTransferBytes,152203,bytes
+overview,candidate,4,localTransferBytes,155881,bytes
+overview,candidate,5,localTransferBytes,155880,bytes
+overview,candidate,1,jsHeapBytes,5638428,bytes
+overview,candidate,2,jsHeapBytes,7309133,bytes
+overview,candidate,3,jsHeapBytes,9065003,bytes
+overview,candidate,4,jsHeapBytes,11432031,bytes
+overview,candidate,5,jsHeapBytes,12186452,bytes
+exploration,candidate,1,explorationReadyMs,148.067,ms
+exploration,candidate,1,graphFrameMedianMs,16.6,ms
+exploration,candidate,1,graphFrameSamples,29,frames
+overview,retained inspection,1,readyMs,280.699,ms
+overview,retained inspection,2,readyMs,307.972,ms
+overview,retained inspection,3,readyMs,205.902,ms
+overview,retained inspection,4,readyMs,252.873,ms
+overview,retained inspection,5,readyMs,271.83,ms
+overview,retained inspection,1,firstContentfulPaintMs,240,ms
+overview,retained inspection,2,firstContentfulPaintMs,192,ms
+overview,retained inspection,3,firstContentfulPaintMs,128,ms
+overview,retained inspection,4,firstContentfulPaintMs,168,ms
+overview,retained inspection,5,firstContentfulPaintMs,180,ms
+overview,retained inspection,1,domContentLoadedMs,138.2,ms
+overview,retained inspection,2,domContentLoadedMs,110.1,ms
+overview,retained inspection,3,domContentLoadedMs,62,ms
+overview,retained inspection,4,domContentLoadedMs,109.5,ms
+overview,retained inspection,5,domContentLoadedMs,112.9,ms
+overview,retained inspection,1,apiRequests,7,requests
+overview,retained inspection,2,apiRequests,8,requests
+overview,retained inspection,3,apiRequests,7,requests
+overview,retained inspection,4,apiRequests,8,requests
+overview,retained inspection,5,apiRequests,8,requests
+overview,retained inspection,1,localTransferBytes,154557,bytes
+overview,retained inspection,2,localTransferBytes,156409,bytes
+overview,retained inspection,3,localTransferBytes,153592,bytes
+overview,retained inspection,4,localTransferBytes,156411,bytes
+overview,retained inspection,5,localTransferBytes,156411,bytes
+overview,retained inspection,1,jsHeapBytes,4890764,bytes
+overview,retained inspection,2,jsHeapBytes,7181289,bytes
+overview,retained inspection,3,jsHeapBytes,8597073,bytes
+overview,retained inspection,4,jsHeapBytes,10253251,bytes
+overview,retained inspection,5,jsHeapBytes,13099251,bytes
+exploration,retained inspection,1,explorationReadyMs,157.241,ms
+exploration,retained inspection,1,graphFrameMedianMs,16.7,ms
+exploration,retained inspection,1,graphFrameSamples,29,frames
+overview,saved checkpoints,1,readyMs,443.913,ms
+overview,saved checkpoints,2,readyMs,307.286,ms
+overview,saved checkpoints,3,readyMs,266.358,ms
+overview,saved checkpoints,4,readyMs,261.437,ms
+overview,saved checkpoints,5,readyMs,196.334,ms
+overview,saved checkpoints,1,firstContentfulPaintMs,216,ms
+overview,saved checkpoints,2,firstContentfulPaintMs,172,ms
+overview,saved checkpoints,3,firstContentfulPaintMs,148,ms
+overview,saved checkpoints,4,firstContentfulPaintMs,148,ms
+overview,saved checkpoints,5,firstContentfulPaintMs,124,ms
+overview,saved checkpoints,1,domContentLoadedMs,127.8,ms
+overview,saved checkpoints,2,domContentLoadedMs,86,ms
+overview,saved checkpoints,3,domContentLoadedMs,76.7,ms
+overview,saved checkpoints,4,domContentLoadedMs,105.7,ms
+overview,saved checkpoints,5,domContentLoadedMs,78.5,ms
+overview,saved checkpoints,1,apiRequests,8,requests
+overview,saved checkpoints,2,apiRequests,8,requests
+overview,saved checkpoints,3,apiRequests,8,requests
+overview,saved checkpoints,4,apiRequests,8,requests
+overview,saved checkpoints,5,apiRequests,7,requests
+overview,saved checkpoints,1,localTransferBytes,159079,bytes
+overview,saved checkpoints,2,localTransferBytes,159081,bytes
+overview,saved checkpoints,3,localTransferBytes,159081,bytes
+overview,saved checkpoints,4,localTransferBytes,159081,bytes
+overview,saved checkpoints,5,localTransferBytes,158469,bytes
+overview,saved checkpoints,1,jsHeapBytes,4823733,bytes
+overview,saved checkpoints,2,jsHeapBytes,6433554,bytes
+overview,saved checkpoints,3,jsHeapBytes,8138081,bytes
+overview,saved checkpoints,4,jsHeapBytes,9694811,bytes
+overview,saved checkpoints,5,jsHeapBytes,11686560,bytes
+exploration,saved checkpoints,1,explorationReadyMs,175.726,ms
+exploration,saved checkpoints,1,graphFrameMedianMs,16.7,ms
+exploration,saved checkpoints,1,graphFrameSamples,29,frames
+overview,linked assets,1,readyMs,297.31,ms
+overview,linked assets,2,readyMs,229.131,ms
+overview,linked assets,3,readyMs,310.327,ms
+overview,linked assets,4,readyMs,263.191,ms
+overview,linked assets,5,readyMs,254.355,ms
+overview,linked assets,1,firstContentfulPaintMs,180,ms
+overview,linked assets,2,firstContentfulPaintMs,168,ms
+overview,linked assets,3,firstContentfulPaintMs,168,ms
+overview,linked assets,4,firstContentfulPaintMs,168,ms
+overview,linked assets,5,firstContentfulPaintMs,172,ms
+overview,linked assets,1,domContentLoadedMs,123.2,ms
+overview,linked assets,2,domContentLoadedMs,102.3,ms
+overview,linked assets,3,domContentLoadedMs,108.8,ms
+overview,linked assets,4,domContentLoadedMs,72.1,ms
+overview,linked assets,5,domContentLoadedMs,97.2,ms
+overview,linked assets,1,apiRequests,8,requests
+overview,linked assets,2,apiRequests,8,requests
+overview,linked assets,3,apiRequests,8,requests
+overview,linked assets,4,apiRequests,8,requests
+overview,linked assets,5,apiRequests,8,requests
+overview,linked assets,1,localTransferBytes,160552,bytes
+overview,linked assets,2,localTransferBytes,160552,bytes
+overview,linked assets,3,localTransferBytes,160550,bytes
+overview,linked assets,4,localTransferBytes,160552,bytes
+overview,linked assets,5,localTransferBytes,160553,bytes
+overview,linked assets,1,jsHeapBytes,5768891,bytes
+overview,linked assets,2,jsHeapBytes,7268996,bytes
+overview,linked assets,3,jsHeapBytes,8411422,bytes
+overview,linked assets,4,jsHeapBytes,11341029,bytes
+overview,linked assets,5,jsHeapBytes,11441104,bytes
+exploration,linked assets,1,explorationReadyMs,166.098,ms
+exploration,linked assets,1,graphFrameMedianMs,16.7,ms
+exploration,linked assets,1,graphFrameSamples,29,frames
+asset graph,"linked assets, postgres fixture",1,navigation_to_saved_capture_ms,103.073,ms
+"asset graph, 1201 synthetic evidence nodes",candidate,1,retainedNodes,1201,nodes
+"asset graph, 1201 synthetic evidence nodes",candidate,1,mountedNodes,80,nodes
+"asset graph, 1201 synthetic evidence nodes",candidate,1,frameMedianMs,16.7,ms
+"asset graph, 1201 synthetic evidence nodes",candidate,1,frameSamples,59,frames
+"asset graph, 1201 synthetic evidence nodes",candidate,1,browserCpuPercent,43.821,percent
+"asset graph, 1201 synthetic evidence nodes",candidate,1,browserSummedRssBytes,1169387520,bytes
+traffic API including authentication,postgres fixture,1,api_request,21.195,ms
+traffic API including authentication,postgres fixture,2,api_request,22.843,ms
+retained HAR API including authentication,postgres fixture,1,two_concurrent_imports_ms,48.189,ms
+retained HAR API including authentication,postgres fixture,1,capture_detail_ms,22.784,ms

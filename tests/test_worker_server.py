@@ -78,6 +78,23 @@ class WorkerServerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
+    async def test_capabilities_report_configured_pins_without_starting_jobs(self):
+        from security_tools.adapters import contract_digest
+        from security_tools.worker_profiles import Profile
+        image = 'sha256:' + 'a' * 64
+        self.service.profiles = {'nmap': Profile(image_id=image, tool_version='7.93', binary_sha256='b' * 64)}
+        payload = (await self.client.get('/capabilities')).json()
+        self.assertEqual(payload['typed_profile_pins'], {
+            'nmap.tcp.connect.v1': {'declared_version': '7.93', 'image_id': image}})
+        self.assertEqual(payload.get('typed_registry_sha256'), contract_digest())
+        with patch('security_tools.adapters.contract_digest', side_effect=OSError('fixture-private')):
+            unavailable = await self.client.get('/capabilities')
+        self.assertEqual(unavailable.status_code, 200)
+        self.assertIsNone(unavailable.json()['typed_registry_sha256'])
+        self.assertEqual(unavailable.json()['typed_profile_pins'], payload['typed_profile_pins'])
+        self.assertNotIn('fixture-private', unavailable.text)
+        self.assertEqual(self.runtime.creates, 0)
+
     async def test_authentication_all_routes_and_request_bounds(self):
         job = request()
         self.client.headers.clear()

@@ -84,6 +84,8 @@ def allowed_target(target, scope):
 
 
 def validate_command(command, scope, claimed_tool=''):
+    if isinstance(scope, dict) and scope.get('mode') == 'bug_bounty' and 'program_policy' not in scope:
+        raise PolicyError('Bug bounty scope requires a reviewed program policy')
     if isinstance(command, str) and command.startswith('aria-tool '):
         from security_tools.adapters import validate
         checked = validate(command, scope)
@@ -123,8 +125,6 @@ def validate_command(command, scope, claimed_tool=''):
         return validate(command, scope)
     if tool not in FLAGS and tool != 'msfconsole':
         raise PolicyError('No reviewed adapter exists for this tool')
-    if scope.get('mode') == 'bug_bounty' and tool in {'hydra', 'sqlmap', 'msfconsole'}:
-        raise PolicyError('Tool is forbidden by engagement mode')
     targets = []
     risk = RISK.get(tool, 'orange')
     if tool == 'msfconsole':

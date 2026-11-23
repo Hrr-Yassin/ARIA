@@ -215,6 +215,8 @@ async def get_audit_logs(session_id: Optional[str] = None,
 @router.get("/activity")
 async def get_activity(limit: int = 200, user: TokenData = Depends(require_admin)):
     """Get all recent activity across all sessions."""
+    from security.har import HAR_CAPTURE_TYPE
+
     try:
         activities = []
         user_names = {}
@@ -224,7 +226,8 @@ async def get_activity(limit: int = 200, user: TokenData = Depends(require_admin
             user_names = {row.id: row.username for row in user_result}
 
             result = await db.execute(
-                select(ChatLog).order_by(ChatLog.created_at.desc()).limit(limit)
+                select(ChatLog).where(ChatLog.msg_type.is_distinct_from(HAR_CAPTURE_TYPE))
+                .order_by(ChatLog.created_at.desc()).limit(limit)
             )
             for cl in result.scalars().all():
                 activities.append({

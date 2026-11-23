@@ -538,6 +538,21 @@ class CampaignMonitoringApiTests(OfflineCase):
                         "/api/pentest/engagement/" + path)
                     self.assertEqual(response.status_code, 404)
 
+    async def test_health_can_report_empty_campaign_without_hiding_missing_engagement(self):
+        app.dependency_overrides[get_current_user] = lambda: self._owner()
+        path = "/api/pentest/engagement/campaign/health?include_absence=true"
+        with patch("api.session_access.session_manager.get_session",
+                   AsyncMock(return_value=self._session())), \
+             patch("memory.campaign_store.campaign_store.latest_for_session",
+                   AsyncMock(return_value=None)):
+            response = await self.client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {
+                "schema": "aria.campaign.health.v1", "session_id": "engagement", "state": "not_started"})
+        for session, status in ((None, 404), (self._session("another-owner"), 403)):
+            with patch("api.session_access.session_manager.get_session", AsyncMock(return_value=session)):
+                self.assertEqual((await self.client.get(path)).status_code, status)
+
     async def test_health_and_event_routes_are_bounded(self):
         app.dependency_overrides[get_current_user] = lambda: self._owner()
         row = _row()

@@ -1,0 +1,582 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {
+      "id": "P0-01",
+      "reference": "Typed asset graph, containment, deduplication and anchors are documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "PostgreSQL-backed application map (`/api/application-map/{id}`), team evidence and verification (`/api/team/{id}`, `/findings`), and process-local host topology (`/api/mission/{id}/topology`). A unified owner-scoped projection is missing.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Visible Chromium exercised shared identities, source links, search and group controls. Owner-scoped Traffic records, mapped routes and evidence are linked by saved identifiers. Current host topology remains process-local. Durable host attribution and full technology coverage remain open."
+    },
+    {
+      "id": "P0-01.RETAINED-HTTP",
+      "reference": "Retained HTTP evidence connected to the asset graph",
+      "initial_classification": "MISSING",
+      "authority": "Owner-bound Mission Traffic and Application Map reads, and the team evidence catalog",
+      "status": "VERIFIED",
+      "acceptance": "Visible Chromium and disposable PostgreSQL verified origin identity deduplication across an explicit default-port alias, stable capture and catalog links, on-demand HAR inspection, absence of undisclosed routes, and engagement isolation."
+    },
+    {
+      "id": "P0-02",
+      "reference": "Separate exploration graph with typed lineage",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Team ledger, research and task trace (`/api/team/{id}`), durable campaign history and event outbox (`/api/mission/{id}/events`). Investigation lineage is spread across views.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Visible Chromium verified directed task dependencies, evidence traversal, and saved team states at a selected ledger sequence. Two fresh processes reconstructed the saved checkpoint. The team, campaign and authorization histories have separate sources and coverage limits."
+    },
+    {
+      "id": "P0-02.CHECKPOINT",
+      "reference": "Exploration milestones reconstructed from retained team events",
+      "initial_classification": "MISSING",
+      "authority": "Owner-bound PostgreSQL team outbox and its ordered revisions",
+      "status": "VERIFIED",
+      "acceptance": "Visible Chromium restored an earlier finding state and traversed a saved task dependency. The checkpoint disclosed a missing sequence and an unreadable record. PostgreSQL verified foreign-owner denial, same-owner engagement isolation, and identical saved state from two fresh processes."
+    },
+    {
+      "id": "P0-03",
+      "reference": "Shared asset state and searchable worker traces",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "PostgreSQL team knowledge, hypotheses, revisions and evidence, with separate process-local knowledge and optional Redis caches. Review needs explicit provenance and contradiction navigation.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Catalog, model assertions, observations and contradictory references are inspected together under the existing session boundary. Existing revisions remain authoritative. Full cross-source version browsing is open."
+    },
+    {
+      "id": "P0-04",
+      "reference": "Evidence-linked findings and verification",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Finding verification ledger, evidence catalog and signed report authority (`/api/team/{id}/findings`, `/api/report/{id}/drafts`). Typed provenance and missing references need a common inspector.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Finding provenance links candidate evidence and named controls to durable revisions, attributed review roles, and recorded evidence digests. Missing references stay visible. Visible Chromium and PostgreSQL verified finding history and owner isolation. Cross-source historical reconstruction remains open."
+    },
+    {
+      "id": "P0-04.HISTORY",
+      "reference": "Retained review revisions and provenance",
+      "initial_classification": "MISSING",
+      "authority": "PostgreSQL team outbox and owner-bound verification history",
+      "status": "VERIFIED",
+      "acceptance": "Disposable PostgreSQL read revisions 2 and 1 by sequence, denied a foreign administrator and a different engagement, and visible Chromium reopened both saved states after reload."
+    },
+    {
+      "id": "P1-01",
+      "reference": "Activity logs and internal event loop documented. UI transport ordering and recovery unverified",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Mission events API combines PostgreSQL outbox and retained campaign rings. Existing WebSocket invalidates documented source windows. Source coverage and explicit inactive state need audit.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Reuses existing event contract and WebSocket reconciliation. Adds prior campaign state where retained and model accounting lifecycle markers from stored timestamps. Worker-health and application-error event history are incomplete."
+    },
+    {
+      "id": "P1-02",
+      "reference": "Task management and execution views documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Durable team task ledger and trace API. Agents view already shows assignments and dependencies. Dedicated task navigation and alternate views are missing.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Visible Chromium verified table, Kanban, creation timeline, dependency graph and inspector. Existing persisted status and trace authority are reused. Start/finish and accounting field coverage depends on record availability."
+    },
+    {
+      "id": "P1-03",
+      "reference": "Delegation and searchable traces documented. Communication network unverified",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Team events and task traces contain attributed records. A communication view needs to limit links to explicit sender/recipient pairs or documented delegation records.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Communication diagram reads attributed dependencies at claim time and exposes prepared evidence and recorded rejections. General message history and provider delivery remain unknown."
+    },
+    {
+      "id": "P1-04",
+      "reference": "HTTP capture and evidence console documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "PostgreSQL ChatLog selected Burp imports, ApplicationMap and optional tenant retention policies. No unified safe traffic inspector.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Owner-only Traffic reads selected Burp, retained application capture, and sanitized HAR sources. PostgreSQL and visible Chromium verified header inspection, encrypted opt-in JSON and text previews, stable pagination, duplicate handling, and cross-engagement isolation. Existing legacy capture bodies remain subject to their original access boundary."
+    },
+    {
+      "id": "P1-04.INSPECTION",
+      "reference": "Passive sanitized HAR intake and reviewed request and response inspection",
+      "initial_classification": "MISSING",
+      "authority": "Retained ChatLog capture summaries and encrypted owner-scoped inspection",
+      "status": "VERIFIED",
+      "acceptance": "A controlled HAR fixture verified all three metadata sources, credential masking, reviewed JSON and text rendering, mobile layout, concurrent deduplication, same-owner engagement isolation, and encrypted excerpt readback from two fresh API processes."
+    },
+    {
+      "id": "P2-01",
+      "reference": "Agent management view documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Runtime roster (`/api/mission/agents`), team tasks, model accounting and frozen evaluations. Existing view needs field-level coverage audit.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Agent profiles include roster state, task outcomes, declared capabilities and attributed retained accounting. Prompt versions, agent-specific configuration and independent competence results are unavailable."
+    },
+    {
+      "id": "P2-02",
+      "reference": "Bundled tools and capability extensions documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Tool registry (`/api/tool-registry`), worker advertisement and owner receipts. Independent assurance levels need explicit presentation.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Registry definitions, typed registration and worker advertisements have explicit provenance. Installation, adapter tests, runtime and interpretation assurance are not generally established by this read."
+    },
+    {
+      "id": "P2-03",
+      "reference": "Provider profiles, failover and token accounting documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "ModelAccounting PostgreSQL ledger, `/api/mission/{id}/accounting`, owner provider diagnostics and existing settings. Model evaluation remains separate.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Existing configured selection, admission thresholds, cost/usage accounting and attempts retained. Paid model evaluation was not authorized by the run and has no new evidence."
+    },
+    {
+      "id": "P2-04",
+      "reference": "Findings interface with proof and review status documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Existing verification state machine and Investigation view. Related evidence, review history and report eligibility need stronger inspection.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Visible Chromium saved an inconclusive human disposition and reopened current and prior revisions after reload. The history preserves recorded decisions, references and evidence digests. Current report eligibility still comes from the verification authority. Promotion controls remain outside the Mission Control panel."
+    },
+    {
+      "id": "P3-01",
+      "reference": "Integrated workspace documented",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Existing Vite shell and shared session store, design system and responsive views. Add routes within the shell.",
+      "status": "IMPLEMENTED",
+      "acceptance": "New graphs, tasks, communication and traffic integrated in the existing responsive shell. Evidence, reporting, health, tools and models share the existing consolidated sections."
+    },
+    {
+      "id": "P3-02",
+      "reference": "Comparable performance measurements unverified",
+      "initial_classification": "PARTIALLY_IMPLEMENTED",
+      "authority": "Existing handler timings, real browser profiler and accounting metrics. New projection workflows need comparable measurements.",
+      "status": "IMPLEMENTED",
+      "acceptance": "Same-fixture browser readiness samples, graph transform intervals, and database-backed capture browse and import timings are retained. Full database, event latency and system telemetry comparison is open."
+    },
+    {
+      "id": "P3-03",
+      "reference": "Task archives documented. Observational timeline replay unverified",
+      "initial_classification": "ALREADY_IMPLEMENTED",
+      "authority": "Mission event history and snapshot navigation over retained records. Source retention limits apply.",
+      "status": "VERIFIED",
+      "acceptance": "Visible Chromium verified observational replay of retained model and team events, frozen replay, archived campaign rings, reconnection and revocation. The source retention bounds apply."
+    },
+    {
+      "id": "P3-04",
+      "reference": "ARTEX findings export documented. Engineering-evaluation artifacts unverified",
+      "initial_classification": "MISSING",
+      "authority": "ARIA has prior Mission Control reports. This mission requires its own HTML, JSON and CSV with reproducible evidence.",
+      "status": "VERIFIED",
+      "acceptance": "HTML evaluation, machine-readable requirement matrix, performance CSV and labelled visible Chromium screenshots generated from retained results. Independent human and live model-quality evaluation remain open."
+    },
+    {
+      "id": "BOUNDARY-01",
+      "reference": "Graph-driven execution, new interceptions and traffic replay",
+      "initial_classification": "INCOMPATIBLE",
+      "authority": "The new projections are read-only. Existing execution and capture authority stays outside them.",
+      "status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "BOUNDARY-02",
+      "reference": "Separate graph database",
+      "initial_classification": "NOT_REQUIRED",
+      "authority": "PostgreSQL records and bounded projections are sufficient for the initial implementation.",
+      "status": "NOT_APPLICABLE"
+    },
+    {
+      "id": "REFERENCE-01",
+      "reference": "Runtime quality, accessibility and end-to-end performance of ARTEX",
+      "initial_classification": "NOT_VERIFIED",
+      "authority": "Documentary review only.",
+      "status": "NOT_APPLICABLE"
+    }
+  ],
+  "entry_revision": "4240203917012c31dc3be4e1c0f407b8dc10c50b",
+  "entry_worktree_modified_files": 26,
+  "validation": {
+    "classification": "Software regression and controlled synthetic fixture validation",
+    "live_model_evaluation": "BLOCKED",
+    "human_quality_review": "NOT_STARTED",
+    "open_gates": [
+      {
+        "id": "P2-03.LIVE",
+        "status": "BLOCKED",
+        "reason": "This mission has no explicit authorized live evaluation and corresponding reserved budget."
+      },
+      {
+        "id": "P3-04.HUMAN",
+        "status": "NOT_STARTED",
+        "reason": "Independent human assessment has no new result."
+      }
+    ]
+  },
+  "validation_runs": {
+    "offline_python": "Ran 886 tests in 38.315s. Result passed.",
+    "browser": {
+      "version": "156.0.8078.4",
+      "headless": false,
+      "checks": {
+        "graphs": {
+          "status": "passed",
+          "explorationReadyMs": 148.06741299980786,
+          "graphFrameMedianMs": 16.59999999962747,
+          "graphFrameSamples": 29
+        },
+        "task_views": {
+          "status": "passed"
+        },
+        "traffic": {
+          "status": "passed"
+        },
+        "events": {
+          "status": "passed"
+        }
+      },
+      "uncaught_page_errors": [],
+      "compatibility_total": 41,
+      "compatibility_passed": 41,
+      "compatibility_uncaught_errors": [],
+      "index_sha256": "5205d0ffeeebc349ca8fe19e5eb5e4e237880d18f7a26d97b4389f1e30fee570"
+    },
+    "disposable_postgres": {
+      "migration": "0005",
+      "checks": [
+        "concurrent_review_disposition",
+        "durable_accounting_projection",
+        "durable_authorization_history",
+        "durable_campaign_archive",
+        "durable_event_paging",
+        "durable_receipt_allowlist",
+        "durable_task_trace",
+        "durable_traffic_metadata",
+        "durable_web_replay_summary",
+        "foreign_admin_denied",
+        "fresh_process_readback",
+        "migration_and_readiness",
+        "server_admission_explanation",
+        "visible_database_browser"
+      ],
+      "restart": {
+        "processes": 2,
+        "identical_task_revisions": 10,
+        "identical_capture_records": 2
+      }
+    },
+    "asset_graph_load": {
+      "status": "passed",
+      "retainedNodes": 1201,
+      "mountedNodes": 80,
+      "frameMedianMs": 16.699999999254942,
+      "frameSamples": 59,
+      "browserCpuPercent": 43.82143706557423,
+      "browserSummedRssBytes": 1169387520
+    },
+    "worker_capability_probe": {
+      "status": "unreachable",
+      "observed_at": "2026-11-19T09:22:00.162145+00:00",
+      "typed_advertisements": []
+    },
+    "retained_inspection": {
+      "offline_python": "Ran 888 tests in 40.480s. Result passed.",
+      "offline_scope": "Offline regressions excluding the four in-process vulnerability reproduction tests in tests.test_research_lab.",
+      "browser": {
+        "version": "156.0.8078.4",
+        "headless": false,
+        "checks": {
+          "graphs": {
+            "status": "passed",
+            "explorationReadyMs": 157.24129099908168,
+            "graphFrameMedianMs": 16.699999999254942,
+            "graphFrameSamples": 29
+          },
+          "task_views": {
+            "status": "passed"
+          },
+          "traffic": {
+            "status": "passed"
+          },
+          "events": {
+            "status": "passed"
+          },
+          "large_graph": {
+            "status": "passed",
+            "retainedNodes": 1201,
+            "mountedNodes": 80,
+            "frameMedianMs": 16.699999999254942,
+            "frameSamples": 59,
+            "browserCpuPercent": 40.90517742191654,
+            "browserSummedRssBytes": 1174036480
+          }
+        },
+        "uncaught_page_errors": [],
+        "compatibility_total": 41,
+        "compatibility_passed": 41,
+        "compatibility_uncaught_errors": [],
+        "index_sha256": "245374fd863fe3f0fccea930f21e5e3716a632a19a8fb87f988f1eb5f6056e70"
+      },
+      "disposable_postgres": {
+        "migration": "0005",
+        "checks": [
+          "concurrent_review_disposition",
+          "durable_accounting_projection",
+          "durable_authorization_history",
+          "durable_campaign_archive",
+          "durable_event_paging",
+          "durable_finding_history",
+          "durable_har_inspection",
+          "durable_receipt_allowlist",
+          "durable_task_trace",
+          "durable_traffic_metadata",
+          "durable_web_replay_summary",
+          "foreign_admin_denied",
+          "fresh_process_readback",
+          "migration_and_readiness",
+          "server_admission_explanation",
+          "visible_database_browser"
+        ],
+        "durable_har_inspection": {
+          "concurrent_import_deduplicated": true,
+          "encrypted_inspection": true,
+          "cross_engagement": 404,
+          "foreign_administrator": 403,
+          "model_chat_and_admin_activity_exclusion": true,
+          "two_concurrent_imports_ms": 48.189,
+          "capture_detail_ms": 22.784
+        },
+        "durable_finding_history": {
+          "ordered_revisions": [
+            2,
+            1
+          ],
+          "foreign_owner": 404,
+          "other_engagement": 404
+        },
+        "fresh_process_readback": {
+          "processes": 2,
+          "identical_task_revisions": 10,
+          "identical_capture_records": 4,
+          "identical_reviewed_preview": true
+        },
+        "visible_browser_checks": [
+          "Login against migrated PostgreSQL",
+          "Durable budget denial and model attempt redaction",
+          "Durable authorization detail and redaction",
+          "Pending web replay state survives reload without contacting the connector",
+          "Older campaign snapshot and replay",
+          "Reconstructed task dependency and missing evidence after browser reload",
+          "Durable allowlisted Burp metadata in the inspector",
+          "Sanitized archive import, duplicate acknowledgment, JSON and text body previews, and mobile inspection",
+          "Owner-only finding disposition and immutable revisions after reload"
+        ],
+        "retained_asset_ready_ms": null
+      }
+    },
+    "exploration_checkpoint": {
+      "offline_python": "Ran 888 tests in 44.327s. Result passed.",
+      "offline_scope": "Offline regressions excluding the four in-process vulnerability reproduction tests in tests.test_research_lab.",
+      "browser": {
+        "version": "156.0.8078.4",
+        "headless": false,
+        "checks": {
+          "graphs": {
+            "status": "passed",
+            "explorationReadyMs": 175.7263809995493,
+            "graphFrameMedianMs": 16.699999999254942,
+            "graphFrameSamples": 29
+          },
+          "task_views": {
+            "status": "passed"
+          },
+          "traffic": {
+            "status": "passed"
+          },
+          "events": {
+            "status": "passed"
+          },
+          "large_graph": {
+            "status": "passed",
+            "retainedNodes": 1201,
+            "mountedNodes": 80,
+            "frameMedianMs": 16.699999999254942,
+            "frameSamples": 59,
+            "browserCpuPercent": 39.00540154611492,
+            "browserSummedRssBytes": 1164791808
+          }
+        },
+        "uncaught_page_errors": [],
+        "compatibility_total": 41,
+        "compatibility_passed": 41,
+        "compatibility_uncaught_errors": [],
+        "index_sha256": "2fc1176250b4d5142f9142c9906f3f40720ff7f80cc08e97e47d2eac3135d2ad"
+      },
+      "disposable_postgres": {
+        "migration": "0005",
+        "checks": [
+          "concurrent_review_disposition",
+          "durable_accounting_projection",
+          "durable_authorization_history",
+          "durable_campaign_archive",
+          "durable_event_paging",
+          "durable_exploration_checkpoint",
+          "durable_finding_history",
+          "durable_har_inspection",
+          "durable_receipt_allowlist",
+          "durable_task_trace",
+          "durable_traffic_metadata",
+          "durable_web_replay_summary",
+          "foreign_admin_denied",
+          "fresh_process_readback",
+          "migration_and_readiness",
+          "server_admission_explanation",
+          "visible_database_browser"
+        ],
+        "durable_har_inspection": {
+          "concurrent_import_deduplicated": true,
+          "encrypted_inspection": true,
+          "cross_engagement": 404,
+          "foreign_administrator": 403,
+          "model_chat_and_admin_activity_exclusion": true,
+          "two_concurrent_imports_ms": 46.838,
+          "capture_detail_ms": 22.058
+        },
+        "durable_finding_history": {
+          "ordered_revisions": [
+            2,
+            1
+          ],
+          "foreign_owner": 404,
+          "other_engagement": 404
+        },
+        "fresh_process_readback": {
+          "processes": 2,
+          "identical_task_revisions": 10,
+          "identical_capture_records": 4,
+          "identical_reviewed_preview": true,
+          "identical_checkpoint": true
+        },
+        "durable_exploration_checkpoint": {
+          "saved_states": [
+            "observation",
+            "rejected"
+          ],
+          "foreign_admin": 403,
+          "other_engagement": 404,
+          "retention_gap_and_malformed_record": true
+        },
+        "visible_browser_checks": [
+          "Login against migrated PostgreSQL",
+          "Durable budget denial and model attempt redaction",
+          "Durable authorization detail and redaction",
+          "Pending web replay state survives reload without contacting the connector",
+          "Older campaign snapshot and replay",
+          "Reconstructed task dependency and missing evidence after browser reload",
+          "Earlier team checkpoint restored saved state and dependency links, disclosed gaps, and cleared on session switch",
+          "Durable allowlisted Burp metadata in the inspector",
+          "Sanitized archive import, duplicate acknowledgment, JSON and text body previews, and mobile inspection",
+          "Owner-only finding disposition and immutable revisions after reload"
+        ],
+        "retained_asset_ready_ms": null
+      }
+    },
+    "retained_asset_correlation": {
+      "offline_python": "Ran 888 tests in 43.508s. Result passed.",
+      "offline_scope": "Offline regressions excluding the four in-process vulnerability reproduction tests in tests.test_research_lab.",
+      "browser": {
+        "version": "156.0.8078.4",
+        "headless": false,
+        "checks": {
+          "graphs": {
+            "status": "passed",
+            "explorationReadyMs": 166.09812200113083,
+            "graphFrameMedianMs": 16.699999999254942,
+            "graphFrameSamples": 29
+          },
+          "task_views": {
+            "status": "passed"
+          },
+          "traffic": {
+            "status": "passed"
+          },
+          "events": {
+            "status": "passed"
+          },
+          "large_graph": {
+            "status": "passed",
+            "retainedNodes": 1201,
+            "mountedNodes": 80,
+            "frameMedianMs": 16.699999999254942,
+            "frameSamples": 59,
+            "browserCpuPercent": 38.89580222981803,
+            "browserSummedRssBytes": 1171849216
+          }
+        },
+        "uncaught_page_errors": [],
+        "compatibility_total": 41,
+        "compatibility_passed": 41,
+        "compatibility_uncaught_errors": [],
+        "index_sha256": "698d2460011c73d9eb02411cfecb28ecaab0b7e4996e24a43ef86279b2b7d8e2"
+      },
+      "disposable_postgres": {
+        "migration": "0005",
+        "checks": [
+          "concurrent_review_disposition",
+          "durable_accounting_projection",
+          "durable_authorization_history",
+          "durable_campaign_archive",
+          "durable_event_paging",
+          "durable_exploration_checkpoint",
+          "durable_finding_history",
+          "durable_har_inspection",
+          "durable_receipt_allowlist",
+          "durable_task_trace",
+          "durable_traffic_metadata",
+          "durable_web_replay_summary",
+          "foreign_admin_denied",
+          "fresh_process_readback",
+          "migration_and_readiness",
+          "server_admission_explanation",
+          "visible_database_browser"
+        ],
+        "durable_har_inspection": {
+          "concurrent_import_deduplicated": true,
+          "encrypted_inspection": true,
+          "cross_engagement": 404,
+          "foreign_administrator": 403,
+          "model_chat_and_admin_activity_exclusion": true,
+          "two_concurrent_imports_ms": 42.241,
+          "capture_detail_ms": 20.271
+        },
+        "durable_finding_history": {
+          "ordered_revisions": [
+            2,
+            1
+          ],
+          "foreign_owner": 404,
+          "other_engagement": 404
+        },
+        "fresh_process_readback": {
+          "processes": 2,
+          "identical_task_revisions": 10,
+          "identical_capture_records": 4,
+          "identical_reviewed_preview": true,
+          "identical_checkpoint": true
+        },
+        "durable_exploration_checkpoint": {
+          "saved_states": [
+            "observation",
+            "rejected"
+          ],
+          "foreign_admin": 403,
+          "other_engagement": 404,
+          "retention_gap_and_malformed_record": true
+        },
+        "visible_browser_checks": [
+          "Login against migrated PostgreSQL",
+          "Durable budget denial and model attempt redaction",
+          "Durable authorization detail and redaction",
+          "Pending web replay state survives reload without contacting the connector",
+          "Older campaign snapshot and replay",
+          "Reconstructed task dependency and missing evidence after browser reload",
+          "Earlier team checkpoint restored saved state and dependency links, disclosed gaps, and cleared on session switch",
+          "Durable allowlisted Burp metadata in the inspector",
+          "Sanitized archive import, duplicate acknowledgment, JSON and text body previews, and mobile inspection",
+          "Asset Graph links saved traffic and catalog records, deduplicates origins, and scopes inspection to the engagement",
+          "Owner-only finding disposition and immutable revisions after reload"
+        ],
+        "retained_asset_ready_ms": 103.073
+      }
+    }
+  }
+}

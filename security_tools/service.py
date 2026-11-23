@@ -8,6 +8,10 @@ from security_tools.adapters import encode, decode, sha256, contract_digest
 from security_tools.models import Provenance, AdapterAttestation
 
 
+# Semgrep may prefix a local rule ID with the pinned config directory.
+_DYNAMIC_PYTHON_EVALUATION_RULE_IDS = {'aria-python-eval', 'opt.aria.assets.aria-python-eval'}
+
+
 class ToolOperations:
     def __init__(self, authorization=None, jobs=None):
         from memory.execution_authorization import execution_authorization
@@ -46,6 +50,19 @@ class ToolOperations:
             request_sha256=sha256(command), registry_sha256=contract_digest(),
             output_sha256=sha256(stdout), stderr_sha256=sha256(stderr),
             image_id=stamp.image_id, declared_tool_version=stamp.declared_tool_version)
+        if adapter.name == 'semgrep':
+            review = {
+                'output_sha256': provenance.output_sha256,
+                'parser_status': output.error,
+                'observation_count': len(output.observations),
+                'truncated': output.truncated,
+            }
+            if output.error == 'none':
+                review['dynamic_python_evaluation_matches'] = sum(
+                    observation.summary in _DYNAMIC_PYTHON_EVALUATION_RULE_IDS
+                    for observation in output.observations
+                )
+            await self.jobs.store.update(result['job_id'], {'saved_source_review': review}, expected={state})
         structlog.get_logger(__name__).info('typed_tool_result', tool=adapter.name,
             capability=adapter.capability, job_id=result['job_id'], session_id=session_id,
             request_sha256=provenance.request_sha256, output_sha256=provenance.output_sha256,

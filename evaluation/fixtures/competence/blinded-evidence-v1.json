@@ -1,0 +1,102 @@
+{
+  "schema": "aria.blinded-evidence.corpus.v1",
+  "sources": {
+    "checkpoint": {
+      "path": ".local-lab/har-catalog-integrity-20261122/verification.json",
+      "sha256": "6ac40b8d20179dbcc104e2cf42f7174889752625a19ad6a0d00ee57cd67f7c56"
+    },
+    "browser": {
+      "path": ".local-lab/har-catalog-integrity-20261122/after-policy.json",
+      "sha256": "5dae7f6fded189f165f498c82df279159c9ac2fee6c123796942a935eabc8ad6"
+    },
+    "http_receipt": {
+      "path": ".local-lab/phase2-adapters/baseline-head-result.json",
+      "sha256": "f71cc02220f54e01a0ad07aad392ee55c3aff760937448aa01cb3a887df8ba43"
+    },
+    "archive": {
+      "path": "tests/fixtures/mission-synthetic.har",
+      "sha256": "fadf9370236da477c04453483216a3ed0f9f8a6bcb63c11a73c2df629a4a0f8b"
+    }
+  },
+  "cases": [
+    {
+      "id": "C01",
+      "claim": "The service enforced the intended authorization rule for the submitting identity in this exchange.",
+      "observations": [
+        {"id": "E1", "source": "archive", "location": "log.entries.0", "text": "A saved HTTP POST exchange returned 202. The archive does not identify the relevant authorization rule or the submitting identity's resource entitlement."},
+        {"id": "E2", "source": "browser", "location": "checks.durable_har_inspection", "text": "The replay inspected the same saved exchange. No second identity or application authorization decision was recorded for the exchange."}
+      ],
+      "reference": {"category": "ambiguous", "disposition": "inconclusive", "citations": ["E1"], "conflicts": [], "reason": "The HTTP outcome is compatible with more than one authorization policy."}
+    },
+    {
+      "id": "C02",
+      "claim": "The entry build accepted substituted saved HTTP archive metadata at catalog admission.",
+      "observations": [
+        {"id": "E1", "source": "checkpoint", "location": "browser.substitutedMetadataBeforeStatus", "text": "In the authenticated entry-build replay, the saved catalog text was deliberately substituted in a disposable fixture. The evidence catalog POST returned HTTP 200."},
+        {"id": "E2", "source": "checkpoint", "location": "harFixture.invalidCatalogAdmissionsBefore", "text": "A separate offline cohort of seven invalid catalog record variants recorded seven admissions in the entry build."}
+      ],
+      "reference": {"category": "clear_positive", "disposition": "supported", "citations": ["E1"], "conflicts": [], "reason": "The browser response and independent offline tally support the narrowly scoped admission claim."}
+    },
+    {
+      "id": "C03",
+      "claim": "The two fresh-process readbacks are independent observations of new HTTP exchanges.",
+      "observations": [
+        {"id": "E1", "source": "browser", "location": "checks.fresh_process_readback", "text": "Two fresh API processes read the same four saved capture IDs and returned identical preview and checkpoint digests. The readback used the retained database."},
+        {"id": "E2", "source": "browser", "location": "checks.durable_har_inspection", "text": "Concurrent import of the identical archive acknowledged the same capture ID. The retained row count for that import was one."}
+      ],
+      "reference": {"category": "reused_or_mismatched", "disposition": "rejected", "citations": ["E1"], "conflicts": [], "reason": "The two readers accessed one set of saved records. Independent readers do not constitute independent exchanges."}
+    },
+    {
+      "id": "C04",
+      "claim": "Catalog admission handled substituted HTTP archive metadata the same way in both recorded builds.",
+      "observations": [
+        {"id": "E1", "source": "checkpoint", "location": "browser.substitutedMetadataBeforeStatus", "text": "The authenticated browser catalog request for substituted saved metadata returned HTTP 200 in the entry build."},
+        {"id": "E2", "source": "browser", "location": "checks.visible_database_browser.harCatalogIntegrity", "text": "The equivalent authenticated browser catalog request for substituted saved metadata returned HTTP 409 in a later build. Its evidence ledger contained zero new records."}
+      ],
+      "reference": {"category": "contradictory", "disposition": "rejected", "citations": ["E1", "E2"], "conflicts": [["E1", "E2"]], "reason": "The results conflict with the proposed invariant across builds. Both observations remain valid in their recorded context."}
+    },
+    {
+      "id": "C05",
+      "claim": "The foreign administrator in the replay could read the saved HTTP archive capture from the owner's engagement.",
+      "observations": [
+        {"id": "E1", "source": "browser", "location": "checks.durable_har_inspection.foreign_administrator", "text": "The capture detail request while authenticated as a foreign administrator returned HTTP 403."},
+        {"id": "E2", "source": "browser", "location": "checks.durable_har_inspection.cross_engagement", "text": "An owner request using an alternate engagement and the same capture ID returned HTTP 404."}
+      ],
+      "reference": {"category": "clear_negative", "disposition": "rejected", "citations": ["E1"], "conflicts": [], "reason": "The recorded administrator request was denied. The other engagement result concerns separate scope."}
+    },
+    {
+      "id": "C06",
+      "claim": "The uploaded archive's reviewed body preview expires after seven days.",
+      "observations": [
+        {"id": "E1", "source": "browser", "location": "checks.fresh_process_readback", "text": "Two immediate fresh-process reads recovered the reviewed preview from the same saved archive record."},
+        {"id": "E2", "source": "browser", "location": "checks.durable_har_inspection", "text": "Inspection content was encrypted at rest. The retained evidence includes no elapsed-time or expiry-boundary test for that preview."}
+      ],
+      "reference": {"category": "incomplete", "disposition": "inconclusive", "citations": ["E2"], "conflicts": [], "reason": "Successful readback after restart does not establish elapsed-time availability."}
+    },
+    {
+      "id": "C07",
+      "claim": "The responding service has an exploitable vulnerability associated with the advertised software versions.",
+      "observations": [
+        {"id": "E1", "source": "http_receipt", "location": "stdout", "text": "A retained HEAD response returned HTTP 200. The Server and X-Powered-By headers each contained a product version string."},
+        {"id": "E2", "source": "http_receipt", "location": "stdout", "text": "The receipt contains only the HTTP headers. It provides no installation provenance, applicability evidence, or verification of a vulnerability."}
+      ],
+      "reference": {"category": "unsupported_vulnerability", "disposition": "inconclusive", "citations": ["E1", "E2"], "conflicts": [], "reason": "Header strings show disclosure but cannot establish software applicability or a verified weakness."}
+    },
+    {
+      "id": "C08",
+      "claim": "The retained HTTP HEAD response disclosed software version strings in its headers.",
+      "observations": [
+        {"id": "E1", "source": "http_receipt", "location": "stdout", "text": "The complete retained response contains a Server header naming a web server and its version and an X-Powered-By header naming a runtime and its version."}
+      ],
+      "reference": {"category": "clear_positive", "disposition": "supported", "citations": ["E1"], "conflicts": [], "reason": "The strings are directly recorded. The claim concerns only what the response disclosed."}
+    },
+    {
+      "id": "C09",
+      "claim": "The service issued a cookie in the retained HTTP HEAD response.",
+      "observations": [
+        {"id": "E1", "source": "http_receipt", "location": "stdout", "text": "The complete retained response header names were Date, Server, X-Powered-By, and Content-Type."}
+      ],
+      "reference": {"category": "clear_negative", "disposition": "rejected", "citations": ["E1"], "conflicts": [], "reason": "The complete header record contains no Set-Cookie field."}
+    }
+  ]
+}

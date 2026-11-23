@@ -88,8 +88,11 @@ export async function mountDensity(root: HTMLElement, records: { timestamp: stri
   }
   if (!root.isConnected) { painter.dispose(); return () => {} }
   const colors: Record<string, number> = { team: 0x39c7ad, campaign: 0xa181ff, worker: 0x6197ff,
-    approval: 0xeea758, authorization: 0xf880a7 }
-  const sources = Object.keys(colors).filter(source => records.some(record => record.source === source))
+    approval: 0xeea758, authorization: 0xf880a7, model: 0xd0ca72 }
+  const recordedSources = new Set(records.map(record => record.source))
+  const sources = [...Object.keys(colors).filter(source => recordedSources.has(source)),
+    ...[...recordedSources].filter(source => !Object.hasOwn(colors, source)).sort()]
+  const lanes = new Map(sources.map((source, index) => [source, (index + 1) * 86 / (sources.length + 1)]))
   note.textContent = (gpu && painter.renderer === 'Canvas 2D' ? 'GPU unavailable · ' : '') + painter.renderer +
     ' · Lanes in order: ' + sources.join(', ')
   root.dataset.renderer = painter.renderer
@@ -102,7 +105,7 @@ export async function mountDensity(root: HTMLElement, records: { timestamp: stri
     const width = Math.max(1, Math.round(display.getBoundingClientRect().width))
     points = records.map((record, index) => ({
       x: 10 + (end === start ? (width - 20) / 2 : ((times[index] - start) / (end - start)) * (width - 20)),
-      y: (sources.indexOf(record.source) + 1) * 86 / (sources.length + 1), color: colors[record.source], index
+      y: lanes.get(record.source) ?? 43, color: Object.hasOwn(colors, record.source) ? colors[record.source] : 0x9eacc3, index
     }))
     painter.draw(points, width, 86)
   }

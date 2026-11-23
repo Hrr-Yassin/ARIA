@@ -409,6 +409,7 @@ service checks and container-worker/Phase 2 acceptance.
 | [Worker setup](docs/worker-setup.md) · [Contract](docs/worker-contract.md) | Execution deployment, limits and cancellation guarantees |
 | [Security status](docs/security-review.md) · [Original review](technical_revow.md) | Remediation history and remaining limitations |
 | [Fedora lab](docs/fedora-lab.md) | Recorded local lab configuration and operation |
+| [ARTEX-inspired Mission Control](docs/artex-inspired-architecture.md) · [Integration evaluation](reports/artex-integration-report.html) | Owner-scoped graphs, task and evidence review, traffic metadata, measured acceptance and remaining gates |
 | [Browser validation](docs/browser-validation.md) · [Upgrade register](docs/aria-upgrade-validation.md) | Historical workflow checks and feature release gates |
 
 Historical security-remediation P0/P1/P2 labels are separate from the product

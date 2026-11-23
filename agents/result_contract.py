@@ -35,6 +35,13 @@ def normalize_unverified_result(result: AgentResult) -> AgentResult:
     return normalized
 
 
+def valid_prior_claim_indices(indices: object, claim_count: int) -> bool:
+    """Indices address the one-based order of prior claims prepared for this review."""
+    return (isinstance(indices, list) and len(indices) <= claim_count
+            and all(type(index) is int and 1 <= index <= claim_count for index in indices)
+            and len(set(indices)) == len(indices))
+
+
 def professional_result(agent, request, result, scope, evidence, capabilities):
     """Evidence is supplied by the server, never accepted from model output."""
     interpreted = (request.get('original_objective') or request.get('objective')
@@ -61,7 +68,8 @@ def professional_result(agent, request, result, scope, evidence, capabilities):
             cited = hypothesis.get('evidence_references') or []
             valid = [ref for ref in cited if ref in contract.evidence_references]
             if len(valid)!=len(cited):
-                contract.rejections.append({'code':'unknown_evidence_reference','detail':'Hypothesis cited evidence outside the owned evidence catalog'})
+                contract.rejections.append({'code':'unknown_evidence_reference',
+                    'detail':'Hypothesis cited evidence unavailable to this specialist run'})
             entry = {'description':hypothesis.get('description') or hypothesis.get('vulnerability') or hypothesis.get('finding') or hypothesis.get('title') or 'Unverified candidate',
                 'verified':False,'evidence_references':valid,
                 'prerequisites':hypothesis.get('conditions_unverified') or hypothesis.get('missing_validations') or []}

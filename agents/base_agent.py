@@ -90,7 +90,7 @@ class BaseAgent(ABC):
                              'session_id': entry.get('session_id',''),
                              'owner_id': entry.get('owner_id','')}
                             for entry in input_data.get('team_evidence', [])]
-            from memory.evidence_context import filter_owned_evidence, select_evidence
+            from memory.evidence_context import filter_owned_evidence, review_evidence_context, select_evidence
             session_owner = str(session.get('user_id') or user_id)
             evidence = filter_owned_evidence(evidence, session_id=session_id, owner_id=session_owner)
             target = str(input_data.get('target') or session.get('target') or '')
@@ -139,6 +139,10 @@ class BaseAgent(ABC):
                 result['suggested_reply']='Blocked: '+trusted['provider_error']
                 from llm.planner_errors import public_error
                 result['rejections']=[{'code':trusted['provider_error'],'detail':public_error(trusted['provider_error'])}]
+            review = review_evidence_context.get() if input_data.get('team_task') else None
+            if review is not None and 'evidence_ids' in review:
+                # Assigned inputs can exceed the bounded evidence prepared for review.
+                evidence = [entry for entry in selection.items if entry['id'] in review['evidence_ids']]
             contract = professional_result(self.agent_name, input_data, result, scope, evidence, tools)
             result = {key:value for key,value in result.items() if key not in {'react_trace','reasoning_chain','chain_of_thought','reasoning'}}
             result['verification_status'] = 'candidate_or_observation'
@@ -233,7 +237,12 @@ class BaseAgent(ABC):
         context = _agent_context.get()
         if context is None:
             return prompt, system
-        return "SERVER ENGAGEMENT CONSTRAINTS AND SAVED EVIDENCE:\n" + json.dumps(context, separators=(',', ':')) + "\nTASK:\n" + prompt, system
+        grounded = json.dumps(context, separators=(',', ':'))
+        from memory.evidence_context import review_evidence_context
+        review = review_evidence_context.get()
+        if review is not None:
+            review.setdefault('evidence_ids', set()).update(item['id'] for item in context['evidence'])
+        return "SERVER ENGAGEMENT CONSTRAINTS AND SAVED EVIDENCE:\n" + grounded + "\nTASK:\n" + prompt, system
 
     async def call_llm(self, session_id: str, user_id: str, prompt: str,
                        skill_level: str = "intermediate") -> dict:

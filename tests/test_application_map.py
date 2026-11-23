@@ -153,6 +153,18 @@ class ApplicationMapping(OfflineCase):
         row = next(row for row in self.rows.values() if hasattr(row, 'metadata_'))
         self.assertEqual(unseal(row.metadata_['sealed'])['identities'][identity]['credentials'], {})
 
+    async def test_view_of_unconfigured_map_does_not_store_a_sharing_policy(self):
+        empty = await self.store.view('engagement', 'owner')
+        self.assertEqual(empty['revision'], 0)
+        self.assertEqual(empty['policy']['provider_sharing'], 'deny')
+        with self.assertRaises(HTTPException) as error:
+            await self.store.view('engagement', 'owner', provider=True)
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(self.rows, {})
+        self.assertEqual(self.pending, {})
+        self.assertNotIn('application_mapping', getattr(self.session, 'metadata_', {}))
+        self.db.commit.assert_not_awaited()
+
     async def test_capture_reattribution_and_unselected_evidence_denied(self):
         first = await self.identity(); await self.capture(first)
         with self.assertRaises(HTTPException): await self.capture(first)

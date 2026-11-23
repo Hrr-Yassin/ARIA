@@ -109,7 +109,7 @@ function init({api, getContext}) {
     quotes=budget.tariff_quotes||{};
     const selection=budget.configured_selection;
     const tariff=budget.limits.tariffs.find(t=>selection&&t.provider===selection.provider&&t.model===selection.model)||budget.limits.tariffs[0];
-    $('team-model-provider').value=selection?selection.provider:tariff?tariff.provider:'groq';
+    $('team-model-provider').value=selection?selection.provider:tariff?tariff.provider:'openrouter';
     $('team-model-name').value=selection?selection.model:tariff?tariff.model:'';
     $('team-model-rate').value=tariff?tariff.microusd_per_million/1000000:'';
     const approvalCurrent=budget.approved_at&&budget.limits.tariffs.every(t=>t.provider!=='openrouter'||

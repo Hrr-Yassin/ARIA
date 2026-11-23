@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import shlex
 import time
 import uuid
@@ -18,6 +19,64 @@ from memory.database_models import DecisionLog, PentestSession, async_session
 TERMINAL = {'succeeded', 'failed', 'cancelled'}
 STATES = TERMINAL | {'prepared', 'dispatching', 'queued', 'running', 'cancel_requested', 'unknown'}
 log = structlog.get_logger(__name__)
+
+
+def catalogable_receipt_hashes(record: dict) -> dict[str, str]:
+    """Validate terminal status and digests before offering catalog admission."""
+    state = record.get('state')
+    if not isinstance(state, str) or state not in TERMINAL:
+        raise ValueError('Terminal worker receipt not found')
+    exit_code = record.get('exit_code')
+    if state in {'succeeded', 'failed'} and (type(exit_code) is not int or
+            (state == 'succeeded') != (exit_code == 0)):
+        raise ValueError('Worker receipt state and exit status disagree')
+    hashes = {key: record[key] for key in ('output_hash', 'stderr_hash') if record.get(key)}
+    if not hashes or any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{64}', value)
+                         for value in hashes.values()):
+        raise ValueError('Worker receipt has no valid stored output hashes')
+    return hashes
+
+
+def attested_declared_version(record: dict) -> str | None:
+    """Project a declared tool version only when its receipt bindings match."""
+    from pydantic import ValidationError
+    from security_tools.models import AdapterAttestation
+
+    if record.get('state') not in {'succeeded', 'failed'}:
+        return None
+    try:
+        attestation = AdapterAttestation.model_validate(record.get('adapter_attestation'))
+    except ValidationError:
+        return None
+    if (attestation.capability == record.get('adapter_capability')
+            and attestation.request_sha256 == record.get('adapter_request_sha256')
+            and attestation.registry_sha256 == record.get('adapter_registry_sha256')
+            and re.fullmatch(r'[0-9]+(?:\.[0-9]+)+[a-zA-Z0-9.+_-]*', attestation.declared_tool_version)):
+        return attestation.declared_tool_version
+    return None
+
+
+def saved_source_review(record: dict) -> dict | None:
+    if record.get('adapter_capability') != 'semgrep.source.scan.v1' or not attested_declared_version(record):
+        return None
+    review = record.get('saved_source_review')
+    digest = record.get('output_hash')
+    if (not isinstance(review, dict) or not isinstance(digest, str) or not re.fullmatch(r'[a-f0-9]{64}', digest)
+            or review.get('output_sha256') != digest):
+        return None
+    count = review.get('observation_count')
+    status = review.get('parser_status')
+    truncated = review.get('truncated')
+    if (type(count) is not int or not 0 <= count <= 128 or type(truncated) is not bool
+            or status not in ('none', 'invalid_output', 'tool_failed', 'timeout',
+                              'resource_exhausted', 'cancelled', 'unknown')):
+        return None
+    summary = {'parser_status': 'parsed' if status == 'none' else status,
+               'unverified_observations': count, 'truncated': truncated}
+    matches = review.get('dynamic_python_evaluation_matches')
+    if status == 'none' and type(matches) is int and 0 <= matches <= count:
+        summary['dynamic_python_evaluation_matches'] = matches
+    return summary
 
 
 class SQLJobStore:

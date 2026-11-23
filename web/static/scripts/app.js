@@ -1644,6 +1644,16 @@ async function boot() {
         setTarget(s.target || '');
         state.phase = s.phase || 'scope';
         updatePhaseUI();
+        if (window.location.hash === '#model-budget' &&
+            window.location.pathname === '/chat/' + encodeURIComponent(s.session_id)) {
+          openSettings();
+          const budget = $('model-budget');
+          budget.open = true;
+          $('team-refresh').click();
+          const summary = budget.querySelector('summary');
+          summary.focus();
+          summary.scrollIntoView({block: 'start'});
+        }
       }
     } catch {}
     await restoreChat();

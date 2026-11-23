@@ -6,7 +6,8 @@ export type Detail = (title: string, contents: Node[], backdrop?: boolean) => vo
 export type Go = (view: View) => void
 export type Lazy = (node: HTMLElement, mount: () => Promise<(() => void) | undefined>) => void
 export const labels: Record<View, string> = {
-  overview: 'Mission Control', workspace: 'Workspace', sessions: 'Sessions', agents: 'Agents', operations: 'Operations', events: 'Events',
+  'asset-graph': 'Asset Graph', 'exploration-graph': 'Exploration Graph', traffic: 'Traffic',
+  overview: 'Mission Control', workspace: 'Workspace', sessions: 'Sessions', agents: 'Agents', tasks: 'Tasks', communication: 'Communication', operations: 'Operations', events: 'Events',
   investigation: 'Investigation', analytics: 'Analytics', infrastructure: 'Infrastructure', settings: 'Settings'
 }
 
@@ -19,7 +20,10 @@ export function sourceCard(store: MissionStore, key: SourceKey, title: string, b
 export const recordFields = (record: Json, names: string[]) => fields(names.map(key => [human(key),
   Array.isArray(record[key]) ? strings(record[key]).join(', ') || 'None recorded' : typeof record[key] === 'boolean' ? (record[key] ? 'Yes' : 'No') :
     typeof record[key] === 'number' ? String(record[key]) : text(record[key], 'Not recorded')]))
-export function taskTitle(task: Json): string { return text(task.title, text(task.objective, 'Task ' + text(task.id))) }
+export function taskTitle(task: Json): string {
+  const title = text(task.title, text(task.objective, 'Task ' + text(task.id)))
+  return task.internal_review === 'challenge' && strings(task.dependencies).length ? 'Challenge · ' + title : title
+}
 export function taskState(tasks: Json[] | null): string {
   if (!tasks) return 'unknown'
   if (!tasks.length) return 'inactive'
@@ -30,7 +34,7 @@ export function taskState(tasks: Json[] | null): string {
 export function eventDetail(event: TimelineEvent, detail: Detail, advanced: boolean) {
   const data: [string, string][] = [
     ['Stage', event.stage], ['Source', { team: 'Durable team ledger', campaign: 'Campaign event ring',
-      worker: 'Worker receipt store', approval: 'Current approval queue', authorization: 'Durable authorization journal' }[event.source]],
+      worker: 'Worker receipt store', approval: 'Current approval queue', authorization: 'Durable authorization journal', model: 'Model accounting ledger' }[event.source]],
     ['Timestamp', date(event.timestamp)], ['State', human(event.state, 'Not recorded')],
     ['Reason code', text(event.reason_code, 'Not recorded')],
     ['Agent', human(event.agent, 'Not recorded')], ['Evidence references', event.evidence_ids.join(', ') || 'None recorded']
@@ -40,6 +44,8 @@ export function eventDetail(event: TimelineEvent, detail: Detail, advanced: bool
     ['Run ID', text(event.run_id, 'Not recorded')], ['Job ID', text(event.job_id, 'Not recorded')],
     ['Correlation ID', text(event.correlation_id, 'Not recorded')], ['Dependency references', event.dependency_ids.join(', ') || 'None recorded'])
   if (event.source === 'approval' || event.source === 'authorization') data.push(['Action ID', text(event.entity_id, 'Not recorded')])
+  if (event.previous_state) data.push(['Previous state', human(event.previous_state)])
+  if (event.source === 'model') data.push(['Provider', text(event.provider, 'Unknown')], ['Model', text(event.model, 'Unknown')])
   if (event.decision) data.push(['Recorded decision', human(event.decision)])
   detail(human(event.kind), [fields(data), ...(event.kind === 'authorization_consumed' ?
     [el('p', 'subtle', 'This record confirms an authorization claim. Worker outcomes are shown in the receipt history.')] : [])])
@@ -53,6 +59,8 @@ export const admissionReasons: Record<string, string> = {
   unknown_usage: 'A provider attempt had unknown usage. Accounting stopped.',
   accounting_inconsistent: 'Accounting records are inconsistent. Admission is denied.',
   accounting_stopped: 'Accounting has stopped.',
+  model_provider_sharing_denied: 'Application data policy denies provider sharing.',
+  model_provider_sharing_unavailable: 'The saved application data policy is unavailable.',
   model_tariff_missing: 'The configured model requires an approved tariff.',
   model_tariff_invalid: 'The configured OpenRouter quote requires review.'
 }

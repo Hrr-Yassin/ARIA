@@ -588,11 +588,13 @@ def compare_responses(left: bytes, right: bytes, ignore: list[str]) -> dict:
 
 
 class ApplicationMap:
-    async def _load(self, db, sid: str, owner: str):
+    async def _load(self, db, sid: str, owner: str, *, create: bool = True):
         session = await owned_engagement(db, sid, owner)
         key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:' + sid))
         row = await db.get(DecisionLog, key)
         if row is None:
+            if not create:
+                return session, None, fresh()
             row = DecisionLog(id=key, session_id=sid, user_id=owner,
                               decision_type='application_map_private', metadata_={})
             state = fresh()
@@ -696,8 +698,9 @@ class ApplicationMap:
 
     async def view(self, sid: str, owner: str, provider: bool = False) -> dict:
         async with async_session() as db:
-            _, row, state = await self._load(db, sid, owner)
-            await self._save(db, row, state)  # Persist lazy expiry on every access.
+            _, row, state = await self._load(db, sid, owner, create=False)
+            if row is not None:
+                await self._save(db, row, state)  # Persist expiry on configured maps.
             if provider and state['policy']['provider_sharing'] != 'redacted_metadata':
                 raise HTTPException(403, 'Provider sharing is disabled for this application map')
             return public(state)

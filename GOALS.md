@@ -133,3 +133,25 @@ Cycle26 follow-up: confirmed Recon/Scan prompt contradictions and incomplete-res
 ## Iteration protocol
 
 At iteration start read this file, the active phase in PLANS.md and latest PROGRESS.md checkpoint; select an unmet requirement and its required evidence. At iteration end inspect diff, run focused checks, record measured results, update status and select the next justified action. Append progress after every meaningful implementation/validation cycle. Status vocabulary: NOT_STARTED, IN_PROGRESS, IMPLEMENTED, VERIFIED, FAILED, BLOCKED, NOT_TESTED, DEFERRED_BY_OWNER. The final value is restricted to the recorded eight-hour owner decision.
+
+## ARTEX-inspired observation and evidence workspace
+
+Deliver P0–P3 as defined in the ARTEX comparison and mission matrix, using owner-scoped retained records for graphs, evidence, task and agent supervision, and traffic inspection. Record visible Chromium and disposable-service validation separately from software tests and model evaluation. Keep the previous reliability and competence checkpoints intact.
+
+The ARTEX implementation and controlled acceptance checkpoint is recorded in `PROGRESS.md` and `reports/artex-integration-matrix.json`. The remaining criteria include broader retained-source coverage and live or independent quality evaluation. The mission remains open at those gates.
+
+The retained inspection cycle adds reviewed HAR previews and immutable finding history with disposable PostgreSQL and visible Chromium evidence. Preserve the measured scope of those results when extending historical and operational coverage.
+
+The Exploration Graph restores saved team-record checkpoints by ledger sequence. The Asset Graph now links retained HTTP summaries to mapped capture and catalog records, and opens the authorized inspector. Source histories with independent clocks, durable host attribution and complete system telemetry remain open.
+
+## 2026-11-22 defensive evidence checkpoint
+
+Require bound saved HAR metadata at evidence catalog admission and report the stored application-data sharing policy in model accounting. Preserve source trust labels and human finding dispositions. Acceptance covers the catalog conflict, successful retry and durable readback with authenticated visible Chromium and disposable PostgreSQL. Independent assessment of saved-review quality remains the next evidence gate. [Architecture assessment](docs/artex-aria-comparison.md)
+
+## 2026-11-22 independent intelligence evaluation
+
+Use the frozen saved-evidence packet for independent blind assessment and compare paired ARIA outcomes only where provider receipts and case inputs reconcile. Measure coverage, agreement, false-positive rate, sufficiency, confidence, conflicts, and repeatability. Report provider requests and cost separately from fixture checks. The first packet is frozen and reproducible. Independent reviews and new DeepSeek results remain open. [Evaluation protocol](docs/competence/blinded-evidence-evaluation.md)
+
+## Authenticated saved-evidence reasoning checkpoint
+
+Measure the configured OpenRouter model through billed, receipt-bound saved review and attributed follow-up. A separate execution-disabled engagement now demonstrates two live DeepSeek V4 Flash requests under the verified $1 cap. The two-record comparison is an engineering sample. The blinded corpus still needs independent reviewer dispositions and paired results. [Run evidence](.local-lab/live-evidence-capability-20261122/verification.json)

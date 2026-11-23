@@ -10,27 +10,38 @@ from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
-from agents.result_contract import AgentResult, normalize_unverified_result
+from agents.result_contract import AgentResult, normalize_unverified_result, valid_prior_claim_indices
 from memory.database_models import ChatLog, DecisionLog, PentestSession, PentestPhase, async_session
 from memory.program_policy import owned_engagement
+from memory.traffic_observations import HAR_SOURCE, har_metadata_content, verified_har_inspection
+from security.har import HAR_CAPTURE_TYPE
 from security.redaction import redact, deployment_secrets
 
 Reference = Annotated[str, Field(min_length=1, max_length=100)]
 Criterion = Annotated[str, Field(min_length=1, max_length=2000)]
 
-State = Literal['queued', 'running', 'awaiting_review', 'blocked', 'completed', 'cancelled', 'failed']
+State = Literal['queued', 'running', 'awaiting_review', 'blocked', 'completed', 'cancelled', 'failed', 'analyzed']
 Role = Literal['recon', 'scan', 'vuln', 'web_intel', 'correlation', 'report']
 TRANSITIONS = {
     'queued': {'running', 'blocked', 'cancelled'},
-    'running': {'awaiting_review', 'blocked', 'failed', 'cancelled'},
+    'running': {'awaiting_review', 'blocked', 'failed', 'cancelled', 'analyzed'},
     'awaiting_review': {'completed', 'blocked', 'cancelled'},
     'blocked': {'queued', 'cancelled'},
-    'completed': set(), 'cancelled': set(), 'failed': set(),
+    'completed': set(), 'cancelled': set(), 'failed': set(), 'analyzed': set(),
 }
+INTERNAL_REVIEW_LIMIT = 2
+MAX_ENGAGEMENT_TASKS = 500
 
 
 class Strict(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+class PriorReviewClaim(Strict):
+    task_id: Reference
+    run_id: Reference
+    revision: int = Field(strict=True, ge=1)
+    hypothesis_index: int = Field(strict=True, ge=0)
 
 
 class TaskBudget(Strict):
@@ -50,9 +61,16 @@ class TaskSpec(Strict):
     security_questions: list[Reference] = Field(default_factory=list, max_length=20)
     phase: Literal['scope', 'reconnaissance', 'scanning', 'vulnerability_analysis', 'exploitation', 'post_exploitation', 'reporting'] | None = None
     specialty: Literal['authorization', 'authentication', 'exposure', 'input_validation', 'business_logic'] | None = None
+    internal_review: Literal['analyze', 'challenge'] | None = None
+    require_all_evidence: bool = Field(default=False, strict=True)
 
     @model_validator(mode='after')
     def specialty_questions(self):
+        if self.internal_review and (self.owner_role != 'correlation' or self.phase or
+                self.specialty or self.security_questions or not self.evidence_inputs):
+            raise ValueError('Internal reviews require correlation and saved evidence')
+        if self.require_all_evidence and not self.internal_review:
+            raise ValueError('Complete evidence is required only for saved reviews')
         if self.specialty and (not self.phase or not self.security_questions or
                 len(set(self.security_questions)) != len(self.security_questions)):
             raise ValueError('Specialist tasks require a phase and distinct security question keys')
@@ -126,11 +144,44 @@ def materialize(events: list[dict]) -> dict:
 def transition_task(task: dict, target: str, reason: str, *, internal: bool = False) -> dict:
     if target not in TRANSITIONS[task['state']]:
         raise HTTPException(409, 'Invalid task transition')
-    if target in {'running', 'awaiting_review', 'failed'} and not internal:
+    if target in {'running', 'awaiting_review', 'failed', 'analyzed'} and not internal:
         raise HTTPException(403, 'Coordinator owns execution transitions')
     if target == 'completed' and not task.get('result'):
         raise HTTPException(409, 'Review a collected specialist result before completion')
     return {**task, 'state': target, 'reason': public(reason), 'revision': task['revision'] + 1}
+
+
+def task_id_for_request(sid: str, request_id: uuid.UUID) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-task:{sid}:{request_id}'))
+
+
+def saved_review_challenge(parent: dict) -> CreateTask | None:
+    if parent.get('state') != 'analyzed' or parent.get('internal_review') != 'analyze':
+        return None
+    claims = (parent.get('result') or {}).get('hypotheses', [])
+    refs = list(dict.fromkeys(ref for claim in claims for ref in claim.get('evidence_references', [])))
+    if not refs:
+        return None
+    task_id = parent['id']
+    request_id = uuid.uuid5(uuid.NAMESPACE_URL, f'aria-internal-challenge:{task_id}')
+    comparison = parent.get('require_all_evidence', False)
+    return CreateTask(request_id=request_id, task=TaskSpec(
+        owner_role='correlation', internal_review='challenge', dependencies=[task_id],
+        evidence_inputs=parent['evidence_inputs'] if comparison else refs, require_all_evidence=comparison,
+        objective=parent['objective'], expected_output='Evidence-linked counterinterpretation',
+        completion_criteria=['Identify uncertainty'], budget=parent['budget']))
+
+
+def _task_fields(task: TaskSpec) -> dict:
+    excluded = {key for key in ('phase', 'internal_review') if getattr(task, key) is None}
+    if not task.require_all_evidence:
+        excluded.add('require_all_evidence')
+    return task.model_dump(exclude=excluded)
+
+
+def _queued_task(sid: str, owner: str, task_id: str, fields: dict) -> dict:
+    return {**fields, 'id': task_id, 'session_id': sid, 'owner_id': owner, 'state': 'queued',
+            'revision': 1, 'attempts': 0, 'result': None, 'created_at': datetime.now(timezone.utc).isoformat()}
 
 
 def completion_readiness(task: dict, state: dict) -> dict:
@@ -183,12 +234,17 @@ class TeamStore:
             return {'events': events, 'cursor': events[-1]['sequence'] if events else after}
 
     async def event_page(self, sid: str, owner: str, after: int | None, limit: int,
-                         *, before: int | None = None) -> tuple[list[dict], bool]:
+                         *, before: int | None = None, entity: tuple[str, str] | None = None) -> tuple[list[dict], bool]:
         """Return the latest page or older-cursor increments without materializing the ledger."""
         async with async_session() as db:
             sequence = DecisionLog.metadata_['sequence'].as_integer()
             query = select(DecisionLog.metadata_).where(DecisionLog.session_id == sid,
                 DecisionLog.user_id == owner, DecisionLog.decision_type == 'team_event')
+            if entity is not None:
+                collection, entity_id = entity
+                query = query.join(PentestSession, PentestSession.id == DecisionLog.session_id).where(
+                    PentestSession.user_id == owner, DecisionLog.metadata_['collection'].as_string() == collection,
+                    DecisionLog.metadata_['entity_id'].as_string() == entity_id)
             if after is None:
                 if before is not None:
                     query = query.where(sequence < before)
@@ -197,7 +253,39 @@ class TeamStore:
                 query = query.where(sequence > after).order_by(sequence, DecisionLog.id)
             records = (await db.execute(query.limit(limit + 1))).scalars().all()
             page = records[:limit]
-            return (page[::-1] if after is None else page), len(records) > limit
+            page = page[::-1] if after is None else page
+            if any(not isinstance(record, dict) for record in page):
+                raise HTTPException(503, 'Saved team events are unavailable')
+            return [record for record in page if isinstance(record, dict)], len(records) > limit
+
+    async def task_trace(self, sid: str, owner: str, task_id: str) -> dict:
+        """Read the 50 most recent retained revisions for an owned task."""
+        records, truncated = await self.event_page(sid, owner, None, 50, entity=('tasks', task_id))
+        if not records:
+            raise HTTPException(404, 'Task history unavailable')
+        revisions = []
+        for event in records:
+            task = event['data']
+            run_id = task.get('run_id')
+            # A later transition can carry the same result. Only the original
+            # collection event identifies a newly recorded specialist result.
+            result_event = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-team:{sid}:{run_id}:result')) if run_id else None
+            claim_event = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-team:{sid}:{run_id}')) if run_id else None
+            result = task.get('result') if result_event == event['id'] else None
+            revisions.append({
+                'event_id': event['id'], 'sequence': event['sequence'], 'timestamp': event['timestamp'],
+                'revision': task['revision'], 'state': task['state'], 'role': task['owner_role'],
+                'run_id': run_id, 'reason': task.get('reason', '')[:300],
+                'dependency_ids': task.get('dependencies', []),
+                'dependencies_at_claim': task.get('dependencies_at_claim') if claim_event == event['id'] else None,
+                'assigned_evidence_ids': task.get('evidence_inputs', []),
+                'prepared_review_evidence': task.get('prepared_review_evidence') if result is not None else None,
+                'result_evidence_ids': result.get('evidence_references', []) if result is not None else None,
+                'rejections': [entry['detail'][:300] for entry in (result.get('rejections') or [])[:20]
+                               if isinstance(entry, dict) and isinstance(entry.get('detail'), str)]
+                              if result is not None else None,
+            })
+        return {'task_id': task_id, 'revisions': revisions, 'truncated': truncated}
 
     async def task_summary(self, sid: str, owner: str, task_ids) -> dict:
         """Bounded state counts for the given run-linked specialist tasks."""
@@ -222,7 +310,8 @@ class TeamStore:
                 'task_ids': ids, 'active': active, 'total': len(ids),
                 'available': True}
 
-    async def mutate(self, sid: str, owner: str, request_id: str, operation: dict, build) -> dict:
+    async def mutate(self, sid: str, owner: str, request_id: str, operation: dict, build, *,
+                     enqueue_review_challenge: bool = False) -> dict:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             events = await self._events(db, sid)
@@ -240,8 +329,27 @@ class TeamStore:
                      'timestamp': datetime.now(timezone.utc).isoformat(), 'actor': owner}
             db.add(DecisionLog(id=event_id, session_id=sid, user_id=owner,
                                decision_type='team_event', metadata_=event))
-            await db.commit()  # This immutable event is also the durable UI outbox.
+            if enqueue_review_challenge:
+                self._append_review_challenge(db, sid, owner, state, event)
+            await db.commit()  # These immutable events also form the durable UI outbox.
             return {**event, 'duplicate': False}
+
+    def _append_review_challenge(self, db, sid: str, owner: str, state: dict, result_event: dict) -> None:
+        """Keep a cited result and its queued follow-up in the same transaction."""
+        if len(state['tasks']) >= MAX_ENGAGEMENT_TASKS:
+            return
+        proposal = saved_review_challenge(result_event['data'])
+        if proposal is None:
+            return
+        task_id = task_id_for_request(sid, proposal.request_id)
+        if task_id in state['tasks'] or any(ref not in state['evidence'] for ref in proposal.task.evidence_inputs):
+            return
+        task_data = _task_fields(proposal.task)
+        event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-team:{sid}:{proposal.request_id}'))
+        event = {**result_event, 'id': event_id, 'sequence': result_event['sequence'] + 1,
+                 'entity_id': task_id, 'data': public(_queued_task(sid, owner, task_id, task_data)),
+                 'fingerprint': digest({'create': task_data})}
+        db.add(DecisionLog(id=event_id, session_id=sid, user_id=owner, decision_type='team_event', metadata_=event))
 
     def _references(self, state: dict, references: list[str], collection='evidence') -> None:
         if any(ref not in state[collection] for ref in references):
@@ -271,19 +379,19 @@ class TeamStore:
 
     async def _create(self, sid: str, owner: str, body: CreateTask,
                       internal: dict) -> dict:
-        task_data = body.task.model_dump(exclude={'phase'} if body.task.phase is None else set())
+        task_data = _task_fields(body.task)
+        if internal and body.task.internal_review:
+            raise HTTPException(422, 'Campaign tasks cannot be internal reviews')
         if set(internal) & set(task_data):
             raise ValueError('Internal task metadata conflicts with the task contract')
         task_data.update(internal)
         async def build(db, session, state):
-            if len(state['tasks']) >= 500:
+            if len(state['tasks']) >= MAX_ENGAGEMENT_TASKS:
                 raise HTTPException(409, 'Engagement task limit reached')
             self._references(state, body.task.dependencies, 'tasks')
             self._references(state, body.task.evidence_inputs)
-            task_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-task:{sid}:{body.request_id}'))
-            return 'tasks', task_id, {**task_data, 'id': task_id, 'session_id': sid,
-                'owner_id': owner, 'state': 'queued', 'revision': 1, 'attempts': 0, 'result': None,
-                'created_at': datetime.now(timezone.utc).isoformat()}
+            task_id = task_id_for_request(sid, body.request_id)
+            return 'tasks', task_id, _queued_task(sid, owner, task_id, task_data)
         return await self.mutate(sid, owner, str(body.request_id), {'create': task_data}, build)
 
     async def migrate_task(self, sid: str, owner: str, task_id: str, body: MigrateTask) -> dict:
@@ -291,6 +399,8 @@ class TeamStore:
             task = state['tasks'].get(task_id)
             if not task:
                 raise HTTPException(404, 'Task not found')
+            if task.get('internal_review'):
+                raise HTTPException(409, 'Internal reviews cannot acquire a protected phase')
             if task['revision'] != body.expected_revision:
                 raise HTTPException(409, 'Task changed; reload before migration')
             if task['state'] in {'running', 'cancelled', 'failed'}:
@@ -344,6 +454,9 @@ class TeamStore:
                 raise HTTPException(404, 'Task not found')
             if task['revision'] != body.expected_revision:
                 raise HTTPException(409, 'Task changed; reload before reviewing')
+            if (task.get('internal_review') and body.state == 'queued'
+                    and task['attempts'] >= task['budget']['max_attempts']):
+                raise HTTPException(409, 'Task attempt budget exhausted')
             updated = transition_task(task, body.state, body.reason)
             if body.state == 'completed':
                 # Snapshot the exact evidence at review; later coverage edits do not
@@ -357,27 +470,70 @@ class TeamStore:
             return 'tasks', task_id, updated
         return await self.mutate(sid, owner, str(body.request_id), {'task': task_id, **body.model_dump(mode='json')}, build)
 
-    async def claim(self, sid: str, owner: str, task_id: str, request_id: str) -> dict:
+    async def claim(self, sid: str, owner: str, task_id: str, request_id: str, *,
+                    internal_batch: bool = False) -> dict:
         async def build(db, session, state):
             task = state['tasks'].get(task_id)
             if not task:
                 raise HTTPException(404, 'Task not found')
             if task['state'] != 'queued':
                 raise HTTPException(409, 'Only queued tasks can be delegated')
-            if any(state['tasks'][ref]['state'] != 'completed' for ref in task['dependencies']):
+            internal_review = task.get('internal_review')
+            if bool(internal_review) != internal_batch or (internal_batch and task.get('campaign_id')):
+                raise HTTPException(409, 'Task belongs to a different execution mode')
+            dependencies = [state['tasks'][ref] for ref in dict.fromkeys(task['dependencies'])]
+            if any(dep['state'] != 'completed' and not (
+                    internal_review and dep.get('internal_review') and dep['state'] == 'analyzed')
+                   for dep in dependencies):
                 raise HTTPException(409, 'Dependencies require completed human review')
+            if internal_review and sum(
+                    entry['state'] == 'running' and bool(entry.get('internal_review'))
+                    for entry in state['tasks'].values()) >= INTERNAL_REVIEW_LIMIT:
+                raise HTTPException(409, 'Internal review concurrency limit reached')
             if task['attempts'] >= task['budget']['max_attempts']:
                 raise HTTPException(409, 'Task attempt budget exhausted')
             updated = transition_task(task, 'running', 'Delegated to specialist', internal=True)
-            updated.update(attempts=task['attempts'] + 1, run_id=request_id)
+            updated.update(attempts=task['attempts'] + 1, run_id=request_id, result=None,
+                           prepared_review_evidence=None,
+                           dependencies_at_claim=[{'task_id': dependency['id'], 'role': dependency['owner_role'],
+                               'revision': dependency['revision'], 'run_id': dependency.get('run_id')}
+                               for dependency in dependencies])
+            updated.pop('prepared_review_claims', None)
             return 'tasks', task_id, updated
-        return await self.mutate(sid, owner, request_id, {'claim': task_id}, build)
+        operation: dict[str, str | bool] = {'claim': task_id}
+        if internal_batch:
+            operation['internal_batch'] = True
+        return await self.mutate(sid, owner, request_id, operation, build)
 
-    async def collect(self, sid: str, owner: str, task_id: str, run_id: str, result: AgentResult) -> dict:
+    def _check_prior_review_claims(self, task: dict, state: dict, claims: list[PriorReviewClaim],
+                                   evidence: list[str]) -> None:
+        if task.get('internal_review') != 'challenge' or len(claims) > 10:
+            raise HTTPException(422, 'Prior claim references require a challenge review')
+        snapshot = {entry['task_id']: entry for entry in task['dependencies_at_claim']}
+        selected = set(evidence)
+        for claim in claims:
+            dependency = snapshot.get(claim.task_id)
+            producer = state['tasks'].get(claim.task_id)
+            if (not dependency or not producer or not producer.get('internal_review')
+                    or dependency['revision'] != claim.revision or producer['revision'] != claim.revision
+                    or dependency.get('run_id') != claim.run_id or producer.get('run_id') != claim.run_id):
+                raise HTTPException(422, 'Prior claim does not match the assigned dependency revision')
+            hypotheses = (producer.get('result') or {}).get('hypotheses', [])
+            if claim.hypothesis_index >= len(hypotheses):
+                raise HTTPException(422, 'Prior claim was not retained by its producer')
+            refs = hypotheses[claim.hypothesis_index].get('evidence_references', [])
+            if not refs or not selected.issuperset(refs):
+                raise HTTPException(422, 'Prior claim cites evidence absent from the prepared context')
+
+    async def collect(self, sid: str, owner: str, task_id: str, run_id: str, result: AgentResult, *,
+                      prepared_review_evidence: list[str] | None = None,
+                      prepared_review_claims: list[PriorReviewClaim] | None = None) -> dict:
         # Storage is the trust boundary.  Even a direct caller cannot persist
         # an LLM observation or hypothesis as verified; worker receipts remain
         # separately cataloged with their own provenance.
         normalized = normalize_unverified_result(result)
+        prior_claims = prepared_review_claims or []
+        prepared_claim_records = [claim.model_dump() for claim in prior_claims]
         async def build(db, session, state):
             task = state['tasks'].get(task_id)
             if not task or task['state'] != 'running' or task['run_id'] != run_id:
@@ -395,11 +551,39 @@ class TeamStore:
                     raise HTTPException(422, 'Unattributed conclusions require explicit uncertainty')
             if not normalized.evidence_references and not normalized.uncertainty:
                 raise HTTPException(422, 'Result requires evidence or explicit uncertainty')
+            for hypothesis in normalized.hypotheses:
+                indices = hypothesis.get('prior_claim_indices', [])
+                if (not valid_prior_claim_indices(indices, len(prior_claims)) or
+                        (indices and not hypothesis.get('evidence_references'))):
+                    raise HTTPException(422, 'Interpretation cites an unprepared prior claim')
             target = 'blocked' if normalized.status == 'blocked' else 'awaiting_review'
+            if task.get('internal_review'):
+                if prepared_review_evidence is None or normalized.proposed_actions or normalized.status == 'proposed':
+                    raise HTTPException(422, 'Internal reviews require prepared evidence and analysis only')
+                if normalized.status == 'analysis':
+                    if task.get('require_all_evidence') and set(prepared_review_evidence) != set(task['evidence_inputs']):
+                        raise HTTPException(422, 'Comparison requires all assigned evidence to be prepared')
+                    target = 'analyzed'
             updated = transition_task(task, target, 'Specialist result collected', internal=True)
             updated['result'] = normalized.model_dump()
+            if prepared_review_evidence is not None:
+                if (task['owner_role'] not in {'correlation', 'report'} or
+                        not set(prepared_review_evidence).issubset(task['evidence_inputs'])):
+                    raise HTTPException(422, 'Prepared review evidence must belong to the review task')
+                if not set(normalized.evidence_references).issubset(prepared_review_evidence):
+                    raise HTTPException(422, 'Review result cites evidence absent from its prepared context')
+                updated['prepared_review_evidence'] = prepared_review_evidence
+            if prior_claims:
+                self._check_prior_review_claims(task, state, prior_claims, prepared_review_evidence or [])
+                updated['prepared_review_claims'] = prepared_claim_records
             return 'tasks', task_id, updated
-        return await self.mutate(sid, owner, run_id + ':result', {'collect': task_id, 'result': normalized.model_dump()}, build)
+        operation = {'collect': task_id, 'result': normalized.model_dump()}
+        if prepared_review_evidence is not None:
+            operation['prepared_review_evidence'] = prepared_review_evidence
+        if prior_claims:
+            operation['prepared_review_claims'] = prepared_claim_records
+        return await self.mutate(sid, owner, run_id + ':result', operation, build,
+                                 enqueue_review_challenge=True)
 
     async def block(self, sid: str, owner: str, task_id: str, run_id: str, reason: str, *, failed: bool = False) -> dict:
         async def build(db, session, state):
@@ -417,24 +601,57 @@ class TeamStore:
                 if not row:
                     raise HTTPException(404, 'Owned evidence not found')
                 data = row.data or {}
-                hashes = {'content_sha256': hashlib.sha256((row.content or '').encode()).hexdigest()}
+                if not isinstance(data, dict):
+                    raise HTTPException(409, 'Saved evidence metadata is unavailable')
+                content = row.content or ''
+                provenance = data.get('source', 'manual_unverified')
+                is_har = row.msg_type == HAR_CAPTURE_TYPE or provenance == HAR_SOURCE
+                if is_har:
+                    retained = data.get('summary')
+                    if (row.msg_type != HAR_CAPTURE_TYPE or provenance != HAR_SOURCE or not isinstance(retained, dict)
+                            or verified_har_inspection(sid, body.source_id, retained, data.get('sealed_inspection')) is None
+                            or content != har_metadata_content(body.source_id, retained)):
+                        raise HTTPException(409, {'code': 'har_integrity_invalid',
+                                                  'message': 'Saved HAR capture failed integrity validation'})
+                hashes = {'content_sha256': hashlib.sha256(content.encode()).hexdigest()}
                 if row.msg_type == 'burp_evidence':
                     hashes['capture_sha256'] = data['digest']
-                source_time, summary = row.created_at.isoformat(), public((row.content or '')[:2000])
-                job_id = data.get('job_id')
-                provenance = data.get('source', 'manual_unverified')
+                source_time, summary = row.created_at.isoformat(), public(content[:2000])
+                job_id = None if is_har else data.get('job_id')
             else:
-                from memory.worker_jobs import SQLJobStore, TERMINAL
+                from memory.worker_jobs import (
+                    SQLJobStore, TERMINAL, attested_declared_version, catalogable_receipt_hashes,
+                    saved_source_review,
+                )
                 row = (await db.execute(select(DecisionLog).where(DecisionLog.session_id == sid,
                     DecisionLog.id == SQLJobStore.key(body.source_id),
                     DecisionLog.decision_type == 'worker_job'))).scalar_one_or_none()
-                if not row or row.metadata_['state'] not in TERMINAL:
+                if not row or not isinstance(row.metadata_, dict):
                     raise HTTPException(404, 'Terminal worker receipt not found')
                 data = row.metadata_
-                hashes = {key: data[key] for key in ('output_hash', 'stderr_hash') if data.get(key)}
-                if not hashes:
-                    raise HTTPException(409, 'Worker receipt has no stored output hashes')
-                source_time, summary = row.created_at.isoformat(), f"Worker observation: {data['state']}; exit {data.get('exit_code')}"
+                state_name = data.get('state')
+                if not isinstance(state_name, str) or state_name not in TERMINAL:
+                    raise HTTPException(404, 'Terminal worker receipt not found')
+                exit_code = data.get('exit_code')
+                try:
+                    hashes = catalogable_receipt_hashes(data)
+                except ValueError as error:
+                    raise HTTPException(409, str(error)) from None
+                exit_status = str(exit_code) if type(exit_code) is int else 'not recorded'
+                source_time, summary = row.created_at.isoformat(), f'Worker observation: {state_name}; exit {exit_status}'
+                version = attested_declared_version(data)
+                capability = data.get('adapter_capability')
+                if version and isinstance(capability, str) and re.fullmatch(r'[a-z0-9_.-]{1,100}', capability):
+                    summary += f'; capability {capability}; attested declared version {version}'
+                review = saved_source_review(data)
+                if review:
+                    parser = review['parser_status'].replace('_', ' ')
+                    summary += f". Saved source review: {parser}; {review['unverified_observations']} unverified observations"
+                    if 'dynamic_python_evaluation_matches' in review:
+                        summary += f"; {review['dynamic_python_evaluation_matches']} dynamic Python evaluation rule matches"
+                    summary += '; output truncated.' if review['truncated'] else '.'
+                else:
+                    summary += '. Receipt metadata only.'
                 job_id, provenance = body.source_id, 'worker_receipt'
             eid = str(uuid.uuid5(uuid.NAMESPACE_URL, f'aria-evidence:{sid}:{body.source_kind}:{body.source_id}'))
             existing = state['evidence'].get(eid)

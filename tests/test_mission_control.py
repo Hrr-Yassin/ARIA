@@ -83,12 +83,14 @@ class MissionControlTests(OfflineCase):
         usage = {'calls': 15, 'reserved_tokens': 196074, 'tasks': {'private': private},
                  'reported_tokens': 'invalid', 'stop_reason': [private]}
         # The public read must survive malformed retained diagnostic fields.
+        admission = admission_snapshot({}, ModelLimits(), self.model)
+        admission.update(state='blocked', reasons=['model_provider_sharing_denied'])
         budget = {'limits': {**ModelLimits().model_dump(), 'private': private}, 'configured_selection': self.model,
-                  'admission': admission_snapshot({}, ModelLimits(), self.model),
+                  'admission': admission,
                   'tariff_quotes': {'internal': private}, 'usage': usage, 'attempts_limit': 100,
                   'attempts': [{'id': 'own-attempt', 'session_id': SID, 'owner': private, 'timestamp': TS,
-                                'provider': 'openrouter', 'model': 'vendor/review-model', 'state': 'failed',
-                                'error_code': private, 'provider_usage': {'cost': '0.000021', 'raw': private},
+                                'provider': 'openrouter', 'model': 'vendor/requested-model', 'state': 'failed',
+                                'error_code': private, 'provider_usage': {'cost': '0.000021', 'model': 'vendor/review-model', 'raw': private},
                                 'timings': {'pool_attempt_ms': 32.5, 'provider_attempt_ms': 10**400, 'response_debug': private},
                                 'input_tokens': None, 'output_tokens': 4, 'content': private},
                                {'id': 'foreign-attempt', 'session_id': 'other-session', 'timestamp': TS},
@@ -101,12 +103,15 @@ class MissionControlTests(OfflineCase):
         self.assertNotIn(private, response.text)
         data = response.json()
         self.assertEqual(data['session_id'], SID)
+        self.assertEqual(data['admission']['reasons'], ['model_provider_sharing_denied'])
         self.assertEqual(data['usage']['calls'], 15)
         self.assertIsNone(data['usage']['reported_tokens'])
         self.assertEqual(data['omitted_attempts'], 2)
         self.assertEqual([item['id'] for item in data['attempts']], ['own-attempt'])
         attempt = data['attempts'][0]
         self.assertIsNone(attempt['error_code'])
+        self.assertEqual(attempt['model'], 'vendor/requested-model')
+        self.assertEqual(attempt['provider_reported_model'], 'vendor/review-model')
         self.assertEqual(attempt['output_tokens'], 4)
         self.assertEqual(attempt['provider_usage'], {'cost': '0.000021'})
         self.assertEqual(attempt['timings']['pool_attempt_ms'], 32.5)
@@ -199,6 +204,39 @@ class MissionControlTests(OfflineCase):
         self.assertEqual(data['commands'][0]['http_status'], 503)
         self.assertIsNone(data['commands'][0]['duration_ms'])
         self.assertNotIn('fixture-secret-', response.text)
+
+    async def test_worker_receipt_exposes_only_bound_typed_version(self):
+        from api.routers.mission import recent_worker_receipts
+        created = datetime.fromisoformat(TS)
+        capability = 'semgrep.source.scan.v1'
+        attestation = {'capability': capability, 'request_sha256': 'a' * 64, 'registry_sha256': 'b' * 64,
+                       'image_id': 'sha256:' + 'c' * 64, 'binary_sha256': 'd' * 64,
+                       'declared_tool_version': '1.99.0'}
+        job = {'job_id': 'job-valid', 'state': 'succeeded', 'adapter_capability': capability,
+               'adapter_request_sha256': 'a' * 64, 'adapter_registry_sha256': 'b' * 64,
+               'adapter_attestation': attestation, 'stdout': 'private-output', 'exit_code': 0, 'output_hash': 'e' * 64,
+               'saved_source_review': {'output_sha256': 'e' * 64, 'parser_status': 'none',
+                                       'observation_count': 1, 'truncated': False,
+                                       'dynamic_python_evaluation_matches': 1}}
+        database = AsyncMock()
+        database.execute.return_value = Mock()
+        database.execute.return_value.all.return_value = [
+            (created, job), (created, {**job, 'job_id': 'job-invalid', 'adapter_request_sha256': '0' * 64, 'exit_code': 2}),
+            (created, {'job_id': 'legacy', 'state': 'succeeded'})]
+        context = AsyncMock()
+        context.__aenter__.return_value = database
+        with patch('api.routers.mission.async_session', return_value=context):
+            receipts = await recent_worker_receipts(SID, OWNER, 100)
+        self.assertEqual([item.attested_declared_version for item in receipts], ['1.99.0', None, None])
+        self.assertEqual([item.capability for item in receipts], [capability, capability, None])
+        self.assertEqual([item.catalog_eligible for item in receipts], [True, False, False])
+        self.assertEqual(receipts[0].source_review.model_dump(), {
+            'parser_status': 'parsed', 'unverified_observations': 1, 'truncated': False,
+            'dynamic_python_evaluation_matches': 1})
+        self.assertIsNone(receipts[1].source_review)
+        self.assertEqual(receipts[1].catalog_issue, 'Worker receipt state and exit status disagree')
+        self.assertNotIn('private-output', str(receipts))
+        self.assertNotIn('binary_sha256', str(receipts))
 
     async def test_operations_projects_durable_authorization_history_without_receipts(self):
         created = datetime.fromisoformat(TS)

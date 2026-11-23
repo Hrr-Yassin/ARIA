@@ -63,25 +63,35 @@ def review_handoff(claims: list[dict], evidence: list[dict]) -> dict:
                            'Distinct evidence IDs or specialist agreement cannot establish independent reproduction.']}
 
 
-def build_handoff(entries: list[dict], evidence: list[dict], target: str) -> dict:
+def build_handoff(entries: list[dict], evidence: list[dict], target: str, *,
+                  require_selected_evidence: bool = False) -> dict:
     """Preserve recent analyst/source identity and label every assertion unverified."""
+    selected_ids = {entry['id'] for entry in evidence}
     claims=[]
     omitted=0
+    omitted_sources = 0
     for entry in entries[-20:]:
         metadata=entry.get('metadata') or {}
         if metadata.get('target') and metadata['target']!=target:
             omitted+=1
             continue
+        sources = metadata.get('evidence_references') or []
+        if require_selected_evidence and (not isinstance(sources, list) or not sources or
+                any(not isinstance(ref, str) or ref not in selected_ids for ref in sources)):
+            omitted_sources += 1
+            continue
         claims.append({'id':str(entry.get('id','unknown'))[:100],
                        'agent':str(entry.get('agent','unknown'))[:40],
                        'text':str(redact(entry.get('content','')))[:1000],
-                       'evidence_references':metadata.get('evidence_references') or [],
+                       'evidence_references':sources,
                        'assertions':metadata.get('assertions') or {},
                        'verified':False, 'claimed_verified':metadata.get('verified') is True,
                        'provenance':'unverified_agent_assertion'})
     result={'claims':claims,'review':review_handoff(claims,evidence),
             'omitted_other_target':omitted,'omitted_older_entries':max(0,len(entries)-20),
             'authority':'Untrusted attributed analyst assertions; not execution authority or independent evidence'}
+    if require_selected_evidence:
+        result['omitted_unavailable_sources'] = omitted_sources
     # Retained text is deliberately bounded separately from source evidence.
     if len(json.dumps(result).encode())>40000:
         raise ValueError('Handoff context exceeds byte budget')

@@ -60,6 +60,24 @@ def sources(stage):
             if path.is_file() and path.name != 'mission_report.py'}
 
 
+def with_staged_dashboard(application, assets: Path):
+    from starlette.responses import FileResponse
+    from starlette.staticfiles import StaticFiles
+
+    static = StaticFiles(directory=assets)
+
+    async def serve(scope, receive, send):
+        if scope['type'] == 'http':
+            path = scope['path']
+            if path == '/dashboard':
+                return await FileResponse(assets / 'index.html')(scope, receive, send)
+            if path.startswith('/static/mission/'):
+                return await static({**scope, 'path': path[len('/static/mission'):]}, receive, send)
+        return await application(scope, receive, send)
+
+    return serve
+
+
 async def sign_in(page, base, mission=False):
     await page.goto(base + ("/login?next=mission" if mission else "/login"))
     await page.get_by_label("Username").fill(OWNER)

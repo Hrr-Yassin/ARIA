@@ -16,7 +16,7 @@ from api.auth import authenticate_socket_token
 from config.settings import settings
 from llm.base_llm import response_schema
 from llm.engagement_budget import engagement_context, model_accounting
-from llm.pool_manager import pool_manager
+from llm.pool_manager import openrouter_only, pool_manager
 from memory.database_models import async_session, engine, PentestSession, UserAPIKey
 
 SID = '1f2e2cd2-c37d-4c00-a1ba-5134705f89dd'
@@ -29,6 +29,8 @@ def verify_receipt(attempt: dict, *, require_success: bool = True) -> dict:
     assert attempt['state'] in {'succeeded', 'failed'}
     if require_success:
         assert attempt['state'] == 'succeeded'
+    assert attempt['provider'] == 'openrouter'
+    assert attempt['model'] == 'deepseek/deepseek-v4-flash'
     assert usage.get('model') == 'deepseek/deepseek-v4-flash'
     assert usage.get('id') and usage.get('provider')
     for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
@@ -72,6 +74,14 @@ async def generation_receipt(owner: str, request_id: str) -> dict:
 
 
 async def run(stage: str):
+    token = openrouter_only.set(True)
+    try:
+        await _run(stage)
+    finally:
+        openrouter_only.reset(token)
+
+
+async def _run(stage: str):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / (stage + '.json')
     if path.exists():

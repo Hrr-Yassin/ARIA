@@ -4,6 +4,7 @@ import { badge, button, el, empty, icon, link } from './dom'
 import { labels, overview, type Detail, type Go, type Lazy } from './panels'
 import { MissionStore, views, type View } from './store'
 import { agents, analytics, defaultFilters, events, infrastructure, investigation, operations, sessions, settings } from './views'
+import { knowledgeView } from './knowledge-view'
 import { workspace, syncWorkspace } from './workspace'
 import { profilePanel } from './profiles'
 
@@ -111,8 +112,13 @@ const subtitles: Record<View, string> = {
   workspace: 'Research chat, proposal review, and existing operational settings',
   sessions: 'Find and organize engagement records',
   agents: 'Recorded specialist assignments, dependencies, and evidence',
+  tasks: 'Review task state, dependencies, and retained revisions',
+  communication: 'Inspect recorded coordination and evidence handoffs',
   operations: 'Worker receipts, pending review, and containment',
   events: 'Search and replay records from retained event sources',
+  'asset-graph': 'Inspect retained assets and their evidence',
+  'exploration-graph': 'Follow task dependencies and evidence relationships',
+  traffic: 'Inspect retained requests and responses by capture source',
   investigation: 'Review evidence, findings, topology, and reports',
   analytics: 'Model reservations, measured usage, and recorded outcomes',
   infrastructure: 'Service readiness and advertised worker capabilities',
@@ -171,6 +177,11 @@ function render() {
   const replayAccessLost = store.eventsDenied || (!filters.replay?.campaignId && store.slot('operations').state === 'denied')
   if (filters.replay && (current !== 'events' || archiveChanged || replayAccessLost)) filters.replay = null
   if (current === 'events' && (archiveChanged || replayAccessLost) && inspector.open) inspector.close()
+  if (current === 'investigation' && store.slot('verification').state === 'denied' && inspector.open) inspector.close()
+  if (current === 'exploration-graph' && store.teamCheckpoint?.state === 'denied' && inspector.open) inspector.close()
+  if (inspector.open && (current === 'asset-graph' || current === 'exploration-graph' || current === 'traffic' ||
+      current === 'tasks' || current === 'communication') && (store.slot('team').state === 'denied' ||
+      (current === 'asset-graph' || current === 'traffic') && store.slot('traffic').state === 'denied')) inspector.close()
   title.textContent = labels[current]
   subtitle.textContent = subtitles[current]
   document.title = 'ARIA · ' + labels[current]
@@ -222,6 +233,7 @@ function render() {
     store.stream, store.streamGap, store.events(), store.feed.team?.state, store.feed.team?.gap, store.feed.campaign?.state,
     store.feed.campaign?.gap, store.feed.team?.has_more, store.feed.campaign?.has_more,
     store.canLoadOlder, store.historyLoading, store.historyError,
+    current === 'exploration-graph' ? store.teamCheckpoint : null,
     [...store.slots].map(([name, slot]) => [name, slot.state, slot.value, slot.issue, slot.state === 'stale' ? slot.at : null]),
     current === 'events' ? [store.campaignSnapshot, store.olderCampaigns, store.campaignBefore,
       store.olderCampaignLoading, store.olderCampaignError] : null]
@@ -249,9 +261,20 @@ function render() {
   else if (current === 'workspace') nodes = workspace(store)
   else if (current === 'sessions') nodes = sessions(store, detail, filters, queueRender)
   else if (current === 'agents') nodes = agents(store, detail, go, lazy, filters, queueRender)
+  else if (current === 'tasks' || current === 'communication') nodes = agents(store, detail, go, lazy, filters, queueRender, current)
   else if (current === 'operations') nodes = operations(store, detail)
   else if (current === 'events') nodes = events(store, detail, lazy, filters, queueRender)
-  else if (current === 'investigation') nodes = investigation(store, detail, lazy)
+  else if (current === 'asset-graph' || current === 'exploration-graph') nodes = knowledgeView(current, store, detail, lazy)
+  else if (current === 'traffic') {
+    const panel = el('div', 'stack', empty('Loading traffic inspector…'))
+    lazy(panel, async () => {
+      const module = await import('./traffic')
+      if (panel.isConnected) panel.replaceChildren(...module.traffic(store, detail))
+      return undefined
+    })
+    nodes = [panel]
+  }
+  else if (current === 'investigation') nodes = investigation(store, detail, lazy, filters, queueRender)
   else if (current === 'analytics') nodes = analytics(store, detail, lazy, filters, queueRender)
   else if (current === 'infrastructure') nodes = infrastructure(store, detail, lazy)
   else nodes = [...settings(store), profilePanel(store, queueRender)]

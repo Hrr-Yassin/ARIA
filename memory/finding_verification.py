@@ -1,10 +1,11 @@
 """Saved-evidence verification ledger. No model output grants verification or execution."""
+import re
 import uuid
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import Field, model_validator
-from memory.team_tasks import Strict, Reference, Criterion, digest, team_store
+from pydantic import AwareDatetime, Field, ValidationError, model_validator
+from memory.team_tasks import Strict, Reference, Criterion, digest, public, team_store
 
 FindingState = Literal['observation', 'hypothesis', 'tested', 'reproduced', 'reviewed',
                        'reportable', 'rejected', 'inconclusive', 'blocked']
@@ -131,6 +132,31 @@ def validation_refs(validation: dict) -> list[str]:
         'ownership_references', 'permission_references') for ref in validation[key]))
 
 
+def evidence_lineage(state: dict, references: list[str]) -> set[tuple[str, str]]:
+    """Match aliases by source ID, verified job lineage or full capture digest."""
+    identities = set()
+    for ref in references:
+        evidence = state['evidence'][ref]
+        identities.add((evidence['source_kind'], evidence['source_id']))
+        if evidence.get('job_id'):
+            identities.add(('job', evidence['job_id']))
+        if capture := evidence.get('hashes', {}).get('capture_sha256'):
+            identities.add(('capture_sha256', capture))
+    return identities
+
+
+def check_validation_lineage(state: dict, finding: dict, validation: dict, prior: dict | None = None) -> None:
+    positive = evidence_lineage(state, validation['evidence_references'])
+    negative = evidence_lineage(state, validation['negative_control_references'])
+    if positive & negative:
+        raise HTTPException(422, 'Negative controls must use separate source observations')
+    if prior is not None:
+        earlier = evidence_lineage(state, prior['evidence_references'] +
+            prior['negative_control_references'] + finding['evidence_references'])
+        if (positive | negative) & earlier:
+            raise HTTPException(409, 'Reproduction needs fresh positive and negative observations')
+
+
 def current(finding: dict, state: dict, scope: dict) -> bool:
     if finding['scope_digest'] != digest(scope):
         return False
@@ -159,18 +185,9 @@ def advance(finding: dict, body: Review, state: dict, scope: dict, actor: str) -
         validation = body.validation.model_dump()
         refs = validation_refs(validation)
         snapshot = evidence_snapshot(state, refs)
-        positives, negatives = set(validation['evidence_references']), set(validation['negative_control_references'])
-        # IDs alone do not establish independence: reject aliases of the same source.
-        def source(ref):
-            return (state['evidence'][ref]['source_kind'], state['evidence'][ref]['source_id'])
-        if {source(ref) for ref in positives} & {source(ref) for ref in negatives}:
-            raise HTTPException(422, 'Negative controls must use separate source observations')
+        check_validation_lineage(state, finding, validation, finding['test'] if body.state == 'reproduced' else None)
         if validation['observed_behavior'] != 'violation':
             raise HTTPException(409, 'Expected or ambiguous behavior cannot establish a finding')
-        if body.state == 'reproduced':
-            prior = finding['test']['evidence_references'] + finding['test']['negative_control_references'] + finding['evidence_references']
-            if {source(ref) for ref in positives | negatives} & {source(ref) for ref in prior}:
-                raise HTTPException(409, 'Reproduction needs fresh positive and negative observations')
         updated['stop_testing'] = body.state == 'reproduced'
         updated['test' if body.state == 'tested' else 'reproduction'] = {
             **validation, 'recorded_by': actor, 'method': 'human_saved_evidence_review'}
@@ -189,12 +206,89 @@ def advance(finding: dict, body: Review, state: dict, scope: dict, actor: str) -
     return updated
 
 
+class FindingRevision(Strict):
+    event_id: Reference
+    sequence: int = Field(strict=True, ge=1)
+    timestamp: AwareDatetime
+    revision: int = Field(strict=True, ge=1)
+    state: FindingState
+    actor: Literal['human_reviewer', 'engagement_owner'] | None
+    reason: str | None
+    smallest_missing_validation: str | None
+    specialist_task_id: Reference | None
+    evidence_snapshot: dict[str, str]
+    references: dict[str, list[str]]
+
+
+class FindingHistory(Strict):
+    schema_version: Literal['aria.mission.finding-history.v1'] = 'aria.mission.finding-history.v1'
+    session_id: str
+    finding_id: str
+    revisions: list[FindingRevision]
+    next_before_sequence: int | None
+    rejected_records: int
+
+
+def recorded_revision(event: dict, owner: str) -> FindingRevision:
+    data = event['data']
+
+    def reference(value: object) -> str | None:
+        return value if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9._:-]{1,100}', value) else None
+
+    def refs(key: str, row: dict) -> list[str]:
+        values = row.get(key)
+        if not isinstance(values, list):
+            return []
+        return list(dict.fromkeys(value for item in values[:100] if (value := reference(item))))
+
+    def note(key: str) -> str | None:
+        value = data.get(key)
+        return public(value)[:2000] if isinstance(value, str) and value.strip() else None
+
+    references = {'candidate_evidence': refs('evidence_references', data)}
+    for phase in ('test', 'reproduction'):
+        proof = data.get(phase)
+        if isinstance(proof, dict):
+            for field in ('evidence', 'negative_control', 'ownership', 'permission'):
+                links = refs(field + '_references', proof)
+                if links:
+                    references[f'{phase}_{field}'] = links
+    snapshot = data.get('evidence_snapshot')
+    actor = 'engagement_owner' if event.get('actor') == owner else None
+    if data.get('reviewer_role') == 'human_reviewer':
+        actor = 'human_reviewer'
+    return FindingRevision(event_id=event['id'], sequence=event['sequence'], timestamp=event['timestamp'],
+        revision=data['revision'], state=data['state'], actor=actor,
+        reason=note('reason'), smallest_missing_validation=note('smallest_missing_validation'),
+        specialist_task_id=reference(data.get('specialist_task_id')), references=references,
+        evidence_snapshot={key: value for key, value in snapshot.items()
+            if reference(key) and isinstance(value, str) and re.fullmatch(r'[a-f0-9]{64}', value)}
+            if isinstance(snapshot, dict) else {})
+
+
 class VerificationStore:
+    async def history(self, sid: str, owner: str, finding_id: str, before: int | None, limit: int) -> FindingHistory:
+        events, older = await team_store.event_page(sid, owner, None, limit, before=before,
+            entity=('verification_findings', finding_id))
+        if not events:
+            raise HTTPException(404, 'Finding history unavailable')
+        revisions = []
+        rejected = 0
+        for event in reversed(events):
+            try:
+                revisions.append(recorded_revision(event, owner))
+            except (AttributeError, KeyError, TypeError, ValidationError):
+                rejected += 1
+        first = events[0].get('sequence') if isinstance(events[0], dict) else None
+        return FindingHistory(session_id=sid, finding_id=finding_id, revisions=revisions,
+            next_before_sequence=first if older and type(first) is int and first > 0 else None,
+            rejected_records=rejected)
+
     async def view(self, sid: str, owner: str) -> dict:
         ledger = await team_store.view(sid, owner)
         state = {'evidence': {item['id']: item for item in ledger['evidence']}}
         findings = [{**item, 'verification_current': current(item, state, ledger['scope']),
-                     'ready_for_external_submission': item['state'] == 'reportable' and current(item, state, ledger['scope'])}
+                     'ready_for_external_submission': False}
                     for item in ledger['verification_findings']]
         if any(item['state'] == 'reportable' for item in findings):
             from memory import team_tasks
@@ -205,12 +299,15 @@ class VerificationStore:
                     if item['state'] != 'reportable':
                         continue
                     try:
+                        check_validation_lineage(state, item, item['test'])
+                        check_validation_lineage(state, item, item['reproduction'], item['test'])
                         valid = all(verify_content(mapped, ContentControl(**item[key]['content_control']),
                             item[key], state) == item[key]['content_verification'] for key in ('test', 'reproduction'))
-                    except (HTTPException, KeyError, ValueError):
+                    except (HTTPException, KeyError, TypeError, ValueError):
                         valid = False
                     item['verification_current'] = item['verification_current'] and valid
-                    item['ready_for_external_submission'] = item['verification_current']
+                    item['ready_for_external_submission'] = bool(
+                        item['verification_current'] and item.get('human_review') and item.get('human_signoff'))
         return {'findings': findings, 'private_program_duplicates': 'unknown',
                 'limitation': 'Human-reviewed saved evidence; no autonomous reproduction or external submission.'}
 
@@ -241,6 +338,9 @@ class VerificationStore:
                 raise HTTPException(404, 'Finding not found')
             updated = advance(finding, body, state, session.scope or {}, owner)
             if body.state in {'tested', 'reproduced', 'reviewed', 'reportable'}:
+                if body.state in {'reviewed', 'reportable'}:
+                    check_validation_lineage(state, updated, updated['test'])
+                    check_validation_lineage(state, updated, updated['reproduction'], updated['test'])
                 from memory.application_map import application_map, capture_metadata
                 runs = [key for key in ('test', 'reproduction') if updated.get(key)]
                 if any(updated[key].get('content_control') for key in runs):

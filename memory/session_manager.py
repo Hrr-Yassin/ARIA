@@ -18,6 +18,7 @@ from memory.database_models import (
     SessionStatus, PentestPhase, AuditAction, RiskLevel,
     async_session,
 )
+from security.har import HAR_CAPTURE_TYPE
 
 log = structlog.get_logger(__name__)
 
@@ -88,10 +89,13 @@ class SessionManager:
     async def create_session(self, user_id: str, target: str, name: str = "",
                              context_type: str = "internal_corporate",
                              scope: dict = None) -> dict:
+        from llm.engagement_budget import ModelLimits
+
         session_id = str(uuid.uuid4())
         if not name:
             name = f"Pentest {target}"
 
+        model_limits = ModelLimits(max_calls=100, max_tokens=100_000, max_cost_microusd=500_000)
         async with async_session() as db:
             session = PentestSession(
                 id=session_id,
@@ -100,6 +104,7 @@ class SessionManager:
                 target=target,
                 scope=scope or {"targets": [target], "exclusions": []},
                 context_type=context_type,
+                metadata_={"model_limits": model_limits.model_dump()},
             )
             db.add(session)
             await db.commit()
@@ -295,7 +300,7 @@ class SessionManager:
 
     async def get_chat_logs(self, session_id: str, limit: int = 200, offset: int = 0, msg_types: Optional[List[str]] = None) -> list:
         async with async_session() as db:
-            query=select(ChatLog).where(ChatLog.session_id == session_id)
+            query=select(ChatLog).where(ChatLog.session_id == session_id, ChatLog.msg_type.is_distinct_from(HAR_CAPTURE_TYPE))
             if msg_types:
                 query=query.where(ChatLog.msg_type.in_(msg_types))
             result = await db.execute(

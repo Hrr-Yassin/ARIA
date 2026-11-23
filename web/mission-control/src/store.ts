@@ -1,22 +1,33 @@
-import { ApiError, type Json, type Page, type Slot, type SourceKey, type TimelineEvent, eventPage, object, read,
-  request, rows, signIn, sources, text, token } from './api'
+import { ApiError, type Json, type Page, type Slot, type SourceKey, type TimelineEvent, clearDiagnostics, eventPage, object, read,
+  request, rows, signIn, sources, strings, text, token } from './api'
 
-export const views = ['overview', 'workspace', 'sessions', 'agents', 'operations', 'events', 'investigation', 'analytics',
+export const views = ['overview', 'workspace', 'sessions', 'agents', 'tasks', 'communication', 'operations', 'events', 'asset-graph', 'exploration-graph', 'traffic', 'investigation', 'analytics',
   'infrastructure', 'settings'] as const
 export type View = typeof views[number]
 const viewReads: Record<View, SourceKey[]> = {
   overview: ['session', 'run', 'campaign', 'budget', 'capabilities'],
   workspace: ['session'],
-  sessions: ['sessions'], agents: ['team', 'roster', 'budget'], operations: ['operations', 'run', 'campaign'],
-  events: ['run', 'operations', 'campaignHistory'], investigation: ['team', 'research', 'verification', 'findings', 'hosts', 'appMap', 'reports'],
-  analytics: ['budget', 'operations', 'team', 'campaign'], infrastructure: ['health', 'ready', 'capabilities', 'providers'],
+  sessions: ['sessions'], agents: ['team', 'roster', 'budget', 'toolRegistry'], operations: ['operations', 'run', 'campaign'],
+  tasks: ['team', 'roster', 'budget'], communication: ['team'],
+  events: ['run', 'operations', 'campaignHistory', 'budget'], investigation: ['team', 'research', 'verification', 'findings', 'hosts', 'appMap', 'reports'],
+  'asset-graph': ['team', 'research', 'verification', 'session', 'hosts', 'appMap', 'reports', 'traffic'],
+  'exploration-graph': ['team', 'research', 'verification', 'run', 'operations'],
+  traffic: ['traffic', 'team'],
+  analytics: ['budget', 'operations', 'team', 'campaign'], infrastructure: ['health', 'ready', 'capabilities', 'toolRegistry', 'toolRestrictions', 'providers', 'operations'],
   settings: ['budget', 'profile']
 }
 const freshFor = 20000
 const maxEvents = 1000
 const maxForwardPages = 4
-const eventViews = new Set<View>(['overview', 'events'])
+export const maxSavedReviews = 8
+export const maxReviewEvidence = 100
+const eventViews = new Set<View>(['overview', 'events', 'exploration-graph'])
 const hasEventData = (view: View) => eventViews.has(view) || view === 'analytics'
+
+export function queuedSavedReview(task: Json, sid: string): boolean {
+  return task.session_id === sid && task.state === 'queued' && task.owner_role === 'correlation' &&
+    !task.campaign_id && (task.internal_review === 'analyze' || task.internal_review === 'challenge')
+}
 
 export const accents = ['violet', 'blue', 'teal', 'amber'] as const
 export type Preferences = { theme: 'dark' | 'light' | 'system'; accent: typeof accents[number];
@@ -48,6 +59,7 @@ function groupEvents(page: Page, previous: Page | null): Page {
 
 type CampaignSnapshot = { id: string; state: 'loading' | 'available' | 'unavailable' | 'denied';
   page?: Page; at?: number; issue?: string }
+type TeamCheckpoint = { sequence: number; state: 'loading' | 'available' | 'unavailable' | 'denied'; value?: Json }
 
 export class MissionStore {
   sid = ''
@@ -62,11 +74,13 @@ export class MissionStore {
   historyError = ''
   historyLoading = false
   campaignSnapshot: CampaignSnapshot | null = null
+  teamCheckpoint: TeamCheckpoint | null = null
   olderCampaigns: Json[] = []
   olderCampaignError = ''
   olderCampaignLoading = false
   private campaignCursor?: string | null
   private campaignRequest?: AbortController
+  private checkpointRequest?: AbortController
   stream = 'Polling retained sources'
   streamGap = false
   action = ''
@@ -163,6 +177,7 @@ export class MissionStore {
     if (this.sid !== sid) this.setSession(sid)
     if (this.view !== view && !eventViews.has(view)) this.stopSocket()
     if (this.view === 'events' && view !== 'events') this.clearCampaignSnapshot()
+    if (this.view === 'exploration-graph' && view !== 'exploration-graph') this.clearTeamCheckpoint()
     this.view = view
     const href = this.href(view)
     if (historyMode === 'push' && changed) history.pushState(null, '', href)
@@ -174,6 +189,7 @@ export class MissionStore {
   private setSession(sid: string) {
     this.stopSocket()
     this.sessionController.abort()
+    clearDiagnostics()
     this.sessionController = new AbortController()
     for (const key of this.inFlight.keys()) if (key.split(':')[1]) this.inFlight.delete(key)
     this.activeRefresh = undefined
@@ -186,6 +202,7 @@ export class MissionStore {
     this.historyError = ''
     this.historyLoading = false
     this.clearCampaignSnapshot()
+    this.clearTeamCheckpoint()
     this.olderCampaigns = []
     this.campaignCursor = undefined
     this.olderCampaignError = ''
@@ -220,6 +237,7 @@ export class MissionStore {
         this.olderCampaigns = []
         this.campaignCursor = undefined
       }
+      if (denied && key === 'team') this.clearTeamCheckpoint()
       this.slots.set(key, { state: denied ? 'denied' : previous.value ? 'stale' : 'unavailable',
         value: denied ? null : previous.value, at: previous.at, issue: error instanceof ApiError ? error.message : 'The data is unavailable.' })
     }).finally(() => {
@@ -304,6 +322,7 @@ export class MissionStore {
         this.feed = { team: null, campaign: null }
         this.eventsDenied = true
         this.clearCampaignSnapshot()
+        this.clearTeamCheckpoint()
       }
       this.eventError = error instanceof ApiError ? error.message : 'The event feed is unavailable.'
     }).finally(() => {
@@ -324,6 +343,39 @@ export class MissionStore {
     this.campaignRequest?.abort()
     this.campaignRequest = undefined
     this.campaignSnapshot = null
+  }
+
+  private clearTeamCheckpoint() {
+    this.checkpointRequest?.abort()
+    this.checkpointRequest = undefined
+    this.teamCheckpoint = null
+  }
+
+  async selectTeamCheckpoint(sequence: number | null) {
+    this.clearTeamCheckpoint()
+    if (sequence === null) { this.onChange(); return }
+    const sid = this.sid
+    const controller = new AbortController()
+    const { signal } = controller
+    this.checkpointRequest = controller
+    this.teamCheckpoint = { sequence, state: 'loading' }
+    this.onChange()
+    try {
+      const path = '/api/mission/' + encodeURIComponent(sid) + '/exploration/checkpoint?sequence=' + sequence
+      const value = await request(path, { signal })
+      if (signal.aborted) return
+      const records = object(value?.records)
+      if (value?.schema_version !== 'aria.mission.exploration-checkpoint.v1' || value.session_id !== sid ||
+          value.sequence !== sequence || !records || ['tasks', 'evidence', 'knowledge', 'verification_findings',
+            'research_hypotheses'].some(key => !Array.isArray(records[key]))) throw new Error('Invalid checkpoint')
+      this.teamCheckpoint = { sequence, state: 'available', value }
+    } catch (error) {
+      if (signal.aborted) return
+      const denied = error instanceof ApiError && [401, 403].includes(error.status)
+      this.teamCheckpoint = { sequence, state: denied ? 'denied' : 'unavailable' }
+    } finally {
+      if (!signal.aborted) { this.checkpointRequest = undefined; this.onChange() }
+    }
   }
 
   async selectCampaign(id: string) {
@@ -471,6 +523,151 @@ export class MissionStore {
         if (!signal.aborted) await this.refresh(true)
       }
     }
+  }
+
+  async catalogEvidence(sourceKind: 'chat' | 'worker', sourceId: string, requestId: string): Promise<string> {
+    const sid = this.sid
+    if (!sid || !sourceId) throw new ApiError(409, 'Select an engagement and an evidence source.')
+    const response = await request('/api/team/' + encodeURIComponent(sid) + '/evidence', {
+      method: 'POST', signal: this.signal,
+      data: { request_id: requestId, source_kind: sourceKind, source_id: sourceId }
+    })
+    const entry = object(response?.data)
+    const id = text(entry?.id)
+    if (!id || entry?.source_kind !== sourceKind || entry.source_id !== sourceId || entry.session_id !== sid) {
+      throw new ApiError(502, 'The API did not confirm the evidence record.')
+    }
+    return id
+  }
+
+  async queueSavedReview(evidenceIds: string[], objective: string, requestId: string): Promise<string> {
+    const sid = this.sid
+    const signal = this.signal
+    const ids = [...new Set(evidenceIds)]
+    if (!ids.length || ids.length > maxReviewEvidence) throw new ApiError(422, 'Select between one and 100 evidence records.')
+    const scoped = new Set(rows(this.value('team')?.evidence)
+      .filter(item => item.session_id === sid && text(item.owner_id)).map(item => item.id))
+    if (!sid || this.slot('team').state !== 'available' || ids.some(id => !scoped.has(id))) {
+      throw new ApiError(409, 'Refresh the evidence catalog before queuing a review.')
+    }
+    const comparison = ids.length > 1
+    const response = await request('/api/team/' + encodeURIComponent(sid) + '/tasks', {
+      method: 'POST', signal, data: { request_id: requestId, task: {
+        owner_role: 'correlation', internal_review: 'analyze', objective,
+        evidence_inputs: ids, expected_output: 'Evidence-linked interpretation',
+        ...(comparison ? { require_all_evidence: true } : {}),
+        completion_criteria: ['Cite the assigned evidence and explain uncertainty'],
+        budget: { max_attempts: 1, max_model_calls: 1 }
+      } }
+    })
+    const id = text(response?.entity_id)
+    const task = object(response?.data)
+    const confirmed = strings(task?.evidence_inputs)
+    if (!id || task?.id !== id || task.session_id !== sid || task.internal_review !== 'analyze' ||
+        confirmed.length !== ids.length || ids.some((item, index) => item !== confirmed[index]) ||
+        (comparison && task.require_all_evidence !== true)) {
+      throw new ApiError(502, 'The API did not confirm the queued task.')
+    }
+    if (!signal.aborted) {
+      await this.inFlight.get('team:' + sid)
+      if (!signal.aborted) await this.load('team', true)
+    }
+    return id
+  }
+
+  async transitionSavedReview(id: string, state: 'cancelled' | 'queued', requestId: string): Promise<Json> {
+    const sid = this.sid
+    const signal = this.signal
+    await this.inFlight.get('team:' + sid)
+    if (!sid || signal.aborted) throw new ApiError(409, 'The selected engagement changed.')
+    await this.load('team', true)
+    const task = rows(this.value('team')?.tasks).find(item => item.id === id)
+    const revision = task?.revision
+    if (signal.aborted || this.slot('team').state !== 'available' || !task?.internal_review ||
+        typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+      throw new ApiError(409, 'The current task revision could not be confirmed.')
+    }
+    if (task.state === state) return task
+    const allowed = state === 'queued' ? ['blocked'] : ['queued', 'running', 'blocked']
+    if (!allowed.includes(text(task.state))) {
+      throw new ApiError(409, 'The task is now ' + text(task.state, 'in an unknown state') + '. Refresh Tasks.')
+    }
+    const response = await request('/api/team/' + encodeURIComponent(sid) + '/tasks/' + encodeURIComponent(id) + '/transition', {
+      method: 'POST', signal, data: {request_id: requestId, expected_revision: revision,
+        state, reason: state === 'queued' ? 'Owner requeued this saved-evidence review in Mission Control.' :
+          'Owner cancelled this saved-evidence review in Mission Control.'}
+    })
+    const saved = object(response?.data)
+    if (!saved || saved.id !== id || saved.session_id !== sid || saved.state !== state) {
+      throw new ApiError(502, 'The API did not confirm the task transition.')
+    }
+    if (!signal.aborted) {
+      await this.inFlight.get('team:' + sid)
+      if (!signal.aborted) await this.load('team', true)
+    }
+    return saved
+  }
+
+  async runSavedReview(id: string): Promise<Json | null> {
+    if (this.action || !this.sid) return null
+    const signal = this.signal
+    await this.runSavedReviews([id])
+    return !signal.aborted && this.slot('team').state === 'available' ?
+      rows(this.value('team')?.tasks).find(task => task.id === id) ?? null : null
+  }
+
+  async runSavedReviews(ids: string[]): Promise<Json | null> {
+    if (this.action || !this.sid || !ids.length || ids.length > maxSavedReviews) return null
+    const sid = this.sid
+    const signal = this.signal
+    const queued = rows(this.value('team')?.tasks).filter(task => queuedSavedReview(task, sid))
+    if (this.slot('team').state !== 'available' || ids.some(id => !queued.some(task => task.id === id))) {
+      this.notice = 'Refresh Tasks to confirm the selected reviews are queued.'
+      this.onChange()
+      return null
+    }
+    if (this.slot('budget').state !== 'available' || this.value('budget')?.budget_approved !== true) {
+      this.notice = 'Confirm the engagement model budget before starting saved reviews.'
+      this.onChange()
+      return null
+    }
+    const single = ids.length === 1
+    const path = '/api/team/' + encodeURIComponent(sid) + '/tasks/'
+    this.action = single ? 'Running saved-evidence review' : 'Running selected saved-evidence reviews'
+    this.notice = ''
+    this.onChange()
+    let outcome: Json | null = null
+    try {
+      const result = await request(path + (single ? encodeURIComponent(ids[0]) + '/run' : 'run-internal'), {
+        method: 'POST', data: single ? { request_id: crypto.randomUUID() } : { task_ids: ids },
+        signal, timeoutMs: 210000
+      })
+      const states = object(result?.states)
+      if (!states || ids.some(id => !text(states[id]))) {
+        throw new ApiError(502, 'The API did not confirm the saved review states.')
+      }
+      outcome = result
+      const count = Object.values(states).filter(state => state === 'analyzed').length
+      this.notice = single
+        ? states[ids[0]] === 'analyzed' ? 'Saved review collected.' :
+          'Saved review state · ' + text(states[ids[0]]) + '. Inspect the recorded result or task history for details.'
+        : count + ' of ' + Object.keys(states).length + ' saved reviews analyzed.'
+    } catch (error) {
+      if (!signal.aborted) this.notice = error instanceof ApiError && error.status !== 0 ? error.message :
+        'The request outcome could not be confirmed. Check the task ledger before retrying.'
+    } finally {
+      if (!signal.aborted) {
+        await Promise.all(['team', 'budget'].map(key => this.inFlight.get(key + ':' + sid)))
+        if (!signal.aborted) {
+          await Promise.all([this.load('team', true), this.load('budget', true)])
+          if (!signal.aborted) {
+            this.action = ''
+            this.onChange()
+          }
+        }
+      }
+    }
+    return signal.aborted ? null : outcome
   }
 
   private stopSocket() {

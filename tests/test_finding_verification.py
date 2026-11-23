@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from api.auth import TokenData, create_token
 from memory.finding_verification import (
     Candidate, ContentControl, Review, Validation, VerificationStore, advance, current, duplicate_key, verify_content,
 )
@@ -124,6 +125,20 @@ class FindingVerification(OfflineCase):
         self.assertTrue(verified['confirmed'])
         self.assertEqual(len(verified['checks']), 2)
         self.assertFalse(verified['discovery_prompt_used'])
+        # Replay a retained reportable revision with missing human approval.
+        for approval in ('human_review', 'human_signoff'):
+            with self.subTest(missing_approval=approval):
+                incomplete_events = copy.deepcopy(self.events)
+                incomplete_state = materialize(incomplete_events)
+                incomplete_state['verification_findings'][finding['id']][approval] = None
+                checked = await inspect_finding(self.db, 'engagement', 'owner', finding['id'],
+                    incomplete_state, self.session.scope)
+                self.assertFalse(checked['confirmed'])
+                self.assertEqual(len(checked['checks']), 2)
+                with patch.object(TeamStore, '_events', AsyncMock(return_value=incomplete_events)):
+                    shown = (await self.verification.view('engagement', 'owner'))['findings'][0]
+                self.assertEqual(shown['state'], 'reportable')
+                self.assertFalse(shown['ready_for_external_submission'])
         from memory.research import ResearchStore, CreateHypothesis, ResearchTransition
         from tests.test_research import hypothesis
         research = ResearchStore()
@@ -139,6 +154,18 @@ class FindingVerification(OfflineCase):
             item = event['data']
         self.assertTrue(item['independent_verification']['confirmed'])
         self.assertTrue((await research.view('engagement','owner'))['hypotheses'][0]['confirmed'])
+        # A pre-upgrade report may have separate catalog IDs with a shared job lineage.
+        legacy_events = copy.deepcopy(self.events)
+        legacy_state = materialize(legacy_events)
+        for ref in ('p1', 'p2'):
+            alias = legacy_state['evidence'][ref]
+            alias['job_id'] = 'shared-legacy-job'
+            legacy_state['verification_findings'][finding['id']]['evidence_snapshot'][ref] = digest(alias)
+        with patch.object(TeamStore, '_events', AsyncMock(return_value=legacy_events)):
+            legacy_view = await self.verification.view('engagement', 'owner')
+            self.assertFalse(legacy_view['findings'][0]['ready_for_external_submission'])
+        legacy = await inspect_finding(self.db, 'engagement', 'owner', finding['id'], legacy_state, self.session.scope)
+        self.assertFalse(legacy['confirmed'])
         self.mapped['captures']['p2']['expired'] = True
         view = await self.verification.view('engagement', 'owner')
         self.assertFalse(view['findings'][0]['ready_for_external_submission'])
@@ -203,6 +230,62 @@ class FindingVerification(OfflineCase):
         with self.assertRaises(HTTPException):
             advance(finding, review('reproduced', finding['revision'], validation=validation('p2', 'n2')),
                     state, self.session.scope, 'owner')
+
+    async def test_history_exposes_recorded_revisions_and_control_provenance(self):
+        events = [
+            {'id': 'event-2', 'sequence': 6, 'timestamp': '2026-11-19T09:15:00Z', 'data': {'revision': 2}},
+            {'id': 'event-3', 'sequence': 9, 'timestamp': '2026-11-19T09:17:00Z', 'data': {
+                'revision': 3, 'state': 'tested', 'reviewer_role': 'human_reviewer',
+                'reviewer_id': 'fixture-private-account', 'reason': 'Verified test password=fixture-private-reason',
+                'specialist_task_id': 'specialist', 'evidence_references': ['initial'],
+                'evidence_snapshot': {'initial': 'a' * 64, 'malformed': 'fixture-private-digest'},
+                'test': {'evidence_references': ['p1'], 'negative_control_references': ['n1'],
+                    'ownership_references': ['owner-evidence'], 'permission_references': ['permissions'],
+                    'steps': ['fixture-private-procedure']},
+            }},
+        ]
+        identity = TokenData(user_id='owner', username='owner', role='pentester', skill_level='expert')
+        headers = {'Authorization': 'Bearer ' + create_token('owner', 'owner', 'pentester', 'expert')}
+        path = '/api/team/engagement/findings/finding/history'
+        with patch('api.auth.current_identity', AsyncMock(return_value=identity)), \
+             patch('memory.finding_verification.team_store.event_page', AsyncMock(return_value=(events, True))) as ledger:
+            result = await self.client.get(path + '?before_sequence=20&limit=2', headers=headers)
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.headers['Cache-Control'], 'no-store')
+            self.assertEqual((await self.client.get(path + '?limit=100', headers=headers)).status_code, 422)
+        ledger.assert_awaited_once_with('engagement', 'owner', None, 2, before=20,
+            entity=('verification_findings', 'finding'))
+        body = result.json()
+        self.assertEqual(body['next_before_sequence'], 6)
+        self.assertEqual(body['rejected_records'], 1)
+        [revision] = body['revisions']
+        self.assertEqual((revision['revision'], revision['state'], revision['actor']), (3, 'tested', 'human_reviewer'))
+        self.assertEqual(revision['evidence_snapshot'], {'initial': 'a' * 64})
+        self.assertEqual(revision['references'], {'candidate_evidence': ['initial'], 'test_evidence': ['p1'],
+            'test_negative_control': ['n1'], 'test_ownership': ['owner-evidence'], 'test_permission': ['permissions']})
+        self.assertNotIn('fixture-private-', result.text)
+
+    async def test_distinct_catalog_ids_do_not_hide_shared_job_or_capture(self):
+        finding = await self.step(await self.seed(), 'hypothesis')
+        state = materialize(self.events)
+        state['evidence']['p1']['job_id'] = 'shared-job'
+        state['evidence']['n1']['job_id'] = 'shared-job'
+        with self.assertRaisesRegex(HTTPException, 'Negative controls must use separate'):
+            advance(finding, review('tested', finding['revision'], validation=validation()),
+                    state, self.session.scope, 'owner')
+        del state['evidence']['n1']['job_id']
+        state['evidence']['p1']['hashes']['capture_sha256'] = digest({'capture': 'duplicate'})
+        state['evidence']['p2']['hashes']['capture_sha256'] = digest({'capture': 'duplicate'})
+        finding = advance(finding, review('tested', finding['revision'], validation=validation()),
+                          state, self.session.scope, 'owner')
+        with self.assertRaisesRegex(HTTPException, 'Reproduction needs fresh'):
+            advance(finding, review('reproduced', finding['revision'], validation=validation('p2', 'n2')),
+                    state, self.session.scope, 'owner')
+        # Equal summaries or equal output hashes alone can come from separate runs.
+        state['evidence']['p2']['hashes'] = {'content_sha256': state['evidence']['p1']['hashes']['content_sha256']}
+        reproduced = advance(finding, review('reproduced', finding['revision'], validation=validation('p2', 'n2')),
+                             state, self.session.scope, 'owner')
+        self.assertEqual(reproduced['state'], 'reproduced')
 
     async def test_duplicate_retry_conflict_and_attribution(self):
         finding = await self.seed()

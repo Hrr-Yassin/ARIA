@@ -10,7 +10,7 @@ from sqlalchemy import (
     ForeignKey, Enum as SAEnum, Index, UniqueConstraint
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 import enum
 
 from config.settings import settings
@@ -81,7 +81,7 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    username = Column(String(50), unique=True, nullable=False, index=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String(256), nullable=False)
     role = Column(SAEnum(UserRole), nullable=False, default=UserRole.PENTESTER)
     skill_level = Column(SAEnum(SkillLevel), nullable=False, default=SkillLevel.INTERMEDIATE)
@@ -126,7 +126,7 @@ class UserAPIKey(Base):
 class PentestSession(Base):
     __tablename__ = "pentest_sessions"
 
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     name = Column(String(200), default="")
     target = Column(String(500), nullable=False)
@@ -146,7 +146,7 @@ class PentestSession(Base):
     autonomous_steps_taken = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    metadata_ = Column("metadata", JSON, default=dict)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, default=dict, nullable=True)
 
     user = relationship("User", back_populates="sessions")
     findings = relationship("Finding", back_populates="session", cascade="all, delete-orphan")
@@ -200,7 +200,7 @@ class ChatLog(Base):
     role = Column(String(20), nullable=False)
     content = Column(Text, default="")
     msg_type = Column(String(30), default="text")
-    data = Column(JSON, default=dict)
+    data: Mapped[dict | None] = mapped_column(JSON, default=dict, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     session = relationship("PentestSession", back_populates="chat_logs")
@@ -259,7 +259,7 @@ class DecisionLog(Base):
     human_involved = Column(Boolean, default=False)
     human_decision = Column(String(20), default="")   # approve|reject|modify|none
     observation = Column(Text, default="")
-    metadata_ = Column("metadata", JSON, default=dict)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, default=dict, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
@@ -348,7 +348,7 @@ class AutonomousCampaign(Base):
     worker_epoch = Column(Integer, nullable=False, default=0)
     schedule = Column(JSON, nullable=False)
     budget = Column(JSON, nullable=False)
-    usage = Column(JSON, nullable=False)
+    usage: Mapped[dict] = mapped_column(JSON, nullable=False)
     retry = Column(JSON, nullable=False)
     # Bounded operational event ring (SPEC-14).  Kept separate from the
     # immutable DecisionLog audit trail and never used for authorization.
@@ -364,7 +364,7 @@ class AutonomousCampaign(Base):
     reason_code = Column(String(100), nullable=False, default="")
     reason = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)
     ended_at = Column(DateTime, nullable=True)
 

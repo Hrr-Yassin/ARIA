@@ -1,17 +1,18 @@
 import { diagnostics, number, object, records, request, rows, signedReportArchive, strings, text, type Json, type TimelineEvent } from './api'
-import { accents, type MissionStore, type Preferences } from './store'
+import { accents, maxReviewEvidence, maxSavedReviews, queuedSavedReview, type MissionStore, type Preferences } from './store'
 import { badge, button, card, count, date, el, empty, fields, human, labelControl, link, money, recordButton,
   select, status, windowed } from './dom'
 import { budgetSummary, eventDetail, recordFields, sourceCard, taskState, taskTitle, type Detail, type Go, type Lazy } from './panels'
 import type { Edge, Node as GraphNode } from './graph'
+import { dispositionForm, filterFindings, findingHistory } from './evidence-review'
 
 type ReplayWindow = { records: TimelineEvent[]; capturedAt: number; campaignId: string | null; gap: boolean }
 
 export type Filters = { sessionQuery: string; sessionState: string; sessionDate: string; role: string; run: string;
-  task: string; taskState: string; eventQuery: string; eventSource: string; replay: ReplayWindow | null; replayIndex: number;
+  task: string; taskState: string; taskLayout: string; findingState: string; findingQuery: string; eventQuery: string; eventSource: string; replay: ReplayWindow | null; replayIndex: number;
   renderer: string; provider: string; model: string; campaign: string; attemptAgent: string; timeWindow: string }
 export const defaultFilters = (): Filters => ({ sessionQuery: '', sessionState: '', sessionDate: '', role: '', run: '',
-  task: '', taskState: '', eventQuery: '', eventSource: '', replay: null, replayIndex: 0, renderer: 'canvas',
+  task: '', taskState: '', taskLayout: 'table', findingState: '', findingQuery: '', eventQuery: '', eventSource: '', replay: null, replayIndex: 0, renderer: 'canvas',
   provider: '', model: '', campaign: '', attemptAgent: '', timeWindow: '' })
 
 const unique = (values: string[]) => [...new Set(values.filter(Boolean))].sort()
@@ -28,6 +29,40 @@ function filterSelect(label: string, values: string[], value: string, update: (n
   const control = select([['', 'All'], ...values.map(item => [item, format(item)] as [string, string])], value, update)
   control.dataset.focus = label
   return labelControl(label, control)
+}
+
+function sourceReviewFields(receipt: Json): HTMLElement[] {
+  const review = object(receipt.source_review)
+  if (!review) return []
+  const items: [string, string][] = [
+    ['Parser status', human(review.parser_status)],
+    ['Unverified observations', count(review.unverified_observations)],
+    ['Output truncated', review.truncated === true ? 'Yes' : 'No'],
+  ]
+  const matches = number(review.dynamic_python_evaluation_matches)
+  if (matches !== null) {
+    items.push(['Dynamic Python evaluation rule matches', count(matches)])
+  }
+  return [el('h3', '', 'Saved source review'), fields(items)]
+}
+
+function savedCaptureLink(store: MissionStore, detail: Detail, evidence: Json): HTMLElement[] {
+  const id = text(evidence.source_id)
+  const sid = store.sid
+  const signal = store.signal
+  if (!id || !sid || evidence.session_id !== sid || evidence.source_kind !== 'chat' ||
+      evidence.provenance !== 'sanitized_har_import') return []
+  const open = button('Open source HTTP capture', () => {
+    open.disabled = true
+    void import('./traffic').then(module => {
+      if (!signal.aborted && store.sid === sid && open.isConnected) {
+        return module.inspectTrafficCapture(store, detail, { id })
+      }
+    }).catch(() => {
+      if (open.isConnected) open.replaceWith(el('p', 'subtle', 'The HTTP inspector is unavailable.'))
+    }).finally(() => { open.disabled = false })
+  })
+  return [open]
 }
 
 export function sessions(store: MissionStore, detail: Detail, filters: Filters, change: () => void) {
@@ -88,39 +123,282 @@ export function sessions(store: MissionStore, detail: Detail, filters: Filters, 
   ], { action: create })]
 }
 
-export function agents(store: MissionStore, detail: Detail, go: Go, lazy: Lazy, filters: Filters, change: () => void) {
+export function agents(store: MissionStore, detail: Detail, go: Go, lazy: Lazy, filters: Filters, change: () => void,
+                       mode: 'agents' | 'tasks' | 'communication' = 'agents') {
   const ledger = store.value('team')
   const roster = rows(store.value('roster')?.agents)
   const tasks = rows(ledger?.tasks)
   const evidence = rows(ledger?.evidence)
   const attempts = rows(store.value('budget')?.attempts)
   const advanced = store.preferences.mode === 'advanced'
+  const budgetProblem = () => {
+    const budget = store.value('budget')
+    const admission = object(budget?.admission)
+    if (store.slot('budget').state !== 'available') return 'Refresh model accounting before running.'
+    if (budget?.budget_approved !== true) return 'Approve a model budget for this engagement first.'
+    if (admission?.state === 'blocked') {
+      return strings(admission.reasons).map(code => human(code)).join(' · ') || 'Model admission is blocked.'
+    }
+    return strings(admission?.configured_provider_prerequisites).length ?
+      'Resolve the provider tariff prerequisites in Settings.' : ''
+  }
+  const reviewProblem = (id: string, selected?: Set<string>) => {
+    const ledger = store.value('team')
+    const tasks = rows(ledger?.tasks)
+    const record = tasks.find(task => task.id === id)
+    if (!record || store.slot('team').state !== 'available' || !queuedSavedReview(record, store.sid)) {
+      return 'Refresh Tasks to confirm this review is queued.'
+    }
+    const assigned = strings(record.evidence_inputs)
+    const evidence = rows(ledger?.evidence)
+    if (!assigned.length || assigned.some(id => !evidence.some(item => item.id === id))) {
+      return 'The assigned evidence is unavailable.'
+    }
+    for (const ref of strings(record.dependencies)) {
+      const dependency = tasks.find(task => task.id === ref)
+      if (dependency?.state === 'completed' || dependency?.internal_review && dependency.state === 'analyzed') continue
+      if (dependency && selected?.has(ref) && queuedSavedReview(dependency, store.sid)) continue
+      return selected && dependency && queuedSavedReview(dependency, store.sid) ?
+        'Select its prerequisite · ' + taskTitle(dependency) : 'Wait for prerequisite analysis or owner review.'
+    }
+    const budget = object(record.budget)
+    const attempts = number(record.attempts)
+    const maxAttempts = number(budget?.max_attempts)
+    if (attempts !== null && maxAttempts !== null && attempts >= maxAttempts) return 'This review has used all of its task attempts.'
+    return number(budget?.max_model_calls) === 0 || number(budget?.max_tokens) === 0 ? 'This task has no model budget.' : ''
+  }
   const observedState = (agent: Json) => {
     if (agent.registration === 'unavailable') return 'unavailable'
     const assignments = tasks.filter(task => task.owner_role === agent.id)
     return taskState(ledger && (assignments.length || agent.registration === 'team_specialist') ? assignments : null)
   }
 
-  const inspectEvidence = (record: Json) => detail('Evidence record', [recordFields(record, ['id', 'source_kind', 'source_id', 'summary', 'created_at']),
+  const inspectEvidence = (record: Json) => detail('Evidence record', [recordFields(record, ['id', 'source_kind', 'source_id',
+    'summary', 'provenance', 'trust', 'source_timestamp', 'cataloged_at']),
+    ...savedCaptureLink(store, detail, record),
     button('Open investigation', () => go('investigation'))])
+  const inspectTaskTrace = async (record: Json) => {
+    const sid = store.sid
+    const taskId = text(record.id)
+    const content = el('div', 'stack', el('p', 'subtle', 'Loading retained revisions…'))
+    detail('Task history', [content])
+    try {
+      const trace = await request('/api/team/' + encodeURIComponent(sid) + '/tasks/' + encodeURIComponent(taskId) + '/trace', { signal: store.signal })
+      if (!content.isConnected || store.sid !== sid) return
+      if (trace?.task_id !== taskId || !Array.isArray(trace.revisions)) throw new Error('Task history unavailable')
+      const dependencyRoles = new Map<string, GraphNode>()
+      const handoffs = new Map<string, Edge>()
+      for (const revision of rows(trace.revisions)) {
+        const consumer = text(revision.role)
+        if (!consumer) continue
+        for (const dependency of rows(revision.dependencies_at_claim)) {
+          const producer = text(dependency.role)
+          if (!producer) continue
+          dependencyRoles.set('source:' + producer, { id: 'source:' + producer, label: human(producer),
+            kind: 'Dependency role', column: 0, state: 'recorded' })
+          dependencyRoles.set('consumer:' + consumer, { id: 'consumer:' + consumer, label: human(consumer),
+            kind: 'Assigned role', column: 1, state: 'recorded' })
+          const kind = 'Dependency at claim · ' + text(dependency.task_id) + ' · revision ' + count(dependency.revision)
+          handoffs.set(JSON.stringify([producer, consumer, kind]), { source: 'source:' + producer, target: 'consumer:' + consumer, kind })
+        }
+      }
+      const diagram = el('div', 'viz')
+      content.replaceChildren(
+        ...(dependencyRoles.size ? [el('h3', '', 'Recorded dependency roles at claim'), diagram] : []),
+        ...(trace.truncated === true ? [el('p', 'callout', 'Showing the latest 50 retained revisions.')] : []),
+        ...rows(trace.revisions).reverse().map(revision => card('Revision ' + count(revision.revision), [
+          badge(revision.state), fields([['Recorded', date(revision.timestamp)]]),
+          recordFields(revision, ['role', 'run_id', 'reason', 'dependency_ids', 'assigned_evidence_ids']),
+          ...(rows(revision.dependencies_at_claim).length ? [el('h3', '', 'Dependencies at claim'),
+            ...rows(revision.dependencies_at_claim).map(dependency => recordFields(dependency,
+              ['task_id', 'role', 'revision', 'run_id']))] : []),
+          ...(Array.isArray(revision.prepared_review_evidence) ? [fields([['Evidence prepared for review',
+            strings(revision.prepared_review_evidence).join(', ') || 'None']]),
+            el('p', 'subtle', 'Recorded when the review request was prepared. Provider delivery is unknown.')] : []),
+          ...(Array.isArray(revision.result_evidence_ids) ?
+            [recordFields(revision, ['result_evidence_ids', 'rejections'])] : []),
+        ])),
+      )
+      if (dependencyRoles.size) {
+        const module = await import('./graph')
+        if (!diagram.isConnected || store.sid !== sid) return
+        const dispose = module.mountGraph(diagram, { label: 'Recorded dependency roles at claim',
+          nodes: [...dependencyRoles.values()], edges: [...handoffs.values()], directed: true, motion: false,
+          inspect(id) {
+            const role = dependencyRoles.get(id)
+            if (!role) return
+            diagram.setAttribute('aria-description', role.kind + ' ' + role.label)
+            const note = content.querySelector<HTMLElement>('[data-handoff-role]')
+            if (note) note.textContent = role.kind + ' · ' + role.label
+          },
+        })
+        const roleSummary = el('p', 'subtle')
+        roleSummary.dataset.handoffRole = ''
+        roleSummary.setAttribute('role', 'status')
+        diagram.after(roleSummary)
+        const observer = new MutationObserver(() => {
+          if (!diagram.isConnected) { observer.disconnect(); dispose() }
+        })
+        observer.observe(document.querySelector('dialog') ?? content, { childList: true, subtree: true })
+      }
+    } catch {
+      if (content.isConnected && store.sid === sid) content.replaceChildren(empty('Task history unavailable.'))
+    }
+  }
   const inspectTask = (record: Json) => {
-    const model = attempts.filter(attempt => attempt.task_id === record.id)
-    const assignedEvidence = evidence.filter(item => strings(record.evidence_inputs).includes(text(item.id)))
+    const currentTasks = rows(store.value('team')?.tasks)
+    const model = rows(store.value('budget')?.attempts).filter(attempt => attempt.task_id === record.id)
+    const result = object(record.result)
+    const refs = new Set([...strings(record.evidence_inputs), ...strings(result?.evidence_references)])
+    const assignedEvidence = evidence.filter(item => refs.has(text(item.id)))
+    const observations = rows(result?.observations).map(item => text(item.observation, text(item.text))).filter(Boolean)
+    const hypotheses = rows(result?.hypotheses)
+    const rejections = rows(result?.rejections).map(item => text(item.detail)).filter(Boolean)
+    const reviewControls: HTMLElement[] = []
+    if (record.internal_review === 'analyze' || record.internal_review === 'challenge') {
+      const id = text(record.id)
+      const sid = store.sid
+      reviewControls.push(el('p', 'subtle', 'Saved-evidence analysis uses the engagement model budget. It requires no execution worker.'))
+      if (record.require_all_evidence === true) {
+        reviewControls.push(el('p', 'subtle', 'Comparison requires all assigned observations in the prepared context.'))
+      }
+      if (record.state === 'queued') {
+        const modelProblem = budgetProblem()
+        const problem = reviewProblem(id) || modelProblem
+        const feedback = el('p', 'subtle', problem)
+        feedback.setAttribute('role', 'status')
+        const run = button('Run saved-evidence review', () => {
+          run.disabled = true
+          feedback.textContent = 'Waiting for the saved review result…'
+          void store.runSavedReview(id).then(updated => {
+            if (!feedback.isConnected) return
+            if (updated && updated.state !== 'queued') inspectTask(updated)
+            else feedback.textContent = store.notice || 'Refresh Tasks before starting this review again.'
+          })
+        })
+        run.disabled = Boolean(problem || store.action)
+        reviewControls.push(run, feedback, button('Inspect worker and tool status', () => go('infrastructure')))
+        if (sid && modelProblem) {
+          reviewControls.push(link('Manage model budget', '/chat/' + encodeURIComponent(sid) + '#model-budget'))
+        }
+      }
+      if (id && ['queued', 'running', 'blocked'].includes(text(record.state))) {
+        const feedback = el('p', 'subtle')
+        feedback.setAttribute('role', 'status')
+        const cancel = button('Cancel saved-evidence review', () => {
+          cancel.disabled = true
+          const activeRun = reviewControls.find(node => node instanceof HTMLButtonElement &&
+            node.textContent === 'Run saved-evidence review') as HTMLButtonElement | undefined
+          if (activeRun) activeRun.disabled = true
+          feedback.textContent = 'Requesting cancellation…'
+          void store.transitionSavedReview(id, 'cancelled', crypto.randomUUID()).then(updated => {
+            if (feedback.isConnected && store.sid === sid) inspectTask(updated)
+          }).catch(error => {
+            if (!feedback.isConnected || store.sid !== sid) return
+            feedback.textContent = error instanceof Error ? error.message : 'Cancellation could not be confirmed.'
+            cancel.disabled = false
+          })
+        })
+        reviewControls.push(cancel, feedback)
+      }
+      if (id && record.state === 'blocked') {
+        const attempts = number(record.attempts)
+        const limit = number(object(record.budget)?.max_attempts)
+        if (attempts !== null && limit !== null && attempts < limit) {
+          const feedback = el('p', 'subtle')
+          feedback.setAttribute('role', 'status')
+          const requeue = button('Queue review again', () => {
+            requeue.disabled = true
+            feedback.textContent = 'Queuing review…'
+            void store.transitionSavedReview(id, 'queued', crypto.randomUUID()).then(updated => {
+              if (feedback.isConnected && store.sid === sid) inspectTask(updated)
+            }).catch(error => {
+              if (!feedback.isConnected || store.sid !== sid) return
+              feedback.textContent = error instanceof Error ? error.message : 'Queuing could not be confirmed.'
+              requeue.disabled = false
+            })
+          })
+          reviewControls.push(requeue, feedback)
+        } else if (attempts !== null && limit !== null) {
+          reviewControls.push(el('p', 'subtle', 'This review has used all of its task attempts.'))
+        }
+      }
+    }
     detail(taskTitle(record), [badge(record.state),
-      recordFields(record, ['owner_role', 'objective', 'reason', 'created_at', 'expected_output',
+      ...reviewControls,
+      recordFields(record, ['owner_role', 'objective', 'reason', 'created_at', 'started_at', 'finished_at', 'expected_output',
         ...(advanced ? ['id', 'run_id', 'campaign_id', 'dependencies', 'evidence_inputs'] : [])]),
+      ...(result ? [fields([['Specialist result', human(result.status, 'Unknown')],
+        ['Observations awaiting verification', observations.join(' · ') || 'None recorded'],
+        ['Uncertainty', strings(result.uncertainty).join(' · ') || 'None recorded'],
+        ['Recorded rejections', rejections.join(' · ') || 'None recorded']]),
+        el('h3', '', 'Unverified hypotheses'),
+        ...(hypotheses.length ? hypotheses.map(item => {
+          const citations = [...new Set(strings(item.evidence_references))]
+          const prepared = Array.isArray(record.prepared_review_claims) ? record.prepared_review_claims : []
+          const indices = Array.isArray(item.prior_claim_indices) ? item.prior_claim_indices : []
+          const priorClaims = indices.flatMap<HTMLElement>(index => {
+            if (!Number.isSafeInteger(index) || index < 1) return []
+            const reference = object(prepared[index - 1])
+            const producer = reference && currentTasks.find(task =>
+              task.id === reference.task_id && task.run_id === reference.run_id && task.revision === reference.revision)
+            const hypotheses = object(producer?.result)?.hypotheses
+            const position = reference?.hypothesis_index
+            const earlier = Array.isArray(hypotheses) && typeof position === 'number' && Number.isSafeInteger(position) ?
+              object(hypotheses[position]) : null
+            return producer && earlier ? [
+              fields([['Referenced prior claim', text(earlier.description, 'Unavailable')],
+                ['Prior disposition', human(earlier.disposition, 'Not recorded')]]),
+              button('Open prior review', () => inspectTask(producer), 'button small')
+            ] : [el('p', 'subtle', 'The referenced prior claim is unavailable.')]
+          })
+          return el('section', 'stack',
+            el('p', '', text(item.description, text(item.text, 'No description recorded.'))),
+            fields([['Analytical disposition', human(item.disposition, 'Not recorded')],
+              ['Uncertainty', text(item.uncertainty, 'No claim-specific uncertainty recorded.')]]),
+            ...priorClaims,
+            ...(citations.length ? citations.map(id => {
+              const source = assignedEvidence.find(entry => entry.id === id)
+              return source ? recordButton(text(source.summary, id), 'Cited evidence', null, () => inspectEvidence(source)) :
+                el('p', 'subtle', 'Cited evidence unavailable · ' + id)
+            }) : [el('p', 'subtle', 'No evidence cited for this hypothesis.')]))
+        }) : [empty('No hypotheses recorded.')])] : []),
+      ...(object(record.budget) ? [el('h3', '', 'Task resource limits'),
+        recordFields(object(record.budget)!, ['max_attempts', 'max_model_calls', 'max_tokens'])] : []),
       ...(model.length ? [el('h3', '', 'Recorded model attribution'), el('p', 'subtle', unique(model.map(
         attempt => text(attempt.provider) + ' / ' + text(attempt.model))).join(', '))] : []),
       ...assignedEvidence.map(item => recordButton(text(item.summary, 'Evidence ' + text(item.id)), human(item.source_kind),
         null, () => inspectEvidence(item))),
-      ...tasks.filter(item => strings(record.dependencies).includes(text(item.id))).map(item =>
+      ...currentTasks.filter(item => strings(record.dependencies).includes(text(item.id))).map(item =>
         recordButton(taskTitle(item), 'Recorded dependency', item.state, () => inspectTask(item))),
+      ...currentTasks.filter(item => item.internal_review === 'challenge' && strings(item.dependencies).includes(text(record.id))).map(item =>
+        recordButton(taskTitle(item), 'Follow-up review', item.state, () => inspectTask(item))),
+      button('Inspect task history', () => { void inspectTaskTrace(record) }),
       button('View related events', () => { filters.eventQuery = text(record.id); go('events') })])
   }
   const inspectAgent = (record: Json) => {
     const assigned = tasks.filter(task => task.owner_role === record.id)
+    const assignedIds = new Set(assigned.map(task => task.id))
+    const attributed = attempts.filter(attempt => assignedIds.has(attempt.task_id))
+    const tokenTotal = attributed.reduce((total, attempt) => total + (number(attempt.reported_tokens) ?? 0), 0)
+    const reported = attributed.filter(attempt => number(attempt.reported_tokens) !== null).length
+    const measured = attributed.flatMap(attempt => {
+      const duration = number(object(attempt.timings)?.pool_attempt_ms)
+      return duration === null ? [] : [duration]
+    }).sort((a, b) => a - b)
+    const selection = object(store.value('budget')?.configured_selection)
+    const declared = strings(object(store.value('toolRegistry')?.agent_capabilities)?.[text(record.id)])
     detail(human(record.id), [el('p', '', text(record.role, 'Recorded role')), badge(observedState(record)),
       el('p', 'subtle', human(record.registration, 'Registration unknown')),
+      fields([['Completed in engagement', ledger ? String(assigned.filter(task => task.state === 'completed').length) : 'Unknown'],
+        ['Failed in engagement', ledger ? String(assigned.filter(task => task.state === 'failed').length) : 'Unknown'],
+        ['Prompt version', 'Unavailable in the roster'],
+        ['Engagement model selection', [text(selection?.provider), text(selection?.model)].filter(Boolean).join(' / ') || 'Unknown'],
+        ['Declared registry capabilities', declared.join(', ') || 'Unavailable in the registry data'],
+        ['Settled model usage', reported ? tokenTotal.toLocaleString() + ' reported tokens across ' + reported + ' of ' + attributed.length + ' retained attempts' : 'Unknown'],
+        ['Median pool-attempt latency', measured.length ? measured[Math.floor((measured.length - 1) / 2)].toFixed(1) + ' ms' : 'Unknown'],
+        ['Evaluation results', 'No evaluation result in the engagement ledger']]),
+      ...(attributed.length ? [button('Inspect recorded provider usage', () => { filters.attemptAgent = text(record.id); go('analytics') })] : []),
       el('h3', '', 'Assigned tasks'),
       ...(assigned.length ? assigned.map(task => recordButton(taskTitle(task), text(task.reason, date(task.created_at)), task.state,
         () => inspectTask(task))) : [empty(ledger ? 'No assignments recorded for this agent.' : 'Task ledger unavailable.')]),
@@ -129,26 +407,84 @@ export function agents(store: MissionStore, detail: Detail, go: Go, lazy: Lazy, 
   const visibleTasks = tasks.filter(task => (!filters.role || task.owner_role === filters.role) &&
     (!filters.run || task.run_id === filters.run) && (!filters.taskState || task.state === filters.taskState) &&
     (taskTitle(task) + ' ' + text(task.id)).toLowerCase().includes(filters.task.toLowerCase()))
+  const selectSavedReviews = (queued: Json[]) => {
+    const sid = store.sid
+    const feedback = el('p', 'subtle')
+    feedback.setAttribute('role', 'status')
+    const run = el('button', 'button', 'Run selected reviews')
+    run.type = 'submit'
+    const options = queued.map(task => {
+      const input = el('input')
+      input.type = 'checkbox'
+      input.value = text(task.id)
+      const blocker = el('small', 'subtle')
+      return { input, blocker, row: el('div', 'stack', labelControl(taskTitle(task), input), blocker) }
+    })
+    const form = el('form', 'stack',
+      el('p', 'subtle', 'Select up to eight reviews. Include queued prerequisites. The coordinator can follow a cited analysis with a challenge using the same engagement model budget.'),
+      ...options.map(option => option.row), run, feedback)
+    const evaluate = () => {
+      const selection = options.filter(option => option.input.checked).map(option => option.input.value)
+      const selected = new Set(selection)
+      for (const option of options) option.blocker.textContent = reviewProblem(option.input.value, selected)
+      const problem = budgetProblem() || (selection.length > maxSavedReviews ? 'Select up to eight reviews.' : '') ||
+        selection.map(id => reviewProblem(id, selected)).find(Boolean)
+      run.disabled = !selection.length || Boolean(problem || store.action) || store.sid !== sid
+      feedback.textContent = problem || selection.length + ' selected'
+      return selection
+    }
+    form.addEventListener('change', evaluate)
+    form.addEventListener('submit', event => {
+      event.preventDefault()
+      const selection = evaluate()
+      if (run.disabled) return
+      run.disabled = true
+      for (const option of options) option.input.disabled = true
+      feedback.textContent = 'Waiting for the selected review results…'
+      void store.runSavedReviews(selection).then(outcome => {
+        if (!form.isConnected || store.sid !== sid) return
+        const states = object(outcome?.states)
+        if (!states) {
+          feedback.textContent = store.notice || 'Refresh Tasks before running these reviews again.'
+          return
+        }
+        const records = rows(store.value('team')?.tasks)
+        const errors = object(outcome?.errors)
+        detail('Saved-evidence review results', Object.entries(states).map(([id, state]) => {
+          const task = records.find(record => record.id === id)
+          const error = text(object(errors?.[id])?.message, text(errors?.[id]))
+          return task ? recordButton(taskTitle(task), error, state, () => inspectTask(task)) :
+            el('p', 'subtle', human(state) + ' · ' + id)
+        }))
+      })
+    })
+    evaluate()
+    if (sid && budgetProblem()) form.append(link('Manage model budget', '/chat/' + encodeURIComponent(sid) + '#model-budget'))
+    detail('Select saved-evidence reviews', [form])
+  }
+  const taskList = (items: Json[]) => windowed(items, record => recordButton(taskTitle(record),
+    human(record.owner_role) + ' · ' + text(record.reason, date(record.created_at)), record.state, () => inspectTask(record)), 'Task records')
   const graph = el('div', 'viz', empty('Preparing the orchestration graph…'))
   const visibleAgents = roster.filter(row => !filters.role || row.id === filters.role)
   const evidenceById = new Map(evidence.map(item => [text(item.id), item]))
-  const taskById = new Map(visibleTasks.map(item => [text(item.id), item]))
+  const graphTasks = visibleTasks.slice(0, 80)
+  const taskById = new Map(graphTasks.map(item => [text(item.id), item]))
   const agentById = new Map(visibleAgents.map(item => [text(item.id), item]))
-  const linkedEvidence = advanced ? new Set(visibleTasks.flatMap(task => strings(task.evidence_inputs))) : new Set<string>()
+  const linkedEvidence = advanced ? new Set(graphTasks.flatMap(task => strings(task.evidence_inputs)).slice(0, 80)) : new Set<string>()
   const graphNodes: GraphNode[] = [
     ...visibleAgents.map(record => ({ id: 'a:' + text(record.id), label: human(record.id), column: 0, kind: 'Agent',
       state: observedState(record) })),
-    ...visibleTasks.map(task => ({ id: 't:' + text(task.id), label: taskTitle(task), column: 1, kind: 'Task', state: text(task.state, 'unknown') })),
+    ...graphTasks.map(task => ({ id: 't:' + text(task.id), label: taskTitle(task), column: 1, kind: 'Task', state: text(task.state, 'unknown') })),
     ...[...linkedEvidence].filter(id => evidenceById.has(id)).map(id => ({
       id: 'e:' + id, label: text(evidenceById.get(id)?.summary, id), column: 2, kind: 'Evidence', state: 'recorded'
     }))
   ]
-  const edges: Edge[] = visibleTasks.flatMap(task => [
+  const edges: Edge[] = graphTasks.flatMap(task => [
     { source: 'a:' + text(task.owner_role), target: 't:' + text(task.id), kind: 'Assignment' },
     ...strings(task.dependencies).map(id => ({ source: 't:' + id, target: 't:' + text(task.id), kind: 'Dependency' })),
     ...(advanced ? strings(task.evidence_inputs).map(id => ({ source: 't:' + text(task.id), target: 'e:' + id, kind: 'Evidence reference' })) : [])
   ])
-  if (graphNodes.length) lazy(graph, async () => {
+  if (graphNodes.length && (mode === 'agents' || filters.taskLayout === 'dependencies')) lazy(graph, async () => {
     const module = await import('./graph')
     if (!graph.isConnected) return
     return module.mountGraph(graph, { nodes: graphNodes, edges, label: 'Agent assignments and recorded dependencies',
@@ -160,6 +496,41 @@ export function agents(store: MissionStore, detail: Detail, go: Go, lazy: Lazy, 
         if (type === 'e:' && evidenceById.has(key)) inspectEvidence(evidenceById.get(key)!)
       } })
   })
+  if (mode === 'communication') return [sourceCard(store, 'team', 'Recorded coordination', () => [
+    el('p', 'subtle', 'Task history shows captured dependency roles and evidence prepared for review. Message delivery is available only when independently recorded.'),
+    ...(visibleTasks.length ? [windowed(visibleTasks, task => recordButton(taskTitle(task), human(task.owner_role),
+      task.state, () => { void inspectTaskTrace(task) }), 'Communication task histories')] : [empty('No task histories retained.')]),
+  ])]
+  if (mode === 'tasks') {
+    const ordered = [...visibleTasks].sort((a, b) => text(a.created_at).localeCompare(text(b.created_at)))
+    const queued = ordered.filter(task => queuedSavedReview(task, store.sid))
+    const selectReviews = button('Select saved-evidence reviews', () => selectSavedReviews(queued))
+    selectReviews.disabled = Boolean(store.action) || store.slot('team').state !== 'available'
+    const shownStates = unique(ordered.map(task => text(task.state, 'unknown')))
+    const table = el('table', 'task-table', el('thead', '', el('tr', '', ...['Task', 'Agent', 'State', 'Created'].map(label => {
+      const heading = el('th', '', label)
+      heading.scope = 'col'
+      return heading
+    }))), el('tbody', '', ...ordered.slice(0, 100).map(task => el('tr', '',
+      el('td', '', button(taskTitle(task), () => inspectTask(task), 'button small')),
+      el('td', '', human(task.owner_role)), el('td', '', badge(task.state)), el('td', '', date(task.created_at))))))
+    return [sourceCard(store, 'team', 'Task center', () => [
+      el('div', 'filter-bar', labelControl('Task layout', select([['table', 'Table'], ['board', 'Kanban board'],
+        ['timeline', 'Creation timeline'], ['dependencies', 'Dependencies']], filters.taskLayout,
+        value => { filters.taskLayout = value; change() })),
+        filterText('Search tasks', filters.task, 'task-query', value => { filters.task = value; change() }),
+        filterSelect('Task state', unique(tasks.map(task => text(task.state))), filters.taskState,
+          value => { filters.taskState = value; change() })),
+      ...(ordered.length ? [
+        filters.taskLayout === 'dependencies' ? graph : filters.taskLayout === 'timeline' ? taskList(ordered) :
+          filters.taskLayout === 'board' ? el('div', 'task-board', ...shownStates.map(state =>
+            el('section', 'stack', el('h3', '', human(state)), taskList(ordered.filter(task => text(task.state, 'unknown') === state))))) :
+            el('div', 'table-scroll', table),
+        ...(filters.taskLayout === 'table' && ordered.length > 100 ? [empty('Showing 100 tasks. Filter or use the timeline for more.')] : []),
+        ...(filters.taskLayout === 'dependencies' && visibleTasks.length > 80 ? [empty('Showing 80 tasks. Filter to inspect other dependencies.')] : []),
+      ] : [empty('No recorded tasks match these filters.')]),
+    ], queued.length ? selectReviews : undefined)]
+  }
   return [
     card('Recorded orchestration', [
       el('div', 'filter-grid',
@@ -172,6 +543,7 @@ export function agents(store: MissionStore, detail: Detail, go: Go, lazy: Lazy, 
         filterText('Search tasks', filters.task, 'task-query', value => { filters.task = value; change() })),
       ...(status(store.slot('team')) ? [status(store.slot('team'))!] : []),
       ...(status(store.slot('roster')) ? [status(store.slot('roster'))!] : []),
+      ...(visibleTasks.length > 80 ? [empty('Graph shows the first 80 matching tasks.')] : []),
       graphNodes.length ? graph : empty('No visible assignments or registered roles for this selection.'),
       el('p', 'subtle', 'Solid links show task assignments. Dashed links follow stored dependencies. Dotted links identify recorded evidence references.')
     ]),
@@ -220,9 +592,12 @@ export function operations(store: MissionStore, detail: Detail) {
   const campaignState = text(campaign?.state)
   const receipt = (row: Json) => detail('Worker receipt', [badge(row.state),
     fields([['Job ID', text(row.id, 'Unknown')], ['Recorded', date(row.created_at)],
+      ['Typed capability', text(row.capability, 'Not recorded')],
+      ['Declared receipt version', text(row.attested_declared_version, 'Unknown')],
       ['Cancellation requested', row.cancel_requested === true ? 'Yes' : 'No'],
       ['Exit code', typeof row.exit_code === 'number' ? String(row.exit_code) : 'Not recorded'],
-      ...(advanced ? [['Output SHA-256', text(row.output_sha256, 'Not recorded')] as [string, string]] : [])])])
+      ...(advanced ? [['Output SHA-256', text(row.output_sha256, 'Not recorded')] as [string, string]] : [])]),
+    ...sourceReviewFields(row)])
   const command = (row: Json) => detail('Recorded command', [recordFields(row,
     ['tool', 'state', 'duration_ms', 'agent', ...(advanced ? ['id'] : [])]),
     fields([['Recorded', date(row.timestamp)], ['Sanitized output', row.http_status ? 'HTTP status ' + String(row.http_status) : 'No public output recorded']])])
@@ -300,7 +675,9 @@ export function operations(store: MissionStore, detail: Detail) {
     el('div', 'split-grid',
       sourceCard(store, 'operations', 'Worker receipts', () => operationData?.receipts === null ? [
         badge('unavailable', 'Receipt store unavailable')
-      ] : receipts.length ? [windowed(receipts, row => recordButton(text(row.id), date(row.created_at), row.state, () => receipt(row)),
+      ] : receipts.length ? [windowed(receipts, row => recordButton(
+        text(row.capability, text(row.id)), [text(row.capability) ? text(row.id) : '', date(row.created_at)].filter(Boolean).join(' · '),
+        row.state, () => receipt(row)),
         'Worker receipts')] : [empty('No retained worker receipts.')]),
       sourceCard(store, 'operations', 'Command history', () => commands.length ? [
         el('p', 'subtle', 'Process-local command history'),
@@ -311,7 +688,7 @@ export function operations(store: MissionStore, detail: Detail) {
 }
 
 const stages = ['Objective', 'Planning', 'Agent task', 'Execution proposal', 'Authorization', 'Worker execution',
-  'Observation', 'Evidence', 'Verification', 'Review', 'Outcome']
+  'Observation', 'Evidence', 'Verification', 'Review', 'Model accounting', 'Outcome']
 
 function eventGraph(events: TimelineEvent[], root: HTMLElement, store: MissionStore, detail: Detail, lazy: Lazy) {
   const recent = events.slice(0, 70)
@@ -371,13 +748,32 @@ export function events(store: MissionStore, detail: Detail, lazy: Lazy, filters:
   }
   const referenced = [...rows(operations?.receipts).map(row => snapshot(row, 'worker')),
     ...rows(operations?.pending).filter(row => !registered.has(text(row.action_id))).map(row => snapshot(row, 'approval'))].filter(item => item !== null)
+  const modelEvents = rows(store.value('budget')?.attempts).flatMap((row): TimelineEvent[] => {
+    const id = text(row.id)
+    if (!id || row.session_id !== store.sid) return []
+    return [['model_attempt_reserved', row.timestamp, 'reserved'],
+      ['model_attempt_settled', row.finished_at, row.state]].flatMap(([kind, time, state]) => {
+      const timestamp = text(time)
+      if (!Number.isFinite(Date.parse(timestamp)) || (kind === 'model_attempt_settled' && !['succeeded', 'failed'].includes(text(state)))) return []
+      return [{ id: id + ':' + kind, entity_id: id, kind: String(kind), timestamp, sequence: null, source: 'model',
+        stage: 'Model accounting', session_id: store.sid, campaign_id: text(row.campaign_id) || null,
+        agent: null, state: text(state) || null, task_id: text(row.task_id) || null,
+        run_id: text(row.run_id) || null, job_id: null, correlation_id: text(row.logical_request_id) || null,
+        reason_code: kind === 'model_attempt_settled' ? text(row.error_code) || null : null,
+        model: text(row.model) || null, provider: text(row.provider) || null, evidence_ids: [], dependency_ids: [] }]
+    })
+  })
   const current = store.eventsDenied ? [] : archived ? (archived.page?.events ?? []).slice().reverse() :
-    [...store.events(), ...referenced, ...authorizations].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
+    [...new Map([...store.events(), ...referenced, ...authorizations, ...modelEvents].map(event =>
+      [JSON.stringify([event.source, event.campaign_id, event.id]), event])).values()]
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp) ||
+        (a.source === b.source ? (b.sequence ?? 0) - (a.sequence ?? 0) : a.source.localeCompare(b.source)) ||
+        a.id.localeCompare(b.id))
   const replay = filters.replay
   const all = replay?.records ?? current
   const filtered = all.filter(event => (!filters.eventSource || filters.eventSource === event.source) &&
     [event.kind, event.stage, event.agent, event.state, event.task_id, event.run_id, event.job_id, event.id, event.entity_id, event.correlation_id,
-      ...event.evidence_ids].some(field => text(field).toLowerCase().includes(filters.eventQuery.toLowerCase())))
+      event.model, event.provider, ...event.evidence_ids].some(field => text(field).toLowerCase().includes(filters.eventQuery.toLowerCase())))
   const oldestFirst = replay ? filtered.slice().reverse() : []
   const index = Math.min(filters.replayIndex, oldestFirst.length - 1)
   const display = replay ? oldestFirst.slice(0, index + 1).reverse() : filtered
@@ -390,7 +786,7 @@ export function events(store: MissionStore, detail: Detail, lazy: Lazy, filters:
   toggleReplay.disabled = !replay && !filtered.length
   const heading = el('div', 'timeline-controls',
     filterText('Search events', filters.eventQuery, 'event-query', value => { filters.eventQuery = value; filters.replayIndex = 0; change() }),
-    filterSelect('Event source', archived ? ['campaign'] : ['team', 'campaign', 'worker', 'approval', 'authorization'], filters.eventSource,
+    filterSelect('Event source', archived ? ['campaign'] : ['team', 'campaign', 'worker', 'approval', 'authorization', 'model'], filters.eventSource,
       value => { filters.eventSource = value; filters.replayIndex = 0; change() }),
     toggleReplay)
   const coverage = el('div', 'coverage-line', ...(['team', 'campaign'] as const).map(source => {
@@ -400,7 +796,8 @@ export function events(store: MissionStore, detail: Detail, lazy: Lazy, filters:
       (page?.has_more ? ' · newer records pending' : '') +
       (page?.gap ? ' · retention gap' : ''))
   }), badge(store.stream === 'Run stream connected' ? 'running' : 'unknown', store.stream),
-    store.streamGap ? badge('stale', 'Run stream reported an event gap') : null)
+    store.streamGap ? badge('stale', 'Run stream reported an event gap') : null,
+    !archived ? badge(store.slot('budget').state, 'Model accounting · ' + human(store.slot('budget').state)) : null)
   const options: Node[] = []
   if (!replay) {
     const entries = store.campaigns()
@@ -495,22 +892,114 @@ export function events(store: MissionStore, detail: Detail, lazy: Lazy, filters:
   return result
 }
 
-export function investigation(store: MissionStore, detail: Detail, lazy: Lazy) {
+export function investigation(store: MissionStore, detail: Detail, lazy: Lazy, filters: Filters, change: () => void) {
   const team = store.value('team')
   const evidence = rows(team?.evidence)
   const advanced = store.preferences.mode === 'advanced'
   function inspectEvidence(row: Json) {
+    const controls: HTMLElement[] = []
+    const id = text(row.id)
+    const sid = store.sid
+    if (id && row.session_id === sid && text(row.owner_id) && store.slot('team').state === 'available') {
+      const objective = el('textarea')
+      objective.required = true
+      objective.maxLength = 4000
+      const submit = el('button', 'button', 'Queue saved-evidence review')
+      submit.type = 'submit'
+      const feedback = el('div')
+      feedback.setAttribute('role', 'status')
+      const selected = new Set([id])
+      const candidates = evidence.filter(item =>
+        item.session_id === sid && item.owner_id === row.owner_id && text(item.id) && item.id !== id)
+      const picked = el('p', 'subtle', '1 evidence record selected')
+      picked.setAttribute('role', 'status')
+      const picker = el('fieldset', 'stack review-evidence-options')
+      if (candidates.length) {
+        picker.append(el('details', 'stack', el('summary', '', 'Add comparison evidence'),
+          windowed(candidates, candidate => {
+            const itemId = text(candidate.id)
+            const label = text(candidate.summary, 'Evidence ' + itemId)
+            const option = el('input')
+            option.type = 'checkbox'
+            option.checked = selected.has(itemId)
+            option.setAttribute('aria-label', label)
+            option.addEventListener('change', () => {
+              if (option.checked && selected.size >= maxReviewEvidence) {
+                option.checked = false
+                feedback.textContent = 'Select at most ' + maxReviewEvidence + ' evidence records.'
+                return
+              }
+              if (option.checked) selected.add(itemId)
+              else selected.delete(itemId)
+              picked.textContent = selected.size === 1 ? '1 evidence record selected' :
+                selected.size + ' evidence records selected'
+              feedback.textContent = ''
+            })
+            return el('label', 'record', el('span', 'record-copy', el('strong', '', label),
+              el('small', '', human(candidate.source_kind) + ' · ' + date(candidate.source_timestamp))), option)
+          }, 'Comparison evidence')), picked)
+      }
+      const form = el('form', 'stack', labelControl('Review question', objective),
+        ...(candidates.length ? [picker] : []), submit, feedback)
+      let requestId: string | undefined
+      let attemptedInput = ''
+      form.addEventListener('submit', event => {
+        event.preventDefault()
+        if (submit.disabled || store.sid !== sid) return
+        const question = objective.value.trim()
+        if (!question) { feedback.textContent = 'Enter a review question.'; return }
+        const ids = [id, ...candidates.map(item => text(item.id)).filter(itemId => selected.has(itemId))]
+        const input = JSON.stringify([ids, question])
+        if (input !== attemptedInput) requestId = crypto.randomUUID()
+        attemptedInput = input
+        submit.disabled = true
+        objective.readOnly = true
+        picker.disabled = true
+        feedback.textContent = 'Queuing review…'
+        void store.queueSavedReview(ids, question, requestId!).then(() => {
+          if (form.isConnected && store.sid === sid) {
+            feedback.replaceChildren(el('p', '', 'Review queued.'), link('Open Tasks', store.href('tasks')))
+          }
+        }).catch(error => {
+          if (form.isConnected && store.sid === sid) {
+            feedback.textContent = error instanceof Error ? error.message : 'Queuing could not be confirmed.'
+            submit.disabled = false
+            objective.readOnly = false
+            picker.disabled = false
+          }
+        })
+      })
+      controls.push(el('p', 'subtle', 'Queue the selected evidence here, then start the review from Tasks.'), form)
+    }
     detail('Evidence record', [
-      recordFields(row, ['summary', 'description', 'source_kind', 'source_id', 'created_at', ...(advanced ? ['id', 'digest', 'scope_digest'] : [])])
+      recordFields(row, ['summary', 'description', 'source_kind', 'source_id', 'provenance', 'trust',
+        'source_timestamp', 'cataloged_at', ...(advanced ? ['id', 'digest', 'scope_digest'] : [])]),
+      ...savedCaptureLink(store, detail, row),
+      ...controls
     ])
   }
-  function inspectFinding(row: Json) {
+  function inspectFinding(row: Json, verification = false) {
     const references = strings(row.evidence_references)
+    const absent = references.filter(id => !evidence.some(record => record.id === id))
+    const reviews = [['human_review', 'Human review'], ['human_signoff', 'Human sign-off']].flatMap(([key, title]) => {
+      const review = object(row[key])
+      return review ? [card(title, [recordFields(review, ['revision', 'reason'])])] : []
+    })
+    const controls = [['test', 'Recorded test'], ['reproduction', 'Independent reproduction']].flatMap(([key, title]) => {
+      const proof = object(row[key])
+      return proof ? [card(title, [recordFields(proof, ['evidence_references', 'negative_control_references',
+        'ownership_references', 'permission_references'])])] : []
+    })
+    const disposition = verification ? dispositionForm(store, row) : null
     detail(text(row.title, 'Finding'), [badge(row.state ?? row.severity),
       recordFields(row, ['severity', 'summary', 'description', 'state', 'verification_current',
-        'ready_for_external_submission', 'smallest_missing_validation']),
+        'ready_for_external_submission', 'smallest_missing_validation', 'reason', 'revision']),
+      ...(absent.length ? [fields([['References absent from the loaded catalog', absent.join(', ')]])] : []),
+      ...reviews, ...controls,
       ...evidence.filter(record => references.includes(text(record.id))).map(record =>
-        recordButton(text(record.summary, text(record.id)), 'Referenced evidence', undefined, () => inspectEvidence(record)))])
+        recordButton(text(record.summary, text(record.id)), 'Referenced evidence', undefined, () => inspectEvidence(record))),
+      ...(verification && text(row.id) ? [findingHistory(store, text(row.id), evidence, inspectEvidence)] : []),
+      ...(disposition ? [disposition] : [])])
   }
   async function inspectReport(row: Json) {
     const id = text(row.id)
@@ -632,9 +1121,19 @@ export function investigation(store: MissionStore, detail: Detail, lazy: Lazy) {
   }
   return [
     el('div', 'split-grid',
-      sourceCard(store, 'verification', 'Verification and review', value => rows(value.findings).length ?
-        rows(value.findings).map(row => recordButton(text(row.title, 'Candidate finding'), human(row.severity),
-          row.state, () => inspectFinding(row))) : [empty('No durable verification records.')]),
+      sourceCard(store, 'verification', 'Verification and review', value => {
+        const records = rows(value.findings)
+        const filtered = filterFindings(records, filters.findingState, filters.findingQuery)
+        return [
+          el('div', 'filter-bar', filterText('Search findings', filters.findingQuery, 'finding-query',
+            query => { filters.findingQuery = query; change() }),
+            filterSelect('Review state', unique(records.map(row => text(row.state))), filters.findingState,
+              state => { filters.findingState = state; change() })),
+          ...(filtered.length ? [windowed(filtered, row => recordButton(text(row.title, 'Candidate finding'), human(row.severity),
+            row.state, () => inspectFinding(row, true)), 'Matching verification records')] :
+            [empty(records.length ? 'No verification records match these filters.' : 'No durable verification records.')]),
+        ]
+      }),
       sourceCard(store, 'findings', 'Recorded findings', value => rows(value.findings).length ?
         rows(value.findings).map(row => recordButton(text(row.title, text(row.name, 'Finding')), human(row.severity),
           row.status, () => inspectFinding(row))) : [empty('No findings recorded by the finding store.')])),
@@ -768,9 +1267,11 @@ export function analytics(store: MissionStore, detail: Detail, lazy: Lazy, filte
       })),
     card('Attempt records', filtered.length ? [windowed([...filtered].reverse(), row => recordButton(
       text(row.model, 'Model attempt'), human(row.provider) + ' · ' + date(row.timestamp), row.state,
-      () => detail('Physical model attempt', [recordFields(row, ['id', 'provider', 'model', 'state', 'session_id', 'campaign_id', 'task_id',
+      () => detail('Physical model attempt', [recordFields(row, ['id', 'provider', 'state', 'session_id', 'campaign_id', 'task_id',
         'run_id', 'timestamp', 'finished_at', 'reserved_tokens', 'reported_tokens', 'input_tokens', 'output_tokens', 'logical_request_id',
-        'attempt_index']), fields([['Reserved cost', money(row.reserved_cost_microusd)],
+        'attempt_index']), fields([['Requested model', text(row.model, 'Unknown')],
+        ['Provider-reported model', text(row.provider_reported_model, 'Unavailable')],
+        ['Reserved cost', money(row.reserved_cost_microusd)],
         ['Reported cost estimate', money(row.reported_cost_microusd)],
         ['Pool attempt time', number(object(row.timings)?.pool_attempt_ms) !== null ? count(object(row.timings)?.pool_attempt_ms) + ' ms' : 'Unknown'],
         ['Outcome', timeouts.includes(text(row.error_code)) ? 'Timeout' : human(row.state)],
@@ -780,20 +1281,152 @@ export function analytics(store: MissionStore, detail: Detail, lazy: Lazy, filte
 }
 
 export function infrastructure(store: MissionStore, detail: Detail, lazy: Lazy) {
-  const ready = store.value('ready')
-  const service = store.value('health')
-  const capability = store.value('capabilities')
+  const healthSlot = store.slot('health')
+  const readySlot = store.slot('ready')
+  const capabilitySlot = store.slot('capabilities')
+  const ready = readySlot.state === 'available' ? readySlot.value : null
+  const service = healthSlot.state === 'available' ? healthSlot.value : null
+  const capability = capabilitySlot.state === 'available' ? capabilitySlot.value : null
   const worker = object(capability?.worker)
   const providerList = rows(store.value('providers')?.keys)
+  const restrictions = store.slot('toolRestrictions')
+  const blockedCapabilities = new Set(restrictions.state === 'available' ? strings(restrictions.value?.blocked) : [])
+  const engagementBlocked = restrictions.state === 'available' && strings(restrictions.value?.engagement_blockers).length > 0
+  const blockerMessages = new Map([
+    ['engagement_inactive', 'Execution requires an active engagement.'],
+    ['worker_execution_fenced', 'Worker execution is fenced for this engagement.'],
+    ['program_policy', 'Typed profiles are unavailable under a program policy.'],
+    ['bug_bounty_mode', 'Typed profiles are unavailable in bug bounty mode.'],
+    ['missing_scope', 'Add authorized assets to the engagement scope.'],
+  ])
+  function restrictionControl(capability: string) {
+    const sid = store.sid
+    const signal = store.signal
+    const panel = el('div', 'stack')
+    if (!sid) return el('p', 'subtle', 'Select an engagement to inspect its capability restrictions.')
+    const feedback = el('p', 'subtle', 'Loading engagement restriction…')
+    feedback.setAttribute('role', 'status')
+    panel.append(feedback)
+    function showBlocked() {
+      feedback.textContent = 'Blocked for this engagement.'
+      const audit = object(object(store.value('toolRestrictions')?.audit)?.[capability])
+      panel.append(fields([['Restriction recorded', date(audit?.recorded_at)],
+        ['Audit record', text(audit?.record_id, 'Unavailable')]]))
+    }
+    void store.load('toolRestrictions').then(() => {
+      if (signal.aborted || !panel.isConnected) return
+      const slot = store.slot('toolRestrictions')
+      if (slot.state !== 'available') {
+        feedback.textContent = 'The engagement restriction could not be verified.'
+        return
+      }
+      const state = text(slot.value?.engagement_state)
+      if (state) panel.prepend(fields([['Engagement state', human(state)]]))
+      for (const reason of strings(slot.value?.engagement_blockers)) {
+        panel.insertBefore(el('p', 'subtle', blockerMessages.get(reason) ?? 'An engagement policy blocker applies.'), feedback)
+      }
+      if (strings(slot.value?.blocked).includes(capability)) {
+        showBlocked()
+        return
+      }
+      if (state && state !== 'active') {
+        feedback.textContent = 'Changing restrictions requires an active engagement.'
+        return
+      }
+      feedback.textContent = 'Existing execution policy applies.'
+      const block = button('Block this capability', () => {
+        if (signal.aborted || block.disabled ||
+            !window.confirm('Block this typed capability for the selected engagement? This affects future requests.')) return
+        block.disabled = true
+        feedback.textContent = 'Saving restriction…'
+        void request('/api/sessions/' + encodeURIComponent(sid) + '/tool-restrictions', {
+          method: 'POST', data: { capability }, signal
+        }).then(async response => {
+          if (response?.session_id !== sid || !strings(response.blocked).includes(capability)) {
+            throw new Error('The API did not confirm the restriction.')
+          }
+          await store.load('toolRestrictions', true)
+          if (!signal.aborted && panel.isConnected) {
+            block.remove()
+            showBlocked()
+          }
+        }).catch(error => {
+          if (signal.aborted || !panel.isConnected) return
+          feedback.textContent = error instanceof Error ? error.message : 'The restriction could not be confirmed.'
+          block.disabled = false
+        })
+      })
+      panel.append(block)
+    })
+    return panel
+  }
+  function receiptHistory(capability: unknown) {
+    const panel = el('div', 'stack', empty('Loading engagement receipts…'))
+    const sid = store.sid
+    void store.load('operations').then(() => {
+      if (!panel.isConnected || store.sid !== sid) return
+      const operations = store.slot('operations')
+      const history = operations.state === 'available' ?
+        rows(operations.value?.receipts).filter(receipt => receipt.capability === capability) : []
+      if (!history.length) {
+        panel.replaceChildren(empty(!sid ? 'Select an engagement to inspect its receipts.' :
+          operations.state !== 'available' || operations.value?.receipts == null ? 'Engagement receipts are unavailable.' :
+          'No matching receipt in the recent engagement history.'))
+        return
+      }
+      const latestSuccess = history.find(receipt => receipt.state === 'succeeded' && receipt.exit_code === 0)
+      const latestFailure = history.find(receipt => receipt.state === 'failed')
+      panel.replaceChildren(
+        fields([['Most recent successful receipt', latestSuccess ? date(latestSuccess.created_at) : 'None in recent records'],
+          ['Most recent failed receipt', latestFailure ? date(latestFailure.created_at) : 'None in recent records']]),
+        ...history.slice(0, 10).map(receipt => recordButton(text(receipt.id), date(receipt.created_at), receipt.state,
+          () => inspectReceipt(receipt))))
+    })
+    return panel
+  }
+  function inspectReceipt(receipt: Json) {
+    const sid = store.sid
+    const id = text(receipt.id)
+    const controls: HTMLElement[] = []
+    if (sid && id && receipt.catalog_eligible === true) {
+      const requestId = crypto.randomUUID()
+      const feedback = el('div')
+      feedback.setAttribute('role', 'status')
+      const save = button('Add receipt to evidence', () => {
+        if (store.sid !== sid || save.disabled) return
+        save.disabled = true
+        feedback.textContent = 'Cataloging receipt…'
+        void store.catalogEvidence('worker', id, requestId).then(() => {
+          if (!feedback.isConnected || store.sid !== sid) return
+          feedback.replaceChildren(el('p', '', 'Receipt cataloged.'), link('Open Investigation', store.href('investigation')))
+        }).catch(error => {
+          if (!feedback.isConnected || store.sid !== sid) return
+          feedback.textContent = error instanceof Error ? error.message : 'Cataloging could not be confirmed.'
+          save.disabled = false
+        })
+      })
+      controls.push(save, feedback)
+    } else {
+      controls.push(el('p', 'subtle', text(receipt.catalog_issue,
+        'Cataloging requires a terminal receipt with valid output digests.')))
+    }
+    detail('Worker receipt', [recordFields(receipt, ['id', 'state', 'created_at', 'capability',
+      'attested_declared_version', 'exit_code', 'output_sha256']), ...sourceReviewFields(receipt), ...controls])
+  }
   const components = [
-    ['FastAPI', service?.status === 'ok' ? 'operational' : 'unknown', text(service?.version, 'Version unknown')],
-    ['PostgreSQL', ready?.database === true ? 'operational' : ready?.database === false ? 'unavailable' : 'unknown', 'Readiness database probe'],
-    ['Redis', ready?.cache === true ? 'operational' : ready?.cache === false ? 'unavailable' : 'unknown', 'Optional session cache'],
-    ['Kali worker', text(worker?.status, 'unknown'), worker?.status === 'online' ?
+    ['FastAPI', service?.status === 'ok' ? 'operational' : healthSlot.state === 'stale' ? 'stale' : 'unknown', text(service?.version, 'Version unknown')],
+    ['PostgreSQL', ready?.database === true ? 'operational' : ready?.database === false ? 'unavailable' :
+      readySlot.state === 'stale' ? 'stale' : 'unknown', 'Readiness database probe'],
+    ['Redis', ready?.cache === true ? 'operational' : ready?.cache === false ? 'unavailable' :
+      readySlot.state === 'stale' ? 'stale' : 'unknown', 'Optional session cache'],
+    ['Kali worker', text(worker?.status, capabilitySlot.state === 'stale' ? 'stale' : 'unknown'), worker?.status === 'online' ?
       strings(worker.available_tools).join(', ') || 'No tools advertised' : 'Capability probe']
   ]
   const graph = el('div', 'viz', empty('Preparing infrastructure topology…'))
   const advanced = store.preferences.mode === 'advanced'
+  const responseTimes = diagnostics.filter(row => row.status > 0).map(row => row.duration).sort((a, b) => a - b)
+  const percentile = (p: number) => responseTimes.length
+    ? responseTimes[Math.ceil(responseTimes.length * p) - 1].toFixed(1) + ' ms' : 'Unavailable'
   if (advanced) lazy(graph, async () => {
     const module = await import('./graph')
     if (!graph.isConnected) return
@@ -814,18 +1447,71 @@ export function infrastructure(store: MissionStore, detail: Detail, lazy: Lazy) 
       ...components.map(([name, state, explanation]) => el('div', 'infra-row', el('div', '', el('strong', '', name),
         el('small', '', explanation)), badge(state)))]),
     sourceCard(store, 'capabilities', 'Worker capabilities', value => [
-      fields([['Operationally advertised', worker?.status === 'online' ? strings(worker.available_tools).join(', ') || 'None' : 'Unknown'],
-        ['Integrated profiles', strings(value.supported_profiles).join(' · ') || 'Not recorded'],
-        ['Installed inventory', 'Not measured by this endpoint'], ['Isolation', 'Worker policy enforced server-side'],
+      fields([['Advertised legacy tools', worker?.status === 'online' ? strings(worker.available_tools).join(', ') || 'None' : 'Unknown'],
+        ['Legacy profiles', strings(value.supported_profiles).join(' · ') || 'Not recorded'],
         ['CPU, memory and GPU telemetry', 'Not measured by this endpoint']]),
       el('p', 'subtle', strings(value.unavailable).length ? 'Unavailable capabilities · ' + strings(value.unavailable).join(' · ') : '')
     ])),
+    sourceCard(store, 'toolRegistry', 'Typed Kali worker profiles', value => {
+      const probe = object(value.worker)
+      const probeState = store.slot('toolRegistry').state
+      const online = probe?.status === 'online' && probeState === 'available'
+      const contract = online ? text(probe?.typed_contract_status, 'not_reported') : 'unavailable'
+      return [
+        fields([['Worker probe', human(probeState === 'available' ? probe?.status : probeState, 'Unknown')],
+          ['Observed at', text(probe?.observed_at, 'Unknown')], ['Adapter contract', human(contract)],
+          ['Runtime execution', 'Unverified by the capability probe']]),
+        ...(contract === 'mismatch' ? [
+          el('p', 'subtle', 'Typed requests require matching Fedora and Kali adapter revisions.')
+        ] : []),
+        ...(store.sid && restrictions.state !== 'available' ?
+          [el('p', 'subtle', restrictions.state === 'loading' ? 'Loading engagement restrictions…' :
+            'Engagement restrictions are unavailable.')] : []),
+        ...rows(value.typed_adapters).map(row => {
+          const state = online ? row.worker_available === true ? 'advertised' : 'not advertised' : 'unknown'
+          const version = text(row.declared_version)
+          const blocked = engagementBlocked || blockedCapabilities.has(text(row.capability))
+          const incompatible = state === 'advertised' && contract === 'mismatch'
+          return recordButton(text(row.tool), [
+            version ? 'Declared version ' + version : 'Version unknown',
+            ...(blocked || incompatible ? ['Worker advertisement ' + human(state)] : []),
+            ...(blocked && incompatible ? ['Adapter contract mismatch'] : [])
+          ].join(' · '), blocked ? 'blocked' : incompatible ? 'incompatible' : state,
+            () => detail(text(row.tool), [fields([['Capability', text(row.capability)], ['Worker advertisement', human(state)],
+              ['Adapter contract', human(contract)], ['Fedora contract digest', text(value.typed_registry_sha256, 'Unknown')],
+              ['Kali contract digest', online ? text(probe?.typed_registry_sha256, 'Unknown') : 'Unknown'],
+              ['Documented', 'Typed adapter contract'], ['Registered', row.implemented === true ? 'Typed adapter' : 'Unknown'],
+              ['Installed', 'Unknown'], ['Adapter tested', 'Consult the checked-in adapter regression suite'],
+              ['Environment', 'Isolated Kali worker'], ['Result interpretation evaluated', 'No evaluation loaded'],
+              ['Declared version', version || 'Unknown'], ['Image pin', text(row.image_id, 'Unknown')],
+              ['Timeout', number(row.timeout_seconds) === null ? 'Unknown' : count(row.timeout_seconds) + ' s'],
+              ['Risk', human(row.risk, 'Unknown')], ['Authorization', human(row.authorization, 'Unknown')],
+              ['Runtime execution', 'Unverified by the capability probe']]),
+              el('h3', '', 'Engagement restriction'), restrictionControl(text(row.capability)),
+              el('h3', '', 'Recent receipts for this engagement'),
+              receiptHistory(row.capability)]))
+        })
+      ]
+    }),
+    sourceCard(store, 'toolRegistry', 'Tool definitions', value => {
+      const tools = rows(value.tools)
+      return tools.length ? tools.map(tool => recordButton(text(tool.name), human(tool.category), 'documented', () =>
+        detail(text(tool.name), [recordFields(tool, ['category', 'container_profile', 'version', 'image_id', 'observed_version', 'blocked_reasons']),
+          fields([['Documented', 'Tool registry definition'], ['Installed', 'Unknown'],
+            ['Registered for execution', 'No dispatch from this definition'], ['Runtime verified', 'Unknown'],
+            ['Result interpretation evaluated', 'No evaluation loaded']])]))) : [empty('No documented tool definitions available.')]
+    }),
     sourceCard(store, 'providers', 'Model provider pool', () => providerList.length ?
       providerList.map(row => el('div', 'infra-row', el('div', '', el('strong', '', human(row.provider, 'Provider')),
         el('small', '', text(row.model, 'Configured pool entry'))), badge(row.status ?? (row.is_active === true ? 'available' : 'unknown')))) :
       [empty('No provider pool records returned.')]),
     ...(advanced ? [card('Reported infrastructure connections', [graph, el('p', 'subtle', 'Links indicate probes with a recorded result.')]),
-      card('API diagnostics', [windowed([...diagnostics].reverse(), row =>
+      card('API diagnostics', [fields([['Recent request samples', count(diagnostics.length)],
+        ['Round-trip p50', percentile(.5)], ['Round-trip p95', percentile(.95)],
+        ['HTTP 5xx responses', count(diagnostics.filter(row => row.status >= 500).length)],
+        ['Transport failures', count(diagnostics.filter(row => row.status === 0).length)]]),
+      el('p', 'subtle', 'Latest 40 completed requests in this browser view of the engagement. Timing includes response decoding.'),
+      windowed([...diagnostics].reverse(), row =>
       el('div', 'diagnostic record', el('span', 'record-copy', el('strong', '', row.path),
         el('small', '', (row.requestId ?? 'No request ID') + ' · ' + (row.handler !== undefined ? count(row.handler) + ' ms handler' : 'Handler time unknown'))),
       badge(row.status < 400 && row.status > 0 ? 'completed' : 'failed', row.status ? String(row.status) : 'Transport'),
@@ -862,7 +1548,8 @@ export function settings(store: MissionStore) {
     sourceCard(store, 'profile', 'Operator profile', value => [recordFields(value, ['username', 'skill_level'])]),
     ...(store.sid ? [sourceCard(store, 'budget', 'Configured model and accounting limits', value => {
       const selection = object(value.configured_selection)
-      return [recordFields(selection ?? {}, ['provider', 'model']), ...budgetSummary(value, true)]
+      return [recordFields(selection ?? {}, ['provider', 'model']), ...budgetSummary(value, true),
+        link('Manage model budget', '/chat/' + encodeURIComponent(store.sid) + '#model-budget')]
     })] : []),
     card('Workspace access', [link('Research chat', store.sid ? '/chat/' + encodeURIComponent(store.sid) : '/'),
       link('Legacy Operations Overview', '/dashboard/legacy')])

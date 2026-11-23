@@ -11,9 +11,11 @@ import re
 import uuid
 from typing import Literal
 
+from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 from pydantic import Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from memory.database_models import (
     AutonomousCampaign, DecisionLog, PentestSession, async_session,
@@ -110,7 +112,7 @@ def _read_usage(value) -> tuple[dict, bool]:
 def admission_snapshot(metadata: dict, limits: ModelLimits, selection: dict) -> dict:
     """Explain hard lower bounds using accounting inputs, without reserving anything."""
     usage, invalid = _read_usage(metadata.get('model_usage'))
-    remaining = {resource: None if invalid else max(0, limit - usage[field])
+    remaining = {resource: max(0, limit - usage[field])
                  for resource, limit, field in (
                      ('calls', limits.max_calls, 'calls'),
                      ('tokens', limits.max_tokens, 'reserved_tokens'),
@@ -141,8 +143,27 @@ def admission_snapshot(metadata: dict, limits: ModelLimits, selection: dict) -> 
         except (HTTPException, ValueError, TypeError, AttributeError, KeyError):
             prerequisites.append('model_tariff_invalid')
     return {'state': 'blocked' if reasons else 'undetermined', 'reasons': reasons,
-            'configured_provider_prerequisites': prerequisites, 'remaining': remaining,
+            'configured_provider_prerequisites': prerequisites,
+            'remaining': dict.fromkeys(remaining) if invalid else remaining,
             'minimum_tokens': minimum_tokens, 'minimum_cost_microusd': minimum_cost if rate is not None else None}
+
+
+async def _stored_application_data_policy(db: AsyncSession, sid: str) -> tuple[dict | None, dict]:
+    from memory.application_map import DataPolicy, unseal
+
+    key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:' + sid))
+    row = await db.get(DecisionLog, key)
+    metadata = row.metadata_ if row is not None else None
+    sealed = metadata.get('sealed') if isinstance(metadata, dict) else None
+    try:
+        if isinstance(sealed, str):
+            state = unseal(sealed)
+            policy = DataPolicy(expected_revision=state['revision'], **state['policy'])
+            return state, {'state': 'configured', 'revision': policy.expected_revision,
+                           **policy.model_dump(exclude={'expected_revision'})}
+    except (InvalidToken, KeyError, TypeError, ValueError, AttributeError, RecursionError):
+        pass
+    return None, {'state': 'unavailable'}
 
 
 class ModelAccounting:
@@ -170,6 +191,11 @@ class ModelAccounting:
         async with async_session() as db:
             session = await owned_engagement(db, sid, owner)
             metadata = dict(session.metadata_ or {})
+            from llm.saved_review_privacy import saved_review
+            if saved_review.get() and (not metadata.get('model_budget_approved_at') or
+                                       not isinstance(metadata.get('model_limits'), dict)):
+                raise HTTPException(409, {'code': 'model_budget_approval_required',
+                                          'message': 'Approve a model budget before running a saved review'})
             from memory.engagement_profiles import stored_profile
             profile = stored_profile(getattr(session, 'scope', None) or {})
             if profile and profile.get('model_sharing') != 'redacted_metadata' and provider != 'local':
@@ -177,14 +203,13 @@ class ModelAccounting:
                 raise HTTPException(403, {'code': 'model_provider_sharing_denied',
                                           'message': 'The engagement authorization profile denies model provider sharing'})
             if metadata.get('application_mapping'):
-                from memory.application_map import unseal, known_secrets
-                key = str(uuid.uuid5(uuid.NAMESPACE_URL, 'aria-application-map:' + sid))
-                mapping = await db.get(DecisionLog, key)
-                if mapping is None:
+                from memory.application_map import known_secrets
+                state, policy = await _stored_application_data_policy(db, sid)
+                if state is None:
                     raise HTTPException(403, 'Application data consent is unavailable')
-                state = unseal(mapping.metadata_['sealed'])
-                if state['policy']['provider_sharing'] != 'redacted_metadata':
-                    raise HTTPException(403, 'Engagement provider sharing is disabled')
+                if policy['provider_sharing'] != 'redacted_metadata':
+                    raise HTTPException(403, {'code': 'model_provider_sharing_denied',
+                                              'message': 'Application map policy denies model provider sharing'})
                 if any(secret and secret in prompt + system for secret in known_secrets(state)):
                     raise HTTPException(403, 'Registered identity credential cannot enter provider context')
             limits = ModelLimits.model_validate(metadata.get('model_limits', {}))
@@ -279,7 +304,8 @@ class ModelAccounting:
                 PentestSession.id == attempt['session_id'], PentestSession.user_id == attempt['owner'])
                 .with_for_update())).scalar_one()
             row = await db.get(DecisionLog, attempt['id'])
-            if row is None or row.metadata_.get('state') != 'reserved':
+            stored_attempt = row.metadata_ if row is not None else None
+            if row is None or not isinstance(stored_attempt, dict) or stored_attempt.get('state') != 'reserved':
                 return
             tokens = result.get('tokens_used')
             tokens = tokens if type(tokens) is int and tokens >= 0 else None
@@ -334,7 +360,7 @@ class ModelAccounting:
                         used['stop_reason'] = 'accounting_inconsistent'
                 metadata['model_usage'] = used
                 session.metadata_ = metadata
-            row.metadata_ = {**row.metadata_, 'state': 'succeeded' if success else 'failed',
+            settled = {**stored_attempt, 'state': 'succeeded' if success else 'failed',
                              'error_code': str(result.get('error', ''))[:100],
                              'reported_tokens': tokens, 'reported_cost_microusd': cost,
                              'provider_usage': result.get('provider_usage'),
@@ -345,9 +371,10 @@ class ModelAccounting:
             def token_count(key):
                 count = result.get(key)
                 return count if type(count) is int and count >= 0 else None
-            row.metadata_.update(input_tokens=token_count('input_tokens'),
+            settled.update(input_tokens=token_count('input_tokens'),
                 output_tokens=token_count('output_tokens'),
                 timings=safe_timings(result.get('timings')))
+            row.metadata_ = settled
             await db.commit()
 
     async def usage_summary(self, sid: str, owner: str) -> dict:
@@ -391,13 +418,22 @@ class ModelAccounting:
                          if settings.LLM_ROUTING == 'local' else
                          {'provider': 'openrouter', 'model': settings.OPENROUTER_MODEL})
             admission = admission_snapshot(metadata, limits, selection)
+            policy = {'state': 'unconfigured'}
             from memory.engagement_profiles import stored_profile
             profile = stored_profile(getattr(session, 'scope', None) or {})
             if profile and profile.get('model_sharing') != 'redacted_metadata' and selection['provider'] != 'local':
                 admission['reasons'].append('profile_model_sharing_denied')
                 admission['state'] = 'blocked'
+            if metadata.get('application_mapping'):
+                state, policy = await _stored_application_data_policy(db, sid)
+                if state is None:
+                    admission['reasons'].append('model_provider_sharing_unavailable')
+                elif policy['provider_sharing'] != 'redacted_metadata':
+                    admission['reasons'].append('model_provider_sharing_denied')
+                if admission['reasons']:
+                    admission['state'] = 'blocked'
             return {'limits': limits.model_dump(), 'configured_selection': selection,
-                    'admission': admission,
+                    'admission': admission, 'application_data_policy': policy,
                     'tariff_quotes': metadata.get('model_tariffs', {}),
                     'approved_at': metadata.get('model_budget_approved_at'),
                     'usage': metadata.get('model_usage', {}),

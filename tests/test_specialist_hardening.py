@@ -210,7 +210,7 @@ class DurableResultBoundaryTests(OfflineCase):
         captured = {}
 
         class CapturingStore(TeamStore):
-            async def mutate(self, sid, owner, request_id, operation, build):
+            async def mutate(self, sid, owner, request_id, operation, build, *, enqueue_review_challenge=False):
                 collection, entity_id, data = await build(None, None, state)
                 captured.update(operation=operation, collection=collection,
                                 entity_id=entity_id, data=data,
@@ -244,7 +244,7 @@ class DurableResultBoundaryTests(OfflineCase):
         captured = {}
 
         class CapturingStore(TeamStore):
-            async def mutate(self, sid, owner, request_id, operation, build):
+            async def mutate(self, sid, owner, request_id, operation, build, *, enqueue_review_challenge=False):
                 collection, entity_id, data = await build(None, None, state)
                 captured["data"] = data
                 return {"entity_id": entity_id, "data": data,

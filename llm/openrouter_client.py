@@ -7,6 +7,7 @@ import httpx
 from config.settings import settings
 from llm.base_llm import BaseLLMClient, usage_metrics, response_schema, output_limit
 from llm.request_metrics import RequestMetrics, token_components
+from llm.saved_review_privacy import prepared_review, saved_review
 
 
 def provider_receipt(data: dict) -> dict:
@@ -106,6 +107,17 @@ class OpenRouterClient(BaseLLMClient):
         if schema:
             payload['response_format'] = {'type': 'json_schema', 'json_schema': {
                 'name': 'aria_plan', 'strict': True, 'schema': schema}}
+        request_body = {'json': payload}
+        if saved_review.get():
+            prepared = prepared_review.get()
+            try:
+                if prepared is None:
+                    raise ValueError('Missing saved-review preflight')
+                request_body = {'content': prepared.wire_body(
+                    payload, url=self.base_url, model=self.model, tariff=tariff)}
+            except (ValueError, TypeError, KeyError, OverflowError):
+                return timing.finish({'success': False, 'content': '',
+                                      'error': 'saved_review_privacy_rejected', **metrics})
         timing.values['request_construction_ms'] = (time.monotonic_ns() - timing.started) / 1e6
         try:
             async with httpx.AsyncClient(timeout=90.0, trust_env=False, follow_redirects=False) as client:
@@ -117,7 +129,7 @@ class OpenRouterClient(BaseLLMClient):
                         "HTTP-Referer": "https://pentestai.local",
                         "X-Title": "PentestAI v8",
                     },
-                    json=payload,
+                    **request_body,
                 )
                 with timing.phase('response_processing_ms'):
                     if r.status_code == 429:

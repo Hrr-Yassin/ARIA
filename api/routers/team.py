@@ -1,16 +1,17 @@
 """Owner-only durable tasks, evidence, coverage, events and model accounting."""
 import uuid
 import asyncio
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import Field
 from api.auth import TokenData, get_current_user
 from llm.engagement_budget import ModelLimits, model_accounting
 from memory.team_tasks import (
-    Strict, CreateTask, MigrateTask, Transition, EvidenceInput, KnowledgeInput, CoverageInput, team_store,
+    Strict, Reference, CreateTask, MigrateTask, Transition, EvidenceInput, KnowledgeInput, CoverageInput, team_store,
 )
 from agents.coordinator_agent import coordinator_agent
-from memory.finding_verification import Candidate, Review, verification_store
+from memory.finding_verification import Candidate, FindingHistory, Review, verification_store
 from orchestrator.specialist_investigations import InvestigationRequest, plan_investigation
+from orchestrator.team_coordinator import team_coordinator
 from memory.research import ApplicationModel, CreateHypothesis, ResearchTransition, research_store
 from orchestrator.collaboration import DelegationPlan
 
@@ -42,6 +43,10 @@ class RunRequest(Strict):
     request_id: uuid.UUID
 
 
+class InternalRunRequest(Strict):
+    task_ids: list[Reference] = Field(min_length=1, max_length=8)
+
+
 @router.get('/{session_id}')
 async def team_view(session_id: str, user: TokenData = Depends(get_current_user)):
     return await team_store.view(session_id, user.user_id)
@@ -62,6 +67,13 @@ async def task_completion_readiness(session_id: str, task_id: str, user: TokenDa
     return await team_store.completion_readiness(session_id, user.user_id, task_id)
 
 
+@router.get('/{session_id}/tasks/{task_id}/trace')
+async def task_trace(session_id: str, task_id: str, response: Response,
+                     user: TokenData = Depends(get_current_user)) -> dict:
+    response.headers['Cache-Control'] = 'no-store'
+    return await team_store.task_trace(session_id, user.user_id, task_id)
+
+
 @router.post('/{session_id}/tasks/{task_id}/migrate')
 async def migrate_task(session_id: str, task_id: str, body: MigrateTask, user: TokenData = Depends(get_current_user)):
     return await team_store.migrate_task(session_id, user.user_id, task_id, body)
@@ -69,7 +81,16 @@ async def migrate_task(session_id: str, task_id: str, body: MigrateTask, user: T
 
 @router.post('/{session_id}/tasks/{task_id}/transition')
 async def transition_task(session_id: str, task_id: str, body: Transition, user: TokenData = Depends(get_current_user)):
-    return await team_store.transition(session_id, user.user_id, task_id, body)
+    event = await team_store.transition(session_id, user.user_id, task_id, body)
+    if not event.get('duplicate') and body.state == 'cancelled' and event['data'].get('internal_review'):
+        team_coordinator.cancel_internal(session_id, user.user_id, task_id)
+    return event
+
+
+@router.post('/{session_id}/tasks/run-internal')
+async def run_internal_tasks(session_id: str, body: InternalRunRequest,
+                             user: TokenData = Depends(get_current_user)) -> dict:
+    return await team_coordinator.run_internal(session_id, user.user_id, body.task_ids)
 
 
 @router.post('/{session_id}/tasks/{task_id}/run')
@@ -159,6 +180,15 @@ async def investigation_plan(session_id: str, body: InvestigationRequest, user: 
 @router.get('/{session_id}/findings')
 async def verification_findings(session_id: str, user: TokenData = Depends(get_current_user)):
     return await verification_store.view(session_id, user.user_id)
+
+
+@router.get('/{session_id}/findings/{finding_id}/history')
+async def verification_history(session_id: str, finding_id: str, response: Response,
+                               before_sequence: int | None = Query(None, ge=1, le=2_147_483_647),
+                               limit: int = Query(20, ge=1, le=50),
+                               user: TokenData = Depends(get_current_user)) -> FindingHistory:
+    response.headers['Cache-Control'] = 'no-store'
+    return await verification_store.history(session_id, user.user_id, finding_id, before_sequence, limit)
 
 
 @router.post('/{session_id}/findings')

@@ -186,6 +186,62 @@ asyncio.run(run())
         self.assertEqual(final['state'], 'completed')
         self.assertEqual(final['completed_task_ids'], [tid])
 
+    async def test_owner_delegation_overlaps_and_recovers_saved_reviews(self):
+        from agents.coordinator_agent import coordinator_agent
+        from llm.engagement_budget import task_context
+        from memory.database_models import engine
+        from memory.team_tasks import CreateTask, TaskSpec
+        from orchestrator.team_coordinator import TeamCoordinator
+
+        async def create():
+            return (await self.tasks.create(self.sid, self.owner, CreateTask(request_id=uuid.uuid4(),
+                task=TaskSpec(owner_role='correlation', internal_review='challenge',
+                              objective='Evaluate the saved response receipt',
+                              expected_output='Cited interpretation',
+                              completion_criteria=['Explicit uncertainty'],
+                              evidence_inputs=[self.evidence]))))['entity_id']
+
+        ids = [await create(), await create()]
+        entered = set()
+        both = asyncio.Event()
+        release = asyncio.Event()
+
+        async def provider(owner, prompt, system):
+            self.assertEqual(owner, self.owner)
+            entered.add(task_context.get()['id'])
+            if entered == set(ids):
+                both.set()
+            await release.wait()
+            return {'success': True, 'content': json.dumps({'correlations': [
+                {'finding': 'The receipt alone leaves ownership uncertain',
+                 'evidence_references': [self.evidence], 'disposition': 'inconclusive'}]})}
+
+        with (
+            patch('orchestrator.team_coordinator.team_coordinator', TeamCoordinator()),
+            patch('llm.pool_manager.pool_manager.query', AsyncMock(side_effect=provider)) as query,
+            patch('memory.worker_jobs.worker_jobs.execute', AsyncMock()) as execute,
+        ):
+            calls = [asyncio.create_task(coordinator_agent.delegate_task(
+                self.sid, self.owner, tid, str(uuid.uuid4()))) for tid in ids]
+            try:
+                await asyncio.wait_for(both.wait(), timeout=5)
+                self.assertEqual({task['state'] for task in (await self.tasks.view(self.sid, self.owner))['tasks']},
+                                 {'running'})
+            finally:
+                release.set()
+                outcomes = await asyncio.gather(*calls)
+            self.assertEqual([outcome['states'] for outcome in outcomes],
+                             [{tid: 'analyzed'} for tid in ids])
+            await engine.dispose()
+            await self.tasks.recover()
+            saved = await self.tasks.view(self.sid, self.owner)
+            with patch('orchestrator.team_coordinator.team_coordinator', TeamCoordinator()):
+                for tid in ids:
+                    await coordinator_agent.delegate_task(self.sid, self.owner, tid, str(uuid.uuid4()))
+            self.assertEqual(await self.tasks.view(self.sid, self.owner), saved)
+            self.assertEqual(query.await_count, 2)
+            execute.assert_not_awaited()
+
     async def test_dependencies_cancellation_stale_updates_and_owner_isolation(self):
         from fastapi import HTTPException
         from agents.result_contract import AgentResult

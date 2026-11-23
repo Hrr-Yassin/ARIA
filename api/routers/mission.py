@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import AwareDatetime, Field, ValidationError
 from sqlalchemy import and_, func, or_, select
 
@@ -57,6 +58,7 @@ class TimelineEvent(Strict):
     task_id: RecordID | None = None
     job_id: RecordID | None = None
     state: RecordID | None = None
+    previous_state: RecordID | None = None
     reason_code: RecordID | None = None
     correlation_id: RecordID | None = None
     evidence_ids: list[RecordID] = Field(default_factory=list, max_length=100)
@@ -162,7 +164,8 @@ def campaign_event_page(sid: str, cid: str, operations: object, after: int, limi
     cursor = selected[-1]['sequence'] if selected else (after if same and not rewound else 0)
     events = [TimelineEvent(id=r['id'], sequence=r['sequence'], timestamp=r['timestamp'], source='campaign',
         kind=r['event'], stage=CAMPAIGN_STAGES.get(r['event'], 'Campaign supervision'), session_id=sid,
-        campaign_id=cid, state=identifier(r['to_state']), reason_code=identifier(r['reason_code']),
+        campaign_id=cid, state=identifier(r['to_state']), previous_state=identifier(r['from_state']),
+        reason_code=identifier(r['reason_code']),
         correlation_id=identifier(r['correlation_id']), run_id=identifier(r['attributes'].get('run_id')))
         for r in selected]
     skipped = any(b['sequence'] != a['sequence'] + 1 for a, b in zip(records, records[1:]))
@@ -308,7 +311,8 @@ class AdmissionRemaining(Strict):
 class Admission(Strict):
     state: Literal['blocked', 'undetermined']
     reasons: list[Literal['accounting_inconsistent', 'provider_overrun', 'unknown_usage',
-                          'accounting_stopped', 'call_limit', 'token_reservation_floor', 'cost_reservation_floor']]
+                          'accounting_stopped', 'call_limit', 'token_reservation_floor', 'cost_reservation_floor',
+                          'model_provider_sharing_denied', 'model_provider_sharing_unavailable']]
     configured_provider_prerequisites: list[Literal['model_tariff_missing', 'model_tariff_invalid']]
     remaining: AdmissionRemaining
     minimum_tokens: Count
@@ -328,6 +332,7 @@ class ModelAttempt(AccountingAmounts):
     logical_request_id: RecordID | None = None
     provider: Provider | None = None
     model: ModelID | None = None
+    provider_reported_model: ModelID | None = None
     timestamp: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
     state: Literal['reserved', 'succeeded', 'failed', 'unknown']
@@ -344,6 +349,7 @@ class AccountingView(Strict):
     session_id: RecordID
     limits: AccountingLimits
     configured_selection: ModelSelection
+    budget_approved: bool = False
     admission: Admission
     usage: AccountingUsage
     attempts: list[ModelAttempt] = Field(max_length=MAX_ATTEMPTS)
@@ -377,13 +383,14 @@ def public_model_attempt(sid: str, record: object) -> ModelAttempt | None:
     provider, model, state, error = (record.get(field) for field in ('provider', 'model', 'state', 'error_code'))
     receipt = record.get('provider_usage')
     cost = receipt.get('cost') if isinstance(receipt, dict) else None
+    reported_model = model_identifier(receipt.get('model')) if provider == 'openrouter' and isinstance(receipt, dict) else None
     charge = (ProviderCharge(cost=cost) if provider == 'openrouter' and isinstance(cost, str) and len(cost) <= 64
               and re.fullmatch(r'[0-9]+(?:\.[0-9]+)?(?:[Ee][+-]?[0-9]{1,2})?', cost) else None)
     public_error = (error if isinstance(error, str)
                     and (error in ATTEMPT_ERRORS or re.fullmatch(r'http_[45][0-9]{2}', error)) else None)
     return ModelAttempt(id=key, session_id=sid,
         provider=provider if provider in ('local', 'openrouter', 'groq', 'gemini') else None,
-        model=model_identifier(model),
+        model=model_identifier(model), provider_reported_model=reported_model,
         state=state if state in ('reserved', 'succeeded', 'failed') else 'unknown', error_code=public_error,
         timestamp=recorded_timestamp(record.get('timestamp')), finished_at=recorded_timestamp(record.get('finished_at')),
         timings=safe_timings(record.get('timings')), provider_usage=charge,
@@ -403,6 +410,7 @@ async def accounting_view(sid: RecordID, response: Response, user: TokenData = D
         selection = data['configured_selection']
         view = AccountingView(session_id=sid, limits=public_counts(data['limits'], AccountingLimits.model_fields),
             configured_selection=ModelSelection(provider=selection['provider'], model=model_identifier(selection['model'])),
+            budget_approved=bool(data.get('approved_at')),
             admission=data['admission'],
             usage=public_counts(data['usage'], USAGE_FIELDS), attempts=attempts,
             attempts_limit=data['attempts_limit'], omitted_attempts=len(rows) - len(attempts))
@@ -412,6 +420,14 @@ async def accounting_view(sid: RecordID, response: Response, user: TokenData = D
     return view
 
 
+class SavedSourceReview(Strict):
+    parser_status: Literal['parsed', 'invalid_output', 'tool_failed', 'timeout',
+                           'resource_exhausted', 'cancelled', 'unknown']
+    unverified_observations: int = Field(ge=0, le=128)
+    truncated: bool
+    dynamic_python_evaluation_matches: int | None = Field(default=None, ge=0, le=128)
+
+
 class Receipt(Strict):
     id: RecordID
     state: str
@@ -419,6 +435,11 @@ class Receipt(Strict):
     output_sha256: str | None = None
     exit_code: int | None = None
     cancel_requested: bool = False
+    capability: RecordID | None = None
+    attested_declared_version: str | None = None
+    catalog_eligible: bool = False
+    catalog_issue: str | None = None
+    source_review: SavedSourceReview | None = None
 
 
 class RecordedCommand(Strict):
@@ -493,6 +514,8 @@ async def web_replay_summary(sid: str, owner: str) -> dict[str, int]:
 
 
 async def recent_worker_receipts(sid: str, owner: str, limit: int) -> list[Receipt]:
+    from memory.worker_jobs import attested_declared_version, catalogable_receipt_hashes, saved_source_review
+
     query = select(DecisionLog.created_at, DecisionLog.metadata_).where(DecisionLog.session_id == sid,
         DecisionLog.user_id == owner, DecisionLog.decision_type == 'worker_job').order_by(
         DecisionLog.created_at.desc(), DecisionLog.id.desc()).limit(limit)
@@ -504,11 +527,21 @@ async def recent_worker_receipts(sid: str, owner: str, limit: int) -> list[Recei
             continue
         digest = record.get('output_hash')
         state = identifier(record.get('state'))
+        capability = identifier(record.get('adapter_capability'))
+        issue = None
+        try:
+            eligible = bool(catalogable_receipt_hashes(record))
+        except ValueError as error:
+            eligible = False
+            issue = str(error)
         receipts.append(Receipt(id=record['job_id'], state=state if state in STATES else 'unknown',
             created_at=as_utc(created) if created else None,
             output_sha256=digest if isinstance(digest, str) and re.fullmatch(r'[a-f0-9]{64}', digest) else None,
             exit_code=record.get('exit_code') if type(record.get('exit_code')) is int else None,
-            cancel_requested=record.get('cancel_requested') is True))
+            cancel_requested=record.get('cancel_requested') is True, capability=capability,
+            attested_declared_version=attested_declared_version(record) if capability else None,
+            catalog_eligible=eligible, catalog_issue=issue,
+            source_review=saved_source_review(record) if eligible else None))
     return receipts
 
 
@@ -638,3 +671,63 @@ async def topology(sid: RecordID, response: Response,
         truncated = truncated or len(ports) > 100
         hosts.append(Host(ip=host.ip, hostname=identifier(host.hostname), ports=ports[:100]))
     return Topology(hosts=hosts, truncated=truncated)
+
+
+@router.get('/{sid}/traffic')
+async def traffic(sid: RecordID, response: Response, before: RecordID | None = Query(None),
+                  limit: int = Query(50, ge=1, le=100),
+                  user: TokenData = Depends(get_current_user)) -> dict:
+    from memory.traffic_observations import retained_traffic
+
+    await require_owner(sid, user)
+    response.headers['Cache-Control'] = 'no-store'
+    return await retained_traffic(sid, user.user_id, before, limit)
+
+
+@router.get('/{sid}/traffic/captures/{capture_id}')
+async def traffic_capture(sid: RecordID, capture_id: RecordID, response: Response,
+                          user: TokenData = Depends(get_current_user)) -> dict:
+    from memory.traffic_observations import retained_capture
+
+    await require_owner(sid, user)
+    response.headers['Cache-Control'] = 'no-store'
+    return await retained_capture(sid, user.user_id, capture_id)
+
+
+@router.post('/{sid}/traffic/import-har')
+async def import_traffic_har(sid: RecordID, request: Request, response: Response,
+                             include_bodies: bool = False, user: TokenData = Depends(get_current_user)) -> dict:
+    from memory.traffic_observations import retain_har
+    from security.har import MAX_HAR_BYTES
+
+    await require_owner(sid, user)
+    media = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+    if media not in ('application/har+json', 'application/json'):
+        raise HTTPException(415, 'Expected a UTF-8 HTTP archive')
+    length = request.headers.get('content-length')
+    if length is not None:
+        if not re.fullmatch(r'[0-9]{1,16}', length):
+            raise HTTPException(400, 'Invalid HTTP archive length')
+        if int(length) > MAX_HAR_BYTES:
+            raise HTTPException(413, 'HTTP archive file limit exceeded')
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > MAX_HAR_BYTES:
+            raise HTTPException(413, 'HTTP archive file limit exceeded')
+        body.extend(chunk)
+    try:
+        archive = json.loads(body.decode('utf-8-sig'))
+    except (ValueError, RecursionError):
+        raise HTTPException(422, 'The HTTP archive is not valid JSON') from None
+    response.headers['Cache-Control'] = 'no-store'
+    return await retain_har(sid, user.user_id, archive, include_bodies)
+
+
+@router.get('/{sid}/exploration/checkpoint')
+async def saved_team_checkpoint(sid: RecordID, response: Response, sequence: int = Query(..., ge=1, le=2_147_483_647),
+                                user: TokenData = Depends(get_current_user)) -> dict:
+    from memory.knowledge_history import exploration_checkpoint
+
+    await require_owner(sid, user)
+    response.headers['Cache-Control'] = 'no-store'
+    return await exploration_checkpoint(sid, user.user_id, sequence)

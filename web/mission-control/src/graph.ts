@@ -3,7 +3,7 @@ import { button, el } from './dom'
 
 export type Node = { id: string; label: string; state: string; column: number; kind: string }
 export type Edge = { source: string; target: string; kind: string }
-export type Graph = { nodes: Node[]; edges: Edge[]; inspect: (id: string) => void; label: string; motion: boolean }
+export type Graph = { nodes: Node[]; edges: Edge[]; inspect: (id: string) => void; label: string; motion: boolean; directed?: boolean }
 
 export function mountGraph(root: HTMLElement, graph: Graph) {
   const drawing = el('div', 'graph-drawing')
@@ -11,6 +11,11 @@ export function mountGraph(root: HTMLElement, graph: Graph) {
   root.replaceChildren(controls, drawing)
   const svg = select(drawing).append('svg').attr('role', 'group').attr('aria-label', graph.label)
   const scene = svg.append('g')
+  const arrowId = 'graph-arrow-' + crypto.randomUUID()
+  if (graph.directed) svg.append('defs').append('marker').attr('id', arrowId)
+    .attr('viewBox', '0 0 10 10').attr('refX', 9).attr('refY', 5)
+    .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+    .append('path').attr('d', 'M0,0 L10,5 L0,10 Z').attr('fill', 'var(--muted)')
   const behavior = zoom<SVGSVGElement, unknown>().scaleExtent([0.12, 3.5])
     .filter(event => event.type !== 'wheel' || event.ctrlKey)
     .on('zoom', (event: D3ZoomEvent<SVGSVGElement, unknown>) => scene.attr('transform', event.transform.toString()))
@@ -34,14 +39,16 @@ export function mountGraph(root: HTMLElement, graph: Graph) {
       const link = edge as Edge
       return link.source + ':' + link.target + ':' + link.kind
     }).join('path').attr('data-kind', edge => edge.kind)
+    .attr('marker-end', graph.directed ? 'url(#' + arrowId + ')' : null)
     .attr('d', edge => {
       const a = byId.get(edge.source)!
       const b = byId.get(edge.target)!
-      const start = a.x + width
+      const backwards = a.x > b.x
+      const start = a.x + (backwards ? 0 : width)
       const ax = a.y + 22
       const bx = b.y + 22
-      const turn = a.x === b.x ? start + 28 : (start + b.x) / 2
-      const end = a.x === b.x ? b.x + width : b.x
+      const end = b.x + (a.x >= b.x ? width : 0)
+      const turn = a.x === b.x ? start + 28 : (start + end) / 2
       return 'M' + start + ',' + ax + ' C' + turn + ',' + ax + ' ' + turn + ',' + bx + ' ' + end + ',' + bx
     }).append('title').text(edge => edge.kind)
   const selection = scene.append('g').selectAll('g').data(nodes, node => (node as Node).id)

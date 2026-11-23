@@ -5,7 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import tests  # disposable credentials and database name before importing the app
 from fastapi import HTTPException
@@ -50,10 +50,15 @@ TEAM = {**EMPTY_TEAM, "tasks": [
      "evidence_inputs": [EVIDENCE], "dependencies": []},
     {"id": TASK2, "title": "Review evidence freshness", "objective": "Check the freshness of the signed records",
      "owner_role": "correlation", "state": "blocked", "campaign_id": CAMPAIGN, "created_at": NOW,
-     "reason": "Awaiting current service inventory", "dependencies": [TASK], "evidence_inputs": [EVIDENCE]},
+     "reason": "Awaiting current service inventory", "dependencies": [TASK], "evidence_inputs": [EVIDENCE],
+     "result": {"status": "blocked", "evidence_references": [EVIDENCE],
+                "observations": [{"observation": "The inventory timestamp is older than the signed record."}],
+                "hypotheses": [{"description": "The inventory export may be stale."}],
+                "uncertainty": ["A fresh signed export is required."],
+                "rejections": [{"detail": "A second reference to the same inventory is not independent."}]}},
 ], "evidence": [{"id": EVIDENCE, "kind": "worker", "source_kind": "worker", "source_id": JOB,
-                   "summary": "Recorded status and service timestamp", "created_at": NOW,
-                   "provenance": {"source": "fixture"}}],
+                   "summary": "Recorded status and service timestamp", "source_timestamp": NOW,
+                   "cataloged_at": NOW, "provenance": "Simulated fixture", "trust": "untrusted_observation"}],
     "verification_findings": [{"id": "fixture-finding", "title": "Inventory timestamp is stale",
                                "state": "candidate", "severity": "info", "evidence_references": [EVIDENCE],
                                "scope_digest": digest(session(ALPHA, "")["scope"]), "evidence_snapshot": {}}]}
@@ -78,6 +83,7 @@ def attempts():
 class Fixture:
     def __init__(self, current=False):
         self.current = current
+        self.worker_typed_profile = True
         self.sessions = {ALPHA: session(ALPHA, "Service inventory review"),
                          BETA: session(BETA, "Quarterly controls review"),
                          FOREIGN: session(FOREIGN, "Private fixture", "other-owner")}
@@ -85,6 +91,7 @@ class Fixture:
         self.operations = {}
         self.stream_disconnects = 1
         self.stream_count = 0
+        self.stream_pulses = None
         self.faults = {}
         self.delays = {}
         self.epoch = 0
@@ -149,8 +156,20 @@ class Fixture:
                                 "collection": "knowledge", "entity_id": f"observation-{index}", "data": {}})
         return {"events": records, "cursor": records[-1]["sequence"] if records else after}
 
-    async def event_page(self, sid, owner, after, limit, *, before=None):
+    async def event_page(self, sid, owner, after, limit, *, before=None, entity=None):
         records = (await self.events(sid, owner, after or 0))["events"]
+        if entity is not None:
+            records = [record for record in records if (record['collection'], record['entity_id']) == entity]
+            if sid == ALPHA and entity == ('tasks', TASK2):
+                task = {**TEAM['tasks'][1], 'revision': 3, 'run_id': 'fixture-review-run',
+                        'prepared_review_evidence': [EVIDENCE]}
+                claim = {**task, 'revision': 2, 'state': 'running', 'result': None,
+                         'dependencies_at_claim': [{'task_id': TASK, 'role': 'web_intel', 'revision': 4,
+                                                    'run_id': 'fixture-origin-run'}]}
+                records = [{**records[0], 'id': str(uuid5(NAMESPACE_URL, f'aria-team:{sid}:fixture-review-run')),
+                            'data': claim, 'sequence': 1},
+                           {**records[0], 'id': str(uuid5(NAMESPACE_URL, f'aria-team:{sid}:fixture-review-run:result')),
+                            'data': task}]
         if before is not None:
             records = [record for record in records if record['sequence'] < before]
         return (records[-limit:] if after is None else records[:limit]), len(records) > limit
@@ -219,6 +238,10 @@ class Fixture:
         yield {"type": "auto_activity", "session_id": sid, "run_id": "fixture-run", "event_sequence": 1}
         yield {"type": "auto_activity", "session_id": sid, "run_id": "fixture-run", "event_sequence": 3, "stream_gap": True}
         yield {"type": "auto_activity", "session_id": sid, "run_id": "fixture-run", "event_sequence": 2}
+        pulses = self.stream_pulses
+        while pulses is not None and sid == ALPHA:
+            sequence = await pulses.get()
+            yield {"type": "auto_activity", "session_id": sid, "run_id": "fixture-run", "event_sequence": sequence}
         await asyncio.sleep(3600)
 
     async def run_status(self, sid):
@@ -327,7 +350,8 @@ class Fixture:
         async def receipts(sid, owner, limit):
             self.owner(sid, owner)
             return [mission.Receipt(id=JOB, state="failed", created_at=datetime.fromisoformat(NOW),
-                exit_code=1, output_sha256="1" * 64)] if sid == ALPHA else []
+                exit_code=1, output_sha256="1" * 64, capability="httpx.http.probe.v1",
+                attested_declared_version="1.7.1")] if sid == ALPHA else []
 
         async def replay_summary(sid, owner):
             self.owner(sid, owner)
@@ -339,7 +363,13 @@ class Fixture:
         async def worker_capabilities():
             if not self.worker_up:
                 raise ConnectionError('injected worker outage')
-            return {"tools": ["curl", "nmap"], "authenticated_http_version": 1}
+            capability = "httpx.http.probe.v1"
+            return {"tools": ["curl", "nmap", "httpx"] if self.worker_typed_profile else ["curl", "nmap"],
+                    "protocol": "aria-jobs-v1", "idempotency": True, "cancellation": True, "network_scope": True,
+                    "authenticated_http_version": 1,
+                    "typed_adapters": {capability: 1} if self.worker_typed_profile else {},
+                    "typed_profile_pins": {capability: {
+                        "declared_version": "1.7.1", "image_id": "sha256:" + "a" * 64}}}
 
         async def map_snapshot(sid, owner):
             self.owner(sid, owner)

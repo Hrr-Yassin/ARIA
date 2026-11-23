@@ -10,7 +10,10 @@ __pycache__/
 *.log
 *.pem
 *.key
-reports/
+reports/*
+!reports/artex-integration-report.html
+!reports/artex-integration-matrix.json
+!reports/artex-performance-metrics.csv
 backup_v9_*/
 
 .local-lab/

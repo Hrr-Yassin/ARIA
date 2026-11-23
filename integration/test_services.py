@@ -95,6 +95,14 @@ asyncio.run(verify())
                 await session_manager._redis.delete(f"session:{sid}")
                 self.assertEqual((await client.get('/api/session/' + sid)).json()['target'], '192.0.2.1')
                 self.assertEqual((await client.get('/api/session/list')).status_code, 200)
+                budget = await client.get(f'/api/team/{sid}/model-budget')
+                self.assertEqual(budget.status_code, 200)
+                data = budget.json()
+                self.assertEqual(data['limits'], {
+                    'max_calls': 100, 'max_tokens': 100_000, 'max_cost_microusd': 500_000, 'tariffs': [],
+                })
+                self.assertIsNone(data['approved_at'])
+                self.assertEqual(data['attempts'], [])
         # Redis socket lifecycle and vector ciphertext round-trip through a real server.
         from redis.asyncio import Redis
         from memory.vector_store import VectorStore
@@ -144,8 +152,9 @@ asyncio.run(verify())
             await manager.add_chat_log(sid, 'user', text, data={'turn_id':rid})
         self.assertEqual([r['content'] for r in await manager.get_chat_logs(sid, limit=2)], ['second','third'])
         self.assertEqual([r['content'] for r in await manager.get_chat_logs(sid, limit=2, offset=2)], ['first'])
-        for state in ['planning','awaiting_approval','executing']:
-            await store.save({'run_id':rid, 'session_id':sid, 'run_state':state, 'active':True})
+        for revision, state in enumerate(('planning', 'awaiting_approval', 'executing'), start=1):
+            await store.save({'run_id': rid, 'session_id': sid, 'owner_id': uid, 'run_state': state,
+                              'active': True, 'snapshot_revision': revision})
         snapshot = await store.latest(sid)
         self.assertEqual([t['state'] for t in snapshot['transitions']], ['planning','awaiting_approval','executing'])
         await store.recover()
