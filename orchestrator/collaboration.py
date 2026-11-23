@@ -39,7 +39,7 @@ TERMINAL_FAILURE = {'failed', 'blocked'}
 # Denials that an identical replacement cannot overcome: they need an owner decision.
 DETERMINISTIC_DENIALS = {'task_model_budget_exhausted', 'model_budget_exhausted', 'model_budget_denied',
                          'model_provider_sharing_denied', 'profile_denied', 'capability_blocked',
-                         'all_exhausted', 'no_keys'}
+                         'all_exhausted', 'no_keys', 'rate_limited', 'model_accounting_inconsistent'}
 MAX_REPLANS = 1
 MAX_DELEGATIONS = 24
 
@@ -375,9 +375,11 @@ class CollaborationCoordinator:
                 request_id=uuid.uuid5(uuid.NAMESPACE_URL, f'aria-plan-cancel:{plan["id"]}:{dep_key}'),
                 expected_revision=dep_task['revision'], state='cancelled',
                 reason=f'Replanned: prerequisites {", ".join(failed)} failed and were replaced'))
-            generation = max(replacements[p].count('~r') for p in failed)
+            # The rewired dependent takes its own next generation: an earlier round may already
+            # have created base~r1, so reusing the prerequisites' generation would collide.
+            current = int(dep_key.rsplit('~r', 1)[1]) if '~r' in dep_key else 0
             new_dep = dep.model_copy(update={
-                'key': f'{dep_key.split("~r")[0]}~r{generation}',
+                'key': f'{dep_key.split("~r")[0]}~r{current + 1}',
                 'prerequisites': [replacements.get(p, p) for p in dep.prerequisites]})
             plan['task_ids'][new_dep.key], _ = await self._create_task(
                 sid, owner, plan['id'], new_dep, plan['task_ids'], tasks)

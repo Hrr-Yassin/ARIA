@@ -321,6 +321,19 @@ class CollaborationTests(CollaborationHarness):
         self.assertEqual(outcome['states']['cross-review'], 'cancelled')
         self.assertEqual(sum(1 for k in delegations if k.startswith('cross-review')), 2)
 
+    async def test_sequential_failures_rewire_dependent_without_key_collision(self):
+        self.standard_script()
+        self.script['web_intel'] = RuntimeError('provider unavailable')
+        self.script['vuln'] = RuntimeError('provider unavailable')
+        coordinator = self.coordinator()
+        plan = await coordinator.create_plan('engagement', 'owner', self.plan_body(max_concurrency=1))
+        outcome = await coordinator.advance('engagement', 'owner', plan['id'])
+        keys = [d['key'] for d in outcome['plan']['delegations'] if d['key'].startswith('cross-review')]
+        self.assertEqual(len(keys), len(set(keys)))                    # no duplicate dependent identity
+        self.assertIn('cross-review~r2', keys)
+        latest = next(d for d in outcome['plan']['delegations'] if d['key'] == 'cross-review~r2')
+        self.assertEqual(sorted(latest['prerequisites']), ['analysis-vuln~r1', 'analysis-web~r1'])
+
     async def test_deterministic_budget_denial_is_not_retried(self):
         self.standard_script()
         denied = {'agent_result': AgentResult(interpreted_request='x', status='blocked', uncertainty=['Denied'],

@@ -35,11 +35,11 @@ async def identity():
 
 def plans():
     from orchestrator.collaboration import Delegation, DelegationPlan
-    single = DelegationPlan(request_id=uuid.UUID('5a5a0000-0000-4000-8000-000000000011'), objective=OBJECTIVE,
+    single = DelegationPlan(request_id=uuid.UUID('5a5a0000-0000-4000-8000-000000000031'), objective=OBJECTIVE,
         max_concurrency=1, delegations=[Delegation(key='single-vuln', role='vuln', objective=OBJECTIVE + ' Single specialist.',
             evidence_inputs=[EVIDENCE['httpx'], EVIDENCE['nmap']], completion_criteria=['Cite evidence', 'State uncertainty'])])
-    collab = DelegationPlan(request_id=uuid.UUID('5a5a0000-0000-4000-8000-000000000012'), objective=OBJECTIVE,
-        max_concurrency=2, delegations=[
+    collab = DelegationPlan(request_id=uuid.UUID('5a5a0000-0000-4000-8000-000000000032'), objective=OBJECTIVE,
+        max_concurrency=1, delegations=[
             Delegation(key='analysis-web', role='web_intel', objective=OBJECTIVE + ' Interpret the HTTP receipt.',
                        evidence_inputs=[EVIDENCE['httpx']], completion_criteria=['Cite evidence', 'State uncertainty']),
             Delegation(key='analysis-ports', role='vuln', objective=OBJECTIVE + ' Interpret the TCP receipt.',
