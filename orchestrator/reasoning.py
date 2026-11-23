@@ -810,10 +810,19 @@ def task_reasoning_context(state: dict[str, Any] | None, evidence_refs: Iterable
                if h['status'] in {'active', 'contested'} and refs & set(h['support'] + h['contradict'])]
     related.sort(key=lambda h: (-_entropy(h['confidence']), h['id']))
     rejected = [r for r in state.get('rejected_claims', {}).values() if refs & set(r.get('evidence', []))]
-    if not related and not rejected:
+    # Ledger worker evidence holds receipt metadata only; the normalized tool observations
+    # for the assigned evidence are what a specialist must actually interpret.
+    facts = [{k: o[k] for k in ('evidence_ref', 'kind', 'locator', 'summary')}
+             for o in state.get('observations', {}).values() if o['evidence_ref'] in refs and not o.get('superseded')][:20]
+    conflicts = [{k: c[k] for k in ('host', 'port', 'summaries', 'evidence')}
+                 for c in state.get('conflicts', {}).values() if c['status'] == 'open' and refs & set(c['evidence'])]
+    if not related and not rejected and not facts:
         return {}
     ids = {h['id'] for h in related[:limit]}
     return {
+        'observed_facts': facts,
+        'facts_note': 'Receipt-derived normalized tool observations; unverified, not findings.',
+        'open_evidence_conflicts': conflicts,
         'hypotheses': [{k: h[k] for k in ('id', 'claim', 'status', 'support', 'contradict', 'competes_with',
                                            'confidence', 'missing_information')} for h in related[:limit]],
         'rejected_claims': [{'claim': r['claim'][:160], 'reasons': r['reasons']} for r in rejected[-limit:]],

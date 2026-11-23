@@ -464,3 +464,16 @@ class RealLabEvidenceConflict(OfflineCase):
         state, report = run_cycle(state, cycle([], evidence=(nmap,), follow={}))
         self.assertEqual(len(report['contradictions']['from_facts']), 1)
         self.assertEqual(next(iter(state['hypotheses'].values()))['status'], 'contested')
+
+
+class SpecialistFacts(OfflineCase):
+    def test_task_context_carries_receipt_facts_and_conflicts(self):
+        from orchestrator.reasoning import task_reasoning_context
+        httpx_fact = {'job_id': 'ev-http', 'output': [{'kind': 'http', 'locator': 'http://192.168.77.20', 'summary': 'HTTP 200'}]}
+        nmap = {'job_id': 'ev-nmap', 'output': [{'kind': 'service', 'locator': '192.168.77.20', 'summary': 'tcp/80 filtered'}]}
+        state, _ = run_cycle(None, cycle([], evidence=(httpx_fact,), follow={}))
+        state, _ = run_cycle(state, cycle([], evidence=(nmap,), follow={}))
+        context = task_reasoning_context(state, ['ev-nmap'])
+        self.assertEqual([f['summary'] for f in context['observed_facts']], ['tcp/80 filtered'])
+        self.assertEqual(context['open_evidence_conflicts'][0]['port'], '80')
+        self.assertEqual(task_reasoning_context(state, ['ev-unrelated']), {})
