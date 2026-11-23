@@ -432,3 +432,35 @@ class EvaluationAccounting(OfflineCase):
         self.assertEqual((counts['stale_contested'], counts['stale_expected']), (2, 2))
         self.assertEqual((counts['ambiguity_kept_live'], counts['ambiguity_expected']), (3, 3))
         self.assertEqual(counts['tp_accepted'], counts['tp'])
+
+
+class RealLabEvidenceConflict(OfflineCase):
+    """Replay of real P2/P5 receipts: httpx HTTP 200 (job ac5747a7) then nmap all ports filtered (job 339f5c74)."""
+
+    def test_conflicting_receipts_force_reverification(self):
+        httpx_fact = {'job_id': '2e064b9d-d9e1-52d9-9668-d16ed80b09d3', 'output': [
+            {'kind': 'http', 'locator': 'http://192.168.77.20', 'summary': 'HTTP 200: Metasploitable2 - Linux'}]}
+        nmap_facts = {'job_id': '31347928-fa6d-5095-8481-767a228124af', 'output': [
+            {'kind': 'service', 'locator': '192.168.77.20', 'summary': f'tcp/{port} filtered'}
+            for port in (21, 22, 80, 139, 445)]}
+        state, _ = run_cycle(None, cycle([], evidence=(httpx_fact,), follow={}))
+        state, report = run_cycle(state, cycle([], evidence=(nmap_facts,), follow={}))
+        conflicts = report['contradictions']['evidence_conflicts']
+        self.assertEqual([(c['host'], c['port']) for c in conflicts], [('192.168.77.20', '80')])
+        self.assertEqual(report['decision']['action'], 'collect_missing_information')
+        rationale = next(r['rationale'] for r in report['priorities'] if r['action'] == 'collect_missing_information')
+        self.assertIn('re-verification', rationale)
+        self.assertEqual(planner_summary(state)['open_evidence_conflicts'][0]['port'], '80')
+        # A later receipt for the same host and port supersedes the open conflict.
+        recovered = {'job_id': 'job-later', 'output': [{'kind': 'service', 'locator': '192.168.77.20', 'summary': 'tcp/80 open'}]}
+        state, _ = run_cycle(state, cycle([], evidence=(recovered,), follow={}))
+        self.assertEqual(state['conflicts'][conflicts[0]['id']]['status'], 'superseded_by_new_receipt')
+
+    def test_summary_port_reaches_hypothesis_contradiction(self):
+        root = {'job_id': 'job-root', 'output': [{'kind': 'http', 'locator': 'http://192.168.77.20', 'summary': 'HTTP 200'}]}
+        state, _ = run_cycle(None, cycle([proposal('Port 80 may host the training web application',
+                                                   refs=('job-root',))], evidence=(root,), follow={}))
+        nmap = {'job_id': 'job-nmap', 'output': [{'kind': 'service', 'locator': '192.168.77.20', 'summary': 'tcp/80 filtered'}]}
+        state, report = run_cycle(state, cycle([], evidence=(nmap,), follow={}))
+        self.assertEqual(len(report['contradictions']['from_facts']), 1)
+        self.assertEqual(next(iter(state['hypotheses'].values()))['status'], 'contested')

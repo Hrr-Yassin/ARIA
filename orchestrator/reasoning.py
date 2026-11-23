@@ -224,8 +224,8 @@ def fact_signal(summary: str) -> str | None:
 _NEGATIVE_CLAIM = re.compile(r'\b(?:404|410|closed|filtered|refused|not found|absent|unavailable|no longer|returned)\b', re.I)
 
 
-def _fact_targets(locator: str) -> tuple[set[str], set[str]]:
-    """Paths and TCP ports a receipt fact is about."""
+def _fact_targets(locator: str, summary: str = '') -> tuple[set[str], set[str]]:
+    """Paths and TCP ports a receipt fact is about (port from the summary when the locator has none)."""
     from urllib.parse import urlsplit
     paths: set[str] = set()
     ports: set[str] = set()
@@ -238,7 +238,71 @@ def _fact_targets(locator: str) -> tuple[set[str], set[str]]:
             ports.add(str(parts.port))
     elif port_match:
         ports.add(port_match.group(1))
+    if not ports:
+        ports.update(re.findall(r'\btcp/(\d{1,5})\b', summary))
     return paths, ports
+
+
+def _fact_endpoint(fact: dict[str, Any]) -> tuple[str, set[str]]:
+    """Host and TCP ports of a fact; URLs without a port use the scheme default."""
+    from urllib.parse import urlsplit
+    locator = fact['locator']
+    _, ports = _fact_targets(locator, fact['summary'])
+    if '://' in locator:
+        parts = urlsplit(locator)
+        host = (parts.hostname or '').lower()
+        if not ports:
+            ports = {'443' if parts.scheme == 'https' else '80'}
+    else:
+        host = re.sub(r'(?::\d{1,5})?(?:/tcp)?$', '', locator).lower()
+    return host, ports
+
+
+_POSITIVE_FACT = re.compile(r'\b(?:HTTP [23]\d\d|status [23]\d\d|open)\b', re.I)
+
+
+def detect_evidence_conflicts(state: dict[str, Any], new_observation_ids: list[str]) -> list[dict[str, Any]]:
+    """Receipts that disagree about the same host and port (for example HTTP 200 vs tcp/80 filtered).
+
+    Independent of hypotheses: a conflict means the environment changed or a
+    receipt is wrong, so the planner must re-verify before concluding anything.
+    """
+    conflicts = state.setdefault('conflicts', {})
+    found: list[dict[str, Any]] = []
+    new = [state['observations'][oid] for oid in new_observation_ids if oid in state['observations']]
+    for fact in new:
+        host, ports = _fact_endpoint(fact)
+        if not host or not ports:
+            continue
+        for key, conflict in conflicts.items():
+            if conflict['status'] == 'open' and conflict['host'] == host and conflict['port'] in ports \
+                    and fact['evidence_ref'] not in conflict['evidence']:
+                conflict.update(status='superseded_by_new_receipt', resolved_cycle=state['cycle'])
+        negative = fact_signal(fact['summary']) == 'unreachable'
+        positive = bool(_POSITIVE_FACT.search(fact['summary'])) and not negative
+        if not (negative or positive):
+            continue
+        for oid, other in state['observations'].items():
+            if other.get('superseded') or other['evidence_ref'] == fact['evidence_ref'] or other['id'] == fact['id']:
+                continue
+            other_host, other_ports = _fact_endpoint(other)
+            shared = ports & other_ports
+            if other_host != host or not shared:
+                continue
+            other_negative = fact_signal(other['summary']) == 'unreachable'
+            other_positive = bool(_POSITIVE_FACT.search(other['summary'])) and not other_negative
+            if not ((negative and other_positive) or (positive and other_negative)):
+                continue
+            port = sorted(shared)[0]
+            key = 'c-' + hashlib.sha256(f'{host}:{port}:{oid}:{fact["id"]}'.encode()).hexdigest()[:12]
+            if key in conflicts:
+                continue
+            conflicts[key] = {'id': key, 'host': host, 'port': port, 'facts': [oid, fact['id']],
+                              'evidence': [other['evidence_ref'], fact['evidence_ref']],
+                              'summaries': [other['summary'][:120], fact['summary'][:120]],
+                              'status': 'open', 'cycle': state['cycle']}
+            found.append(conflicts[key])
+    return found
 
 
 def detect_fact_contradictions(state: dict[str, Any], new_observation_ids: list[str]) -> list[dict[str, Any]]:
@@ -258,7 +322,7 @@ def detect_fact_contradictions(state: dict[str, Any], new_observation_ids: list[
         signal = fact_signal(fact['summary']) if fact else None
         if not fact or not signal:
             continue
-        paths, ports = _fact_targets(fact['locator'])
+        paths, ports = _fact_targets(fact['locator'], fact['summary'])
         if not paths and not ports:
             continue
         ref = fact['evidence_ref']
@@ -571,6 +635,20 @@ def prioritize(state: dict[str, Any], available: dict[str, dict[str, Any]],
                            'redundant': False, 'hypotheses': open_ids,
                            'evidence': sorted({r for hid in open_ids for r in live[hid]['support']}),
                            'rationale': 'Open hypotheses need information no available analysis supplies.'})
+    open_conflicts = [c for c in state.get('conflicts', {}).values() if c['status'] == 'open']
+    if open_conflicts:
+        # Conflicting receipts outrank "nothing to do": the environment must be re-verified first.
+        existing = next((r for r in ranked if r['action'] == 'collect_missing_information'), None)
+        refs = sorted({ref for c in open_conflicts for ref in c['evidence']})
+        rationale = (f'{len(open_conflicts)} open evidence conflict(s) (e.g. {open_conflicts[0]["summaries"][0]} vs '
+                     f'{open_conflicts[0]["summaries"][1]}) require re-verification before any conclusion.')
+        if existing:
+            existing['score'] = round(existing['score'] + 1.0, 4)
+            existing['evidence'] = sorted(set(existing['evidence']) | set(refs))
+            existing['rationale'] += ' ' + rationale
+        else:
+            ranked.append({'action': 'collect_missing_information', 'score': 1.0, 'redundant': False,
+                           'hypotheses': [], 'evidence': refs, 'rationale': rationale})
     ranked.sort(key=lambda item: (-item['score'], item['action']))
     return ranked
 
@@ -662,8 +740,10 @@ def run_cycle(previous: dict[str, Any] | None, cycle_input: CycleInput) -> tuple
     hypothesized = hypothesize(state, cycle_input)
     # Every fact observed this cycle is checked, including against claims proposed this cycle.
     fact_contradictions = detect_fact_contradictions(state, observed['new_observations'])
+    evidence_conflicts = detect_evidence_conflicts(state, observed['new_observations'])
     contradictions = resolve_contradictions(state)
     contradictions['from_facts'] = fact_contradictions
+    contradictions['evidence_conflicts'] = evidence_conflicts
     needs = missing_information(state, cycle_input.missing_information)
     state['dependencies'] = {item['id']: {**item, 'status': 'open'} for item in needs}
     ranked = prioritize(state, cycle_input.available_follow_ups, cycle_input.completed_follow_ups)
@@ -714,6 +794,8 @@ def planner_summary(state: dict[str, Any] | None, *, limit: int = 4,
         'tool_outcomes': [{k: r.get(k) for k in ('capability', 'category', 'observation_count', 'evidence_id')}
                           for r in list(state.get('verification_results', {}).values())[-limit:]],
         'omitted_live_hypotheses': max(0, len(candidates) - len(live)),
+        'open_evidence_conflicts': [{k: c[k] for k in ('host', 'port', 'summaries')}
+                                    for c in state.get('conflicts', {}).values() if c['status'] == 'open'][:limit],
         'verification': 'unverified reasoning state; grants no execution authority',
     }
 
