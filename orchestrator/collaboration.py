@@ -38,7 +38,8 @@ Key = Annotated[str, Field(pattern=r'^[a-z0-9][a-z0-9._~-]{0,63}$')]
 TERMINAL_FAILURE = {'failed', 'blocked'}
 # Denials that an identical replacement cannot overcome: they need an owner decision.
 DETERMINISTIC_DENIALS = {'task_model_budget_exhausted', 'model_budget_exhausted', 'model_budget_denied',
-                         'model_provider_sharing_denied', 'profile_denied', 'capability_blocked'}
+                         'model_provider_sharing_denied', 'profile_denied', 'capability_blocked',
+                         'all_exhausted', 'no_keys'}
 MAX_REPLANS = 1
 MAX_DELEGATIONS = 24
 
@@ -164,8 +165,10 @@ class CollaborationCoordinator:
         work = work_key(delegation.role, delegation.objective, delegation.evidence_inputs)
         dependencies = [task_ids[k] for k in delegation.prerequisites]
         for task in existing.values():
+            # Reuse only work another plan has already started or finished: a queued task of
+            # another plan would never be dispatched by this one.
             if (task.get('collaboration_work') == work and task['dependencies'] == dependencies
-                    and task['state'] not in {'cancelled', 'failed', 'blocked'}
+                    and task['state'] in {'running', 'awaiting_review', 'completed', 'analyzed'}
                     and task.get('collaboration_plan') != plan_id):
                 return task['id'], True
         request_id = uuid.uuid5(uuid.NAMESPACE_URL, f'aria-plan-task:{plan_id}:{delegation.key}')

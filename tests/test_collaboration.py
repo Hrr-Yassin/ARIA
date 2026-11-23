@@ -338,15 +338,25 @@ class CollaborationTests(CollaborationHarness):
     async def test_duplicate_work_reuses_existing_task(self):
         self.standard_script()
         coordinator = self.coordinator()
-        await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        first = await coordinator.create_plan('engagement', 'owner', self.plan_body())
+        await coordinator.advance('engagement', 'owner', first['id'])        # analyses done, review still queued
         second = await coordinator.create_plan('engagement', 'owner', self.plan_body(request_id=uuid.UUID(int=2)))
-        # Identical analyses and an identical review over the same reused prerequisites.
-        self.assertEqual(sorted(second['reused_work']), ['analysis-vuln', 'analysis-web', 'cross-review'])
+        # Finished analyses are reused; the other plan's still-queued review is not.
+        self.assertEqual(sorted(second['reused_work']), ['analysis-vuln', 'analysis-web'])
         changed = self.plan_body(request_id=uuid.UUID(int=3))
         changed.delegations[0] = changed.delegations[0].model_copy(update={'objective': 'Different HTTP question.'})
         third = await coordinator.create_plan('engagement', 'owner', changed)
         # The review now depends on a different analysis, so it is new work.
         self.assertEqual(sorted(third['reused_work']), ['analysis-vuln'])
+
+    async def test_queued_work_of_another_plan_is_not_reused(self):
+        self.standard_script()
+        coordinator = self.coordinator()
+        await coordinator.create_plan('engagement', 'owner', self.plan_body())          # never advanced: tasks queued
+        second = await coordinator.create_plan('engagement', 'owner', self.plan_body(request_id=uuid.UUID(int=9)))
+        self.assertEqual(second['reused_work'], [])
+        outcome = await coordinator.advance('engagement', 'owner', second['id'])
+        self.assertEqual(outcome['states']['analysis-web'], 'awaiting_review')
 
     async def test_delegations_from_reasoning_focus_and_depend(self):
         from orchestrator.reasoning import CycleInput, ProposedHypothesis, run_cycle
