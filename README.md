@@ -1,14 +1,16 @@
 # ARIA
 
-**AI-assisted security assessment for authorized environments**
+**A research prototype for human-reviewed security assessments that links engagement scope, evidence, and report sign-off in one workspace.**
 
-ARIA brings engagement scope, saved observations, specialist reviews, and report drafts into one browser workspace. Researchers can see what supports a claim, what still needs review, and what is ready to sign off.
+[Verified results](#verified-results) · [How it works](#how-it-works) · [Run locally](#run-aria-locally)
 
-[Run locally](#run-aria-locally) · [How it works](#how-it-works) · [Development](#development)
-
-![Mission Control Exploration Graph connecting sample tasks, events, evidence, and a candidate finding](assets/portfolio/mission-control-exploration.png)
+[![Mission Control Exploration Graph connecting sample tasks, events, evidence, and a candidate finding](assets/portfolio/mission-control-exploration.png)](assets/portfolio/mission-control-exploration.png)
 
 *Mission Control 2.0 development preview, captured in Chromium with sample records. The default branch serves the original browser workspace.*
+
+## Verified results
+
+The development preview has recorded browser and database checks. The validation log identifies the tested revision and describes the checks and their scope. [Recorded validation](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md)
 
 ## How it works
 
@@ -75,6 +77,6 @@ python -m unittest discover -s tests -t . -q
 node tests/frontend_contracts.cjs
 ```
 
-Use disposable PostgreSQL and Redis for service integration. The development preview has separate browser and database validation records. [Recorded validation](https://github.com/Hrr-Yassin/ARIA/blob/4240203917012c31dc3be4e1c0f407b8dc10c50b/PROGRESS.md)
+Use disposable PostgreSQL and Redis for service integration.
 
 [Project documentation](docs/) · [Coding agent guide](AGENTS.md) · [CI checks](.github/workflows/ci.yml)
